@@ -1,0 +1,12 @@
+# The compiled binary.
+/dv
+
+node_modules/
+
+# Built by `make build`; only the .keep is tracked, so go:embed still has a
+# pattern to match and the packages compile from a clean checkout.
+internal/server/static/*
+!internal/server/static/.keep
+
+# Review notes dv writes into whatever repository it is pointed at.
+.dv/

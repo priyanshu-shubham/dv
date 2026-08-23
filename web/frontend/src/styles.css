@@ -1,0 +1,2014 @@
+/* dv — local diff review UI.
+   Dark by default; the header toggle flips [data-theme] on <html>. */
+
+:root,
+:root[data-theme="dark"] {
+  --bg: #0e1014;
+  --bg-panel: #14171d;
+  --bg-raised: #191d24;
+  --bg-input: #0b0d11;
+  --border: #262b34;
+  --border-soft: #1d222a;
+  --fg: #d7dbe2;
+  --fg-dim: #8891a0;
+  --fg-faint: #5d6675;
+  --accent: #5b9dff;
+  --accent-fg: #ffffff;
+  --add: #3fb950;
+  --del: #f85149;
+  --add-bg: rgba(63, 185, 80, 0.1);
+  --del-bg: rgba(248, 81, 73, 0.1);
+  --add-word: rgba(63, 185, 80, 0.3);
+  --del-word: rgba(248, 81, 73, 0.28);
+  --sel-bg: rgba(91, 157, 255, 0.18);
+  --mark: rgba(255, 208, 92, 0.32);
+  --shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --scroll: #333b47;
+  --scroll-hover: #4c5666;
+
+  --hl-keyword: #ff7bac;
+  --hl-string: #8ee08a;
+  --hl-number: #f0a868;
+  --hl-comment: #6b7686;
+  --hl-func: #79b8ff;
+  --hl-type: #7ee0d3;
+  --hl-attr: #d2a8ff;
+  --hl-meta: #9aa4b2;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-panel: #f7f8fa;
+  --bg-raised: #ffffff;
+  --bg-input: #ffffff;
+  --border: #d9dee5;
+  --border-soft: #e8ebef;
+  --fg: #1f2328;
+  --fg-dim: #616a75;
+  --fg-faint: #8b949e;
+  --accent: #0969da;
+  --accent-fg: #ffffff;
+  --add: #1a7f37;
+  --del: #cf222e;
+  --add-bg: rgba(26, 127, 55, 0.09);
+  --del-bg: rgba(207, 34, 46, 0.08);
+  --add-word: rgba(26, 127, 55, 0.24);
+  --del-word: rgba(207, 34, 46, 0.22);
+  --sel-bg: rgba(9, 105, 218, 0.12);
+  --mark: rgba(255, 212, 0, 0.4);
+  --shadow: 0 16px 48px rgba(20, 30, 50, 0.18);
+  --scroll: #c6cbd4;
+  --scroll-hover: #a2aab6;
+
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-number: #953800;
+  --hl-comment: #6e7781;
+  --hl-func: #8250df;
+  --hl-type: #0550ae;
+  --hl-attr: #116329;
+  --hl-meta: #57606a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbars. Chrome ignores ::-webkit-scrollbar once scrollbar-width is set,
+   so the standard properties are only offered to engines without the
+   pseudo-elements (Firefox). The thumb is drawn inside a transparent border so
+   it reads as a floating pill rather than a filled channel. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-hover);
+  background-clip: content-box;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll) transparent;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* A horizontal swipe that reaches the document is a back navigation, which
+     throws away the whole review. Nothing in dv scrolls the page sideways, so
+     there is nothing to give up by refusing it. */
+  overscroll-behavior-x: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre,
+.code,
+kbd,
+.mono {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--sel-bg);
+}
+
+.spacer {
+  flex: 1;
+}
+.dim {
+  color: var(--fg-dim);
+  font-weight: 400;
+}
+.add {
+  color: var(--add);
+}
+.del {
+  color: var(--del);
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 46px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.repo {
+  font-weight: 600;
+}
+
+.headref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 32vw;
+  color: var(--fg-dim);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.headref .subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar .icon,
+.seg button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 7px;
+  color: var(--fg-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.topbar .icon:hover,
+.seg button:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.topbar .icon.on,
+.seg button.on {
+  background: var(--sel-bg);
+  color: var(--accent);
+}
+
+.seg {
+  display: flex;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 1px;
+}
+
+.ctx {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.ctx select {
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+
+.spin svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- scope picker ---------- */
+
+.scope {
+  position: relative;
+}
+
+.scope-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 9px;
+  background: var(--bg-raised);
+  font-weight: 500;
+}
+
+.scope-button:hover {
+  border-color: var(--accent);
+}
+
+/* Marks the scope button when the auto picker chose the comparison for you. */
+.auto-tag {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.scope-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 340px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.scope-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 7px;
+}
+
+.scope-item:hover {
+  background: var(--bg-panel);
+}
+
+.scope-item.on {
+  background: var(--sel-bg);
+}
+
+.scope-label {
+  font-weight: 600;
+}
+
+.scope-item .dim {
+  font-size: 11.5px;
+}
+
+.scope-sep {
+  padding: 8px 9px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-faint);
+  border-top: 1px solid var(--border-soft);
+  margin-top: 5px;
+}
+
+.scope-custom {
+  display: flex;
+  gap: 6px;
+  padding: 0 9px 6px;
+}
+
+.scope-custom input {
+  flex: 1;
+  min-width: 0;
+}
+
+.scope-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 9px 8px;
+}
+
+.scope-chips button {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+
+.scope-chips button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.scope-desc {
+  padding: 7px 9px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--border-soft);
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-weight: 600;
+}
+
+button.primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.ghost {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--fg-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+button.ghost:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+button.link {
+  color: var(--accent);
+  padding: 0;
+  font-size: 12px;
+}
+
+button.link:hover {
+  text-decoration: underline;
+}
+
+/* ---------- layout ---------- */
+
+.main {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  min-height: 0;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+
+.content {
+  overflow-y: auto;
+  overscroll-behavior-x: contain;
+  padding: 14px 16px 0;
+  scroll-behavior: smooth;
+}
+
+/* The tail that lets the last file scroll up to the top of the window. It is a
+   box rather than padding-bottom because bottom padding on a scroll container
+   moves the rectangle sticky positions resolve against, which pinned each
+   diff's horizontal bars to the top of its hunks instead of the window. */
+.content::after {
+  content: "";
+  display: block;
+  height: 40vh;
+}
+
+/* ---------- sidebar ---------- */
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 4px;
+  color: var(--fg-dim);
+  border-bottom: 2px solid transparent;
+  font-size: 12px;
+}
+
+.tabs button.on {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.count,
+.pill {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+
+.pill {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.sidebar-filter {
+  padding: 8px;
+}
+
+.sidebar-filter input {
+  width: 100%;
+}
+
+.file-list,
+.comment-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.comment-list {
+  padding: 8px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 12px;
+  border-left: 2px solid transparent;
+}
+
+.file-row:hover {
+  background: var(--bg-raised);
+}
+
+.file-row.on {
+  background: var(--sel-bg);
+  border-left-color: var(--accent);
+}
+
+.file-row.seen .name {
+  opacity: 0.5;
+}
+
+.file-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.file-row .counts {
+  font-size: 11px;
+  display: flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seen-check {
+  color: var(--add);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: none;
+  background: var(--fg-faint);
+}
+
+.dot.st-A {
+  background: var(--add);
+}
+.dot.st-D {
+  background: var(--del);
+}
+.dot.st-M {
+  background: #d29922;
+}
+.dot.st-R {
+  background: var(--accent);
+}
+
+.sidebar-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-foot.small {
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.empty {
+  padding: 20px 14px;
+  color: var(--fg-dim);
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.empty.error {
+  color: var(--del);
+}
+
+.empty-state {
+  max-width: 460px;
+  margin: 12vh auto;
+  text-align: center;
+  color: var(--fg-dim);
+}
+
+.empty-state h2 {
+  color: var(--fg);
+  font-size: 17px;
+  margin-bottom: 6px;
+}
+
+.banner.error {
+  background: var(--del-bg);
+  border: 1px solid var(--del);
+  color: var(--del);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+/* ---------- file section ---------- */
+
+.file {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  margin-bottom: 14px;
+  background: var(--bg);
+  /* clip, not hidden: hidden makes this a scroll container, which would pin the
+     sticky file header and scrollbars to the file instead of the viewport. */
+  overflow: clip;
+  /* A large diff is tens of thousands of rows. This lets the browser skip
+     style, layout and paint for files that are off screen, and remember their
+     measured height so the scrollbar stays honest. Without it, scrolling pays
+     for every row in the review on every frame. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
+}
+
+.file-active {
+  border-color: var(--fg-faint);
+}
+
+.file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.file-collapse {
+  color: var(--fg-dim);
+  display: flex;
+}
+
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+
+.badge.st-A {
+  color: var(--add);
+  border-color: var(--add);
+}
+.badge.st-D {
+  color: var(--del);
+  border-color: var(--del);
+}
+.badge.st-M {
+  color: #d29922;
+  border-color: #d29922;
+}
+.badge.st-R {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.file-path {
+  font: 600 12.5px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.renamed-from {
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.file-comments {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.file-head .stat {
+  display: flex;
+  gap: 5px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.viewed input {
+  margin: 0;
+  padding: 0;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+}
+
+.file-note {
+  padding: 14px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.file-note.error {
+  color: var(--del);
+}
+
+/* ---------- diff grid ---------- */
+
+/* The diff never grows past the width of the view. A long line is revealed by
+   shifting the code inside its cell instead, one offset per side, so the two
+   columns stay an even half each however wide their contents are. */
+.diff {
+  width: 100%;
+  font: 12px/20px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  position: relative;
+}
+
+/* Only files whose lines actually overflow carry a transform. A transform on
+   every line of every file is thousands of extra nodes to build and composite
+   while scrolling, for a horizontal offset that is almost always zero. */
+.hscroll.diff-split .cell[data-side="old"] .code {
+  transform: translate3d(var(--sx-old, 0px), 0, 0);
+}
+
+.hscroll.diff-split .cell[data-side="new"] .code {
+  transform: translate3d(var(--sx-new, 0px), 0, 0);
+}
+
+.hscroll.diff-unified .code {
+  transform: translate3d(var(--sx-new, 0px), 0, 0);
+}
+
+.file-body.wrap .code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transform: none;
+}
+
+/* One scrollbar per side, stuck to the bottom of the view so it is reachable
+   from anywhere in a long file rather than only at its end. */
+.hbars {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-soft);
+}
+
+.diff-unified .hbars {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* These two bars are the only way to pan a wide diff, so unlike the incidental
+   scrollbars elsewhere they get a visible track and a thumb thick enough to
+   aim at. The box has to leave room for the inset the global thumb rule takes. */
+.hbar {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  height: 14px;
+}
+
+.hbar::-webkit-scrollbar {
+  height: 14px;
+}
+
+.hbar::-webkit-scrollbar-track {
+  background: var(--bg-raised);
+  border-radius: 8px;
+  margin: 0 8px;
+}
+
+.hbar::-webkit-scrollbar-thumb {
+  background: var(--scroll-hover);
+  border-width: 3px 8px;
+}
+
+.hbar::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+}
+
+.hbar + .hbar {
+  border-left: 1px solid var(--border-soft);
+}
+
+.hbar > div {
+  height: 1px;
+}
+
+.hbar::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-dim);
+}
+
+/* One rendering unit per run of rows — see FileDiff. contain-intrinsic-size is
+   supplied inline from the row count and refined by the browser after the first
+   render, so the scrollbar stays stable. */
+/* Blocks unmount when they leave the viewport, so the browser has nothing to
+   skip and content-visibility would only add work. */
+.block {
+  contain: layout style;
+}
+
+.diff-split .row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.diff-split .cell + .cell {
+  border-left: 1px solid var(--border-soft);
+}
+
+.cell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  /* Clips the shifted code to its own column. */
+  overflow: hidden;
+}
+
+/* The absent side of an add/delete row. Named "blank" rather than "empty" so it
+   does not pick up the generic .empty no-results styling. */
+.cell.blank {
+  display: block;
+  background: var(--bg-panel);
+  opacity: 0.4;
+}
+
+.cell.add {
+  background: var(--add-bg);
+}
+
+.cell.del {
+  background: var(--del-bg);
+}
+
+.cell.sel {
+  background: var(--sel-bg);
+}
+
+.gutter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px 0 4px;
+  color: var(--fg-faint);
+  user-select: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.gutter:hover {
+  color: var(--fg-dim);
+}
+
+.ln {
+  display: inline-block;
+  min-width: 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+/* The comment affordance and the +/- sign are pseudo-elements: on a large diff
+   they would otherwise be five extra DOM nodes per line. Both are laid out up
+   front and revealed by toggling visibility, so hovering a line repaints rather
+   than relayouts — which is what kept scrolling smooth with the cursor over the
+   diff. */
+.gutter::after {
+  content: "+";
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 12px;
+  z-index: 3;
+  visibility: hidden;
+}
+
+.cell:hover .gutter::after {
+  visibility: visible;
+}
+
+.code::before {
+  content: "\00a0";
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+  color: var(--fg-faint);
+}
+
+.cell.add .code::before {
+  content: "+";
+  color: var(--add);
+}
+
+.cell.del .code::before {
+  content: "-";
+  color: var(--del);
+}
+
+.code {
+  white-space: pre;
+  padding-right: 16px;
+  min-width: 0;
+}
+
+.wd {
+  border-radius: 3px;
+  padding: 1px 0;
+}
+
+.cell.add .wd {
+  background: var(--add-word);
+}
+
+.cell.del .wd {
+  background: var(--del-word);
+}
+
+/* The gap bar spans the full scrollable width of the diff, and its two control
+   groups are sticky to the viewport's edges — so whichever column you are
+   reading, and however far the diff is scrolled sideways, the expand controls
+   are right there. Clicking anywhere on the bar expands it. */
+.gap {
+  display: flex;
+  align-items: center;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg-faint);
+  font-size: 11px;
+  cursor: pointer;
+  min-height: 24px;
+}
+
+.gap:hover {
+  background: var(--bg-raised);
+  color: var(--fg-dim);
+}
+
+.gap-side {
+  position: sticky;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  background: inherit;
+}
+
+.gap-side.gap-left {
+  left: 0;
+  border-right: 1px solid var(--border-soft);
+}
+
+.gap-side.gap-right {
+  right: 0;
+  border-left: 1px solid var(--border-soft);
+}
+
+.gap-side button {
+  color: var(--fg-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+}
+
+/* The expand chevrons, drawn in CSS. A large review has thousands of gap bars
+   and an inline SVG icon is three elements each; this is one pseudo-element. */
+.gap-icon {
+  position: relative;
+  width: 13px;
+  height: 13px;
+}
+
+.gap-icon::before,
+.gap-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.4px solid currentColor;
+  border-bottom: 1.4px solid currentColor;
+}
+
+.gap-icon::before {
+  top: 1px;
+  transform: rotate(-135deg);
+}
+
+.gap-icon::after {
+  bottom: 1px;
+  transform: rotate(45deg);
+}
+
+.gap-side button:hover {
+  background: var(--bg-panel);
+  color: var(--accent);
+}
+
+.gap-label {
+  white-space: nowrap;
+}
+
+/* Threads and the composer sit under the row, in the column they belong to, so
+   a comment on the right-hand side of a split diff appears on the right. The
+   block is one viewport wide and sticky, so it stays fully visible no matter how
+   far the code beside it scrolls sideways. */
+.row-threads {
+  width: 100%;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  padding: 8px 0;
+}
+
+.thread-slot {
+  padding: 0 10px 0 46px;
+  max-width: 860px;
+}
+
+.diff-split .row-threads {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.diff-split .row-threads.side-old .thread-slot {
+  grid-column: 1;
+}
+
+.diff-split .row-threads.side-new .thread-slot {
+  grid-column: 2;
+}
+
+/* ---------- comments ---------- */
+
+.threads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thread {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow: hidden;
+}
+
+.thread.resolved {
+  opacity: 0.62;
+}
+
+.threads-compact .thread {
+  margin-bottom: 8px;
+}
+
+.thread-loc {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  font: 11.5px/1.4 ui-monospace, Menlo, monospace;
+  color: var(--fg-dim);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+.thread-loc:hover {
+  color: var(--accent);
+}
+
+.quote {
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+  border-left: 2px solid var(--fg-faint);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  line-height: 18px;
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 120px;
+}
+
+.comment {
+  padding: 8px 10px;
+}
+
+.comment + .comment {
+  border-top: 1px solid var(--border-soft);
+}
+
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  margin-bottom: 3px;
+}
+
+.comment-actions {
+  display: flex;
+  gap: 8px;
+  visibility: hidden;
+}
+
+.comment:hover .comment-actions {
+  visibility: visible;
+}
+
+.comment-actions button {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.comment-actions button:hover {
+  color: var(--accent);
+}
+
+.thread-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.resolved-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--add);
+  font-size: 11px;
+}
+
+.markdown p {
+  margin: 0 0 6px;
+}
+
+.markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown code {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 11.5px;
+}
+
+.markdown pre {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.markdown a {
+  color: var(--accent);
+}
+
+.markdown blockquote {
+  margin: 4px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-dim);
+}
+
+.composer {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  padding: 8px;
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  width: min(700px, 100%);
+}
+
+.composer-title {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
+}
+
+.composer textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.5;
+  font-size: 12.5px;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.composer-error {
+  color: var(--del);
+  font-size: 11.5px;
+  margin-top: 5px;
+}
+
+.hint {
+  font-size: 11px;
+}
+
+/* ---------- overlays ---------- */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 16px 16px;
+  z-index: 100;
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: min(640px, 100%);
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.modal-wide {
+  width: min(1000px, 100%);
+}
+
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+
+.palette-input input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  font-size: 14px;
+  padding: 2px 0;
+}
+
+.palette-input input:focus {
+  box-shadow: none;
+}
+
+.palette-input .glob {
+  flex: none;
+  width: 110px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.toggles {
+  display: flex;
+  gap: 2px;
+}
+
+.toggles button {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.toggles button.on {
+  background: var(--sel-bg);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.palette-list,
+.search-results,
+.viewer-body,
+.help-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+}
+
+.palette-row.on {
+  background: var(--sel-bg);
+}
+
+.palette-row .sym {
+  font: 12.5px ui-monospace, Menlo, monospace;
+}
+
+.palette-row .sym b {
+  color: var(--accent);
+}
+
+/* The proximity note that explains the ranking: why this hit is above that one. */
+.palette-row .why {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--sel-bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  flex: none;
+}
+
+.palette-note {
+  padding: 7px 12px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.palette-note code {
+  font: 11.5px ui-monospace, Menlo, monospace;
+  color: var(--fg);
+}
+
+.palette-row .loc {
+  font: 11px ui-monospace, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46%;
+  /* rtl ellipsizes the start of the path, keeping the file name visible; the
+     LRM the markup prefixes keeps the text itself reading left to right. */
+  direction: rtl;
+  text-align: left;
+}
+
+.kind {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: var(--fg-faint);
+  min-width: 52px;
+  text-align: center;
+  flex: none;
+}
+
+.kind-func,
+.kind-method {
+  color: var(--hl-func);
+  border-color: color-mix(in srgb, var(--hl-func) 45%, transparent);
+}
+
+.kind-type,
+.kind-class,
+.kind-module {
+  color: var(--hl-type);
+  border-color: color-mix(in srgb, var(--hl-type) 45%, transparent);
+}
+
+.palette-foot {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.search-group {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.search-file {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  padding: 5px 12px;
+  font: 11.5px ui-monospace, Menlo, monospace;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--border-soft);
+  z-index: 1;
+}
+
+.search-hit {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 2px 12px;
+  text-align: left;
+  font: 12px/19px ui-monospace, Menlo, monospace;
+}
+
+.search-hit:hover {
+  background: var(--sel-bg);
+}
+
+.search-hit .ln {
+  color: var(--fg-faint);
+  min-width: 40px;
+}
+
+.search-hit code {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+mark {
+  background: var(--mark);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.viewer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font: 12.5px ui-monospace, Menlo, monospace;
+}
+
+.viewer-head .path {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-body {
+  font: 12px/20px ui-monospace, Menlo, Consolas, monospace;
+  padding: 6px 0;
+}
+
+.vrow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.vrow .ln {
+  color: var(--fg-faint);
+  min-width: 42px;
+}
+
+.vrow code {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.vrow.hit {
+  background: var(--sel-bg);
+}
+
+.help-body {
+  padding: 10px 14px 16px;
+}
+
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+kbd {
+  min-width: 110px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-panel);
+}
+
+/* ---------- syntax highlighting ---------- */
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-name {
+  color: var(--hl-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-template-variable,
+.hljs-quote {
+  color: var(--hl-string);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--hl-number);
+}
+
+.hljs-comment {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: var(--hl-func);
+}
+
+.hljs-title.class_,
+.hljs-type,
+.hljs-built_in,
+.hljs-class .hljs-title {
+  color: var(--hl-type);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-property,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--hl-attr);
+}
+
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-params,
+.hljs-tag,
+.hljs-punctuation {
+  color: var(--hl-meta);
+}
+
+.hljs-deletion {
+  color: var(--del);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+/* ---------- ask panel ---------- */
+
+/* The third track sizes itself to the panel, so the panel's own width - which
+   it owns and persists - is the only thing a drag has to change. */
+.main.with-ask {
+  grid-template-columns: 300px minmax(0, 1fr) auto;
+}
+
+.ask {
+  position: relative;
+  width: var(--ask-w, 430px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+}
+
+/* Sits inside the panel rather than straddling its border, so it never steals
+   clicks from the diff's scrollbar right next to it. */
+.ask-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  z-index: 20;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.ask-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.ask-resize:hover::after,
+body.resizing .ask-resize::after {
+  opacity: 1;
+}
+
+body.resizing {
+  user-select: none;
+}
+
+body.resizing * {
+  cursor: col-resize !important;
+}
+
+.ask-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ask-mark {
+  color: var(--accent);
+  flex: none;
+}
+
+.ask-target {
+  font: 11px ui-monospace, Menlo, monospace;
+  color: var(--fg-dim);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  padding: 1px 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+  direction: rtl;
+  text-align: left;
+}
+
+.ask-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.ask-mini:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+.model-menu {
+  position: relative;
+}
+
+.model-list {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 40;
+  width: 220px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+}
+
+.model-list button {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.model-list button:hover {
+  background: var(--bg-panel);
+}
+
+.model-list button.on {
+  background: var(--sel-bg);
+}
+
+.model-name {
+  font-weight: 600;
+}
+
+.model-list .dim {
+  font-size: 11px;
+}
+
+/* ---------- transcript ---------- */
+
+.ask-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 0 10px;
+}
+
+.ask-empty {
+  padding: 22px 14px;
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.ask-empty p {
+  margin: 0 0 8px;
+}
+
+.ask-empty-lead {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.ask-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 14px;
+}
+
+.ask-presets button {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 11px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+
+.ask-presets button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--sel-bg);
+}
+
+.turn {
+  padding: 10px 12px 4px;
+}
+
+.turn + .turn {
+  border-top: 1px solid var(--border-soft);
+}
+
+/* The question reads as something you said: indented, quiet, and kept in view
+   above its answer so a scrolled-back transcript still makes sense. */
+.turn-q {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding: 6px 9px;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+}
+
+.turn-a {
+  font-size: 12.5px;
+  line-height: 1.62;
+}
+
+.turn-error {
+  color: var(--del);
+  background: var(--del-bg);
+  border: 1px solid color-mix(in srgb, var(--del) 40%, transparent);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.turn-note {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.turn-a .markdown h1,
+.turn-a .markdown h2,
+.turn-a .markdown h3 {
+  font-size: 12.5px;
+  margin: 12px 0 4px;
+  color: var(--fg);
+}
+
+.turn-a .markdown p {
+  margin: 0 0 8px;
+}
+
+.turn-a .markdown pre {
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.turn-a .markdown li {
+  margin-bottom: 3px;
+}
+
+.caret {
+  display: inline-block;
+  width: 6px;
+  height: 13px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.turn-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 6px;
+  font-size: 11px;
+  border-top: 1px dashed var(--border-soft);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.turn:hover .turn-foot,
+.turn:focus-within .turn-foot {
+  opacity: 1;
+}
+
+.turn-foot button {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.turn-foot button:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.turn-foot button:disabled {
+  color: var(--add);
+  cursor: default;
+}
+
+/* ---------- composer ---------- */
+
+.ask-composer {
+  border-top: 1px solid var(--border);
+  padding: 8px 10px 9px;
+  background: var(--bg-panel);
+}
+
+.ask-composer textarea {
+  width: 100%;
+  resize: none;
+  font-size: 12.5px;
+  line-height: 1.5;
+  min-height: 46px;
+  max-height: 160px;
+}
+
+.ask-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.ask-composer-bar .hint {
+  font-size: 11px;
+}
+
+.ask-stop {
+  border: 1px solid var(--del);
+  color: var(--del);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-weight: 600;
+}
+
+.ask-stop:hover {
+  background: var(--del-bg);
+}
+
+.ask-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.ask-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
