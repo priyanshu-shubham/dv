@@ -1713,6 +1713,9 @@ kbd {
 .ask {
   position: relative;
   width: var(--ask-w, 430px);
+  /* The panel is resizable, so its own width - not the window's - is what the
+     header has to lay itself out against. */
+  container-type: inline-size;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
@@ -1766,6 +1769,33 @@ body.resizing * {
   border-bottom: 1px solid var(--border);
 }
 
+/* Every control keeps its own line; the target chip is the only thing allowed
+   to give, and it ellipsizes rather than wrapping. Without this the wordmark
+   and the model name both fold onto a second line in a narrow panel and the
+   header grows from 44px to 62px. */
+.ask-head > strong {
+  white-space: nowrap;
+  flex: none;
+}
+
+.ask-head .ask-target {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.ask-head .model-menu > button {
+  white-space: nowrap;
+}
+
+/* Narrow enough and the wordmark is the first thing to go - the spark icon
+   already says which panel this is, whereas the model in use and the way out
+   are not guessable from anything else on screen. */
+@container (max-width: 400px) {
+  .ask-head > strong {
+    display: none;
+  }
+}
+
 .ask-mark {
   color: var(--accent);
   flex: none;
@@ -1781,7 +1811,7 @@ body.resizing * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 40%;
+  max-width: 45%;
   direction: rtl;
   text-align: left;
 }
@@ -1805,6 +1835,7 @@ body.resizing * {
 
 .model-menu {
   position: relative;
+  flex: none;
 }
 
 .model-list {
@@ -1813,6 +1844,7 @@ body.resizing * {
   right: 0;
   z-index: 40;
   width: 220px;
+  max-width: calc(100cqw - 20px);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 9px;
