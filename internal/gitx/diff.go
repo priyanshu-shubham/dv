@@ -268,6 +268,9 @@ type FileEntry struct {
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary"`
 	Untracked bool   `json:"untracked,omitempty"`
+	// Generated means machine-written: still listed, but its diff is not shown
+	// until asked for. See generated.go for what counts.
+	Generated bool `json:"generated,omitempty"`
 }
 
 // Files lists what changed in the scope, sorted by path.
@@ -304,6 +307,8 @@ func (r *Repo) Files(s *Scope) ([]FileEntry, error) {
 			}
 		}
 	}
+
+	r.markGenerated(entries)
 
 	out := make([]FileEntry, 0, len(entries))
 	for _, e := range entries {

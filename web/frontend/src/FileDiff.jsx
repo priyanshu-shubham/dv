@@ -15,7 +15,7 @@ import { AskButton } from "./AskPanel.jsx";
 function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
-  isActive, composing, setComposing, onAsk, reveal,
+  isActive, composing, setComposing, onAsk, reveal, generatedHidden, onShowGenerated,
 }) {
   const [expanded, setExpanded] = useState({});
   const [selection, setSelection] = useState(null); // { side, start, end }
@@ -59,6 +59,7 @@ function FileDiff({
           {name}
         </h3>
         {entry.oldPath && <span className="renamed-from">from {entry.oldPath}</span>}
+        {entry.generated && <span className="tag-generated" title="Machine-written; see the README for what counts">generated</span>}
         <span className="spacer" />
         {openThreads > 0 && <span className="file-comments">{openThreads} open</span>}
         <AskButton onClick={() => onAsk({ file: entry.path })} title="Ask Claude about this file's diff" />
@@ -72,7 +73,23 @@ function FileDiff({
         </label>
       </header>
 
-      {!collapsed && (
+      {!collapsed && generatedHidden && (
+        <div className="file-body">
+          <div className="file-note skipped">
+            <span>
+              Generated file - diff not shown.{" "}
+              <span className="dim">
+                {entry.additions + entry.deletions} line{entry.additions + entry.deletions === 1 ? "" : "s"} changed
+              </span>
+            </span>
+            <button className="ghost" onClick={onShowGenerated}>
+              Show it anyway
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!collapsed && !generatedHidden && (
         <div className={cx("file-body", wrap && "wrap")}>
           {loading && <div className="file-note">Loading...</div>}
           {error && <div className="file-note error">{error}</div>}

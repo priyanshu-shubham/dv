@@ -61,6 +61,24 @@ func (r *Repo) runBytes(args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// runInput is run for the plumbing commands that take their arguments on
+// stdin, which is how a long path list is passed without risking the command
+// line length limit.
+func (r *Repo) runInput(stdin string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = r.Root
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.String())
+	}
+	return stdout.String(), nil
+}
+
 func gitOutput(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

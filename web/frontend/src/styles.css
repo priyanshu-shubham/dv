@@ -765,6 +765,49 @@ button.link:hover {
   font-size: 12px;
 }
 
+/* The stand-in for a diff dv chose not to render. It is a row rather than a
+   sentence so the way to overrule it sits right next to the reason. */
+.file-note.skipped {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+}
+
+.file-note.skipped button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.file-note.skipped button:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+.tag-generated {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex: none;
+}
+
+/* Not the accent treatment the comment count gets: this is a label, not a
+   number the reader has to act on. */
+.pill.quiet {
+  background: var(--bg-raised);
+  border-color: var(--border);
+  color: var(--fg-faint);
+  font-weight: 400;
+}
+
 .file-note.error {
   color: var(--del);
 }
@@ -1808,8 +1851,44 @@ body.resizing * {
 
 .ask-scroll {
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
+  /* Grid and flex children are min-width:auto by default, so one long
+     identifier in an answer would widen this box past the panel and the
+     overflow would be clipped with no way to scroll to it. */
+  min-width: 0;
   padding: 4px 0 10px;
+}
+
+/* The panel is resizable down to a narrow column, so an answer has to be able
+   to give. Prose, links and inline code wrap at any character rather than run
+   off the edge; the two things that genuinely cannot wrap - code blocks and
+   tables - scroll inside their own box instead of pushing the panel wider. */
+.turn,
+.turn-q,
+.turn-a,
+.turn-a .markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.turn-a .markdown pre,
+.turn-a .markdown table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.turn-a .markdown table {
+  display: block;
+  width: max-content;
+  border-collapse: collapse;
+}
+
+.turn-a .markdown th,
+.turn-a .markdown td {
+  border: 1px solid var(--border-soft);
+  padding: 3px 7px;
+  text-align: left;
 }
 
 .ask-empty {

@@ -41,6 +41,17 @@ in `.dv/comments.json` at the repo root. On first run dv adds `/.dv/` to
 `.git/info/exclude`, so the notes never show up in `git status` and cannot be
 committed by accident — and your `.gitignore` stays untouched.
 
+**Generated files are skipped.** A regenerated lock file or protobuf stub
+between two real changes is noise that hides them, so dv lists those files but
+does not render the diff — it says so, with the line count, and a *Show it
+anyway* button next to it. The body is not even fetched until you ask, so a
+branch that rewrites `package-lock.json` costs nothing to open. A file counts
+as generated if its path says so (lock files, `vendor/`, `node_modules/`,
+`*.pb.go`, `*.min.js`, `__snapshots__/` and friends), if it carries a
+`generated … do not edit` banner in its first lines — which is how `mockgen`,
+`stringer`, `sqlc` and `protoc` output is caught regardless of its name — or if
+`.gitattributes` marks it `linguist-generated`, which overrules the guesses.
+
 **Code navigation.** `Ctrl/Cmd+K` fuzzy-searches every definition in the
 repository; double-clicking an identifier in the diff jumps to where it is
 defined. Definition lookup is exact and whole-word — clicking `inflight` will

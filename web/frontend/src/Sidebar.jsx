@@ -65,7 +65,7 @@ export default function Sidebar({
                   key={f.path}
                   className={cx("file-row", activePath === f.path && "on", viewed.has(f.path) && "seen")}
                   onClick={() => onSelect(f.path)}
-                  title={f.path + " - " + statusLabel[f.status]}
+                  title={f.path + " - " + statusLabel[f.status] + (f.generated ? " (generated)" : "")}
                 >
                   <span className={cx("dot", "st-" + f.status)} />
                   <span className="name">
@@ -73,6 +73,7 @@ export default function Sidebar({
                     <span className="dim">{dir}</span>
                     {name}
                   </span>
+                  {f.generated && <span className="pill quiet" title="Generated - diff not shown">gen</span>}
                   {open > 0 && <span className="pill">{open}</span>}
                   {viewed.has(f.path) && <IconCheck size={12} className="seen-check" />}
                   <span className="counts">

@@ -504,9 +504,15 @@ export default function App() {
 // re-render files 1 through 40.
 const FileSection = memo(function FileSection({ entry, state, onNeed, ...rest }) {
   const ref = useRef(null);
+  // A generated file's diff is not fetched at all until it is asked for, so a
+  // branch that regenerates a lock file costs nothing to review.
+  const [shown, setShown] = useState(false);
+  const hidden = !!entry.generated && !shown;
+  const onShowGenerated = useCallback(() => setShown(true), []);
+
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || hidden) return;
     const io = new IntersectionObserver(
       ([e]) => {
         if (e.isIntersecting) {
@@ -518,11 +524,19 @@ const FileSection = memo(function FileSection({ entry, state, onNeed, ...rest })
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [entry.path, onNeed, state]);
+  }, [entry.path, onNeed, state, hidden]);
 
   return (
     <div ref={ref}>
-      <FileDiff entry={entry} fd={state?.fd} loading={state?.loading} error={state?.error} {...rest} />
+      <FileDiff
+        entry={entry}
+        fd={state?.fd}
+        loading={state?.loading}
+        error={state?.error}
+        generatedHidden={hidden}
+        onShowGenerated={onShowGenerated}
+        {...rest}
+      />
     </div>
   );
 });
