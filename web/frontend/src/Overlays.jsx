@@ -2,25 +2,41 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { cx, LRM, modKey, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml, highlightLines } from "./highlight.js";
-import { IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
+import { IconBack, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 
-// Modal shell shared by every overlay: click-outside and Escape both close.
-function Modal({ onClose, className, children, wide }) {
+// Modal shell shared by every overlay. Escape retraces the trail of definitions
+// one step; Shift+Escape and a click outside leave it altogether. With nothing
+// behind the overlay the two are the same key doing the same thing.
+function Modal({ onClose, onBack, className, children, wide }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        (e.shiftKey || !onBack ? onClose : onBack)();
+      } else if (onBack && ((e.altKey && e.key === "ArrowLeft") || ((e.metaKey || e.ctrlKey) && e.key === "["))) {
+        e.preventDefault(); // Alt+Left is the browser's own Back, which would leave the page
+        e.stopPropagation();
+        onBack();
       }
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [onClose, onBack]);
 
   return (
     <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={cx("modal", wide && "modal-wide", className)}>{children}</div>
     </div>
+  );
+}
+
+// Back is only rendered when there is somewhere to go, and names where that is.
+function Back({ onBack, to }) {
+  if (!onBack) return null;
+  return (
+    <button className="ghost back" onClick={onBack} title={to ? `Back to ${to}` : "Back"}>
+      <IconBack size={13} />
+    </button>
   );
 }
 
@@ -45,7 +61,7 @@ function sourceNote(source, n, name) {
 
 // SymbolPalette is the Cmd+K jump-to-definition list. It also serves as the
 // disambiguator when a double-clicked identifier has several definitions.
-export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOpen, onClose }) {
+export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOpen, onClose, onBack, backTo }) {
   const [q, setQ] = useState(initialQuery);
   const [hits, setHits] = useState(seed || []);
   const [status, setStatus] = useState(null);
@@ -90,8 +106,9 @@ export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOp
   };
 
   return (
-    <Modal onClose={onClose} className="palette">
+    <Modal onClose={onClose} onBack={onBack} className="palette">
       <div className="palette-input">
+        <Back onBack={onBack} to={backTo} />
         <IconSymbol size={15} />
         <input
           autoFocus
@@ -152,7 +169,7 @@ function markMatches(name, matches) {
 }
 
 // SearchPanel is repo-wide text search, grouped by file.
-export function SearchPanel({ initialQuery = "", onOpen, onClose }) {
+export function SearchPanel({ initialQuery = "", onOpen, onClose, onBack, backTo }) {
   const [query, setQuery] = useState(initialQuery);
   const [regex, setRegex] = useState(false);
   const [caseSens, setCaseSens] = useState(false);
@@ -192,8 +209,9 @@ export function SearchPanel({ initialQuery = "", onOpen, onClose }) {
   }, [res]);
 
   return (
-    <Modal onClose={onClose} wide className="search">
+    <Modal onClose={onClose} onBack={onBack} wide className="search">
       <div className="palette-input">
+        <Back onBack={onBack} to={backTo} />
         <IconSearch size={15} />
         <input
           autoFocus
@@ -271,7 +289,7 @@ function markSpans(text, spans) {
 
 // FileViewer shows a whole source file, which is where symbol jumps and search
 // hits land. It is read-only on purpose: dv reviews, it does not edit.
-export function FileViewer({ file, line, onClose, onSymbol }) {
+export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, onSymbol }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [, force] = useState(0);
@@ -290,11 +308,18 @@ export function FileViewer({ file, line, onClose, onSymbol }) {
     if (data?.lang) ensureLanguage(data.lang, () => force((n) => n + 1));
   }, [data?.lang]);
 
+  // Arriving at a definition centres the line it is on; stepping back into a
+  // file already read restores the position it was left at instead, so the way
+  // out looks like the way in.
   useEffect(() => {
     if (!data) return;
+    if (scroll && bodyRef.current) {
+      bodyRef.current.scrollTop = scroll;
+      return;
+    }
     const el = bodyRef.current?.querySelector(`[data-line="${line}"]`);
     el?.scrollIntoView({ block: "center" });
-  }, [data, line]);
+  }, [data, line, scroll]);
 
   const html = useMemo(
     () => (data ? highlightLines("view:" + file, data.lines, data.lang) : []),
@@ -302,8 +327,9 @@ export function FileViewer({ file, line, onClose, onSymbol }) {
   );
 
   return (
-    <Modal onClose={onClose} wide className="viewer">
+    <Modal onClose={onClose} onBack={onBack} wide className="viewer">
       <div className="viewer-head">
+        <Back onBack={onBack} to={backTo} />
         <span className="path">{file}</span>
         <span className="dim">:{line}</span>
         <span className="spacer" />
@@ -321,7 +347,7 @@ export function FileViewer({ file, line, onClose, onSymbol }) {
               <code
                 onDoubleClick={() => {
                   const sel = window.getSelection()?.toString().trim();
-                  if (sel && /^[A-Za-z_$][\w$]*$/.test(sel)) onSymbol(sel, file);
+                  if (sel && /^[A-Za-z_$][\w$]*$/.test(sel)) onSymbol(sel, file, bodyRef.current?.scrollTop || 0);
                 }}
                 dangerouslySetInnerHTML={{ __html: html[i] || "&nbsp;" }}
               />
@@ -346,10 +372,12 @@ export function HelpOverlay({ onClose }) {
     ["w", "Toggle line wrapping"],
     ["r", "Reload the diff"],
     ["double-click", "Jump to a symbol's definition"],
+    ["Alt+Left", "Back to the previous definition"],
     ["select code", "Comment on the selected lines"],
     ["drag line numbers", "Comment on a range of lines"],
     ["click a gap bar", "Expand 20 more lines of context"],
-    ["Esc", "Close whatever is open"],
+    ["Esc", "Back a step, or close what is open"],
+    ["Shift+Esc", "Close whatever is open"],
   ];
   return (
     <Modal onClose={onClose} className="help">

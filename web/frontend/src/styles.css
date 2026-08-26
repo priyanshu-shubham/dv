@@ -2123,3 +2123,10 @@ body.resizing * {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Back out of a chain of definition jumps. Sits ahead of the title in the
+   viewer head and ahead of the icon in the palette and search rows. */
+button.ghost.back {
+  flex: none;
+  padding: 4px 6px;
+}

@@ -36,7 +36,12 @@ export default function App() {
   // file is told to keep that one mounted until the jump has landed.
   const [reveal, setReveal] = useState(null);
   const [composing, setComposing] = useState(null); // { path, side, start, end, quote }
-  const [overlay, setOverlay] = useState(null);
+  // The overlay trail. Its last entry is what is on screen; the ones behind it
+  // are the definitions the reader walked through to reach it, so a jump that
+  // led somewhere unhelpful can be retraced instead of restarted.
+  const [stack, setStack] = useState([]);
+  const overlay = stack[stack.length - 1] || null;
+  const behind = stack[stack.length - 2] || null;
   const [ask, setAsk] = useState(null); // { file, side, startLine, endLine }
 
   const hovered = useRef(null); // { path, side, line } under the cursor
@@ -219,20 +224,38 @@ export default function App() {
     [jumpToFile, loadThreads],
   );
 
+  // Opening an overlay from the diff starts a fresh trail; following a symbol
+  // out of one extends it. leftAt is where the page being covered was scrolled
+  // to, remembered so stepping back returns to the line the reader was on
+  // rather than to the top of the definition they arrived at.
+  const openOverlay = useCallback((o) => setStack([o]), []);
+  const pushOverlay = useCallback((o, leftAt = 0) => {
+    setStack((s) => {
+      const trail = leftAt && s.length ? [...s.slice(0, -1), { ...s[s.length - 1], scroll: leftAt }] : s;
+      return [...trail, o];
+    });
+  }, []);
+  const goBack = useCallback(() => setStack((s) => s.slice(0, -1)), []);
+  const closeOverlay = useCallback(() => setStack([]), []);
+
   // Double-clicking an identifier resolves it to definitions, ranked by how
   // close each one is to the file it was clicked in: one opens straight away,
   // several offer a choice, none falls back to a plain text search.
-  const onSymbol = useCallback(async (name, from = "") => {
-    try {
-      const r = await api.resolveSymbol(name, from);
-      const defs = r.defs || [];
-      if (defs.length === 1) setOverlay({ type: "file", file: defs[0].file, line: defs[0].line });
-      else if (defs.length > 1) setOverlay({ type: "palette", query: name, seed: defs, source: r.source });
-      else setOverlay({ type: "search", query: name });
-    } catch {
-      setOverlay({ type: "search", query: name });
-    }
-  }, []);
+  const onSymbol = useCallback(
+    async (name, from = "", leftAt = 0) => {
+      try {
+        const r = await api.resolveSymbol(name, from);
+        const defs = r.defs || [];
+        if (defs.length === 1) pushOverlay({ type: "file", file: defs[0].file, line: defs[0].line }, leftAt);
+        else if (defs.length > 1)
+          pushOverlay({ type: "palette", query: name, seed: defs, source: r.source, from }, leftAt);
+        else pushOverlay({ type: "search", query: name }, leftAt);
+      } catch {
+        pushOverlay({ type: "search", query: name }, leftAt);
+      }
+    },
+    [pushOverlay],
+  );
 
   // Asking follows the cursor: the hovered line if there is one, otherwise the
   // file being read, otherwise the comparison as a whole.
@@ -310,24 +333,24 @@ export default function App() {
 
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setOverlay({ type: "palette" });
+        openOverlay({ type: "palette" });
         return;
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        setOverlay({ type: "search" });
+        openOverlay({ type: "search" });
         return;
       }
       if (mod || e.altKey) return;
 
       switch (e.key) {
         case "Escape":
-          setOverlay(null);
+          closeOverlay();
           setComposing(null);
           setAsk(null);
           break;
         case "?":
-          setOverlay({ type: "help" });
+          openOverlay({ type: "help" });
           break;
         case "j":
         case "k": {
@@ -371,7 +394,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     files, activePath, view, wrap, jumpToFile, toggleViewed, setView, setWrap,
-    loadDiff, loadThreads, startCommentAtCursor, askHere,
+    loadDiff, loadThreads, startCommentAtCursor, askHere, openOverlay, closeOverlay,
   ]);
 
   const onMouseOver = useCallback((e) => {
@@ -406,9 +429,9 @@ export default function App() {
           loadDiff({ keepActive: true });
           loadThreads();
         }}
-        onPalette={() => setOverlay({ type: "palette" })}
-        onSearch={() => setOverlay({ type: "search" })}
-        onHelp={() => setOverlay({ type: "help" })}
+        onPalette={() => openOverlay({ type: "palette" })}
+        onSearch={() => openOverlay({ type: "search" })}
+        onHelp={() => openOverlay({ type: "help" })}
         onAsk={() => setAsk((a) => (a ? null : { file: activePath || "" }))}
         askOn={!!ask}
       />
@@ -474,27 +497,34 @@ export default function App() {
           initialQuery={overlay.query || ""}
           seed={overlay.seed}
           source={overlay.source}
-          from={activePath}
-          onClose={() => setOverlay(null)}
-          onOpen={(h) => setOverlay({ type: "file", file: h.file, line: h.line })}
+          from={overlay.from || activePath}
+          onClose={closeOverlay}
+          onBack={behind && goBack}
+          backTo={trailLabel(behind)}
+          onOpen={(h) => pushOverlay({ type: "file", file: h.file, line: h.line })}
         />
       )}
       {overlay?.type === "search" && (
         <SearchPanel
           initialQuery={overlay.query || ""}
-          onClose={() => setOverlay(null)}
-          onOpen={({ file, line }) => setOverlay({ type: "file", file, line })}
+          onClose={closeOverlay}
+          onBack={behind && goBack}
+          backTo={trailLabel(behind)}
+          onOpen={({ file, line }) => pushOverlay({ type: "file", file, line })}
         />
       )}
       {overlay?.type === "file" && (
         <FileViewer
           file={overlay.file}
           line={overlay.line}
-          onClose={() => setOverlay(null)}
+          scroll={overlay.scroll || 0}
+          onClose={closeOverlay}
+          onBack={behind && goBack}
+          backTo={trailLabel(behind)}
           onSymbol={onSymbol}
         />
       )}
-      {overlay?.type === "help" && <HelpOverlay onClose={() => setOverlay(null)} />}
+      {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
     </div>
   );
 }
@@ -562,3 +592,13 @@ function stepChange(root, dir) {
 }
 
 const scopeKey = (s, diff) => diff?.scope?.label || (s.kind === "custom" ? "custom:" + s.rev : s.kind);
+
+// What the Back control says it leads to, so a step backwards is a known
+// destination rather than a guess.
+function trailLabel(o) {
+  if (!o) return "";
+  if (o.type === "file") return `${o.file}:${o.line}`;
+  if (o.type === "palette") return `definitions of ${o.query}`;
+  if (o.type === "search") return `search for ${o.query}`;
+  return "";
+}

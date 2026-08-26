@@ -61,7 +61,11 @@ mentions it. Results are ranked by distance from the file you are reading: same
 file, then same directory, then the nearest shared path. Names the index does
 not carry on its own (struct fields, parameters, locals) are found by a second
 pass that keeps only declaration-shaped lines, and the picker says when that is
-what you are looking at. `Ctrl/Cmd+Shift+F` is a repo-wide text search with
+what you are looking at. Jumps stack, so following a call into a definition and
+an identifier in *that* into another one leaves a trail: `Esc` or `Alt+←` steps
+back to where you came from — at the line you were reading, not the top of the
+file — and the `←` button in the header names the place it returns to.
+`Shift+Esc` leaves the whole chain at once. `Ctrl/Cmd+Shift+F` is a repo-wide text search with
 regex, case, whole word and glob filters. The symbol index is built in-process
 from the files git tracks, so there is nothing to install and no daemon to run.
 
@@ -102,7 +106,9 @@ serving a blank page.
 | `j` / `k` | next / previous file |
 | `n` / `p` | next / previous change |
 | `c` | comment on the line under the cursor |
-| `Esc` | dismiss the composer or close an overlay |
+| `Esc` | dismiss the composer, step back a definition, or close an overlay |
+| `Shift+Esc` | close an overlay outright, however deep the trail |
+| `Alt+←` | back to the previous definition |
 | `a` | ask Claude about the line under the cursor |
 | `v` | mark the current file viewed |
 | `u` | toggle split / unified |

@@ -16,6 +16,7 @@ const svg = (path, props = {}) => (p) => (
 
 export const IconChevron = svg(<path d="M6 12l4-4-4-4" />, { stroke: true });
 export const IconChevronDown = svg(<path d="M4 6l4 4 4-4" />, { stroke: true });
+export const IconBack = svg(<path d="M13 8H3.5M7 3.5L3 8l4 4.5" />, { stroke: true });
 export const IconFile = svg(<path d="M3 1.5h6L13 5.5v9H3z M9 1.5V6h4" />, { stroke: true });
 export const IconComment = svg(<path d="M2 3.5h12v8H8l-3.5 3v-3H2z" />, { stroke: true });
 export const IconSearch = svg(<><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></>, { stroke: true });
