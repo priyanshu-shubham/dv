@@ -39,11 +39,11 @@ func main() {
 
 func run() error {
 	var (
-		port    = flag.Int("port", 0, "port to listen on (0 picks one from the repository's path)")
-		host    = flag.String("host", "127.0.0.1", "address to bind")
-		dir     = flag.String("C", ".", "repository directory")
-		noOpen  = flag.Bool("no-open", false, "do not open a browser")
-		version = flag.Bool("version", false, "print version and exit")
+		port        = flag.Int("port", 0, "port to listen on (0 picks one from the repository's path)")
+		host        = flag.String("host", "127.0.0.1", "address to bind")
+		dir         = flag.String("C", ".", "repository directory")
+		noOpen      = flag.Bool("no-open", false, "do not open a browser")
+		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n       dv claude install\n\n"+
@@ -55,8 +55,8 @@ func run() error {
 	}
 	flag.Parse()
 
-	if *version {
-		fmt.Println("dv " + versionString)
+	if *showVersion {
+		fmt.Println("dv " + version)
 		return nil
 	}
 	switch cmd := flag.Arg(0); cmd {
@@ -133,7 +133,8 @@ func run() error {
 	return nil
 }
 
-const versionString = "0.1.0"
+// version is stamped in by release builds (see .goreleaser.yaml).
+var version = "dev"
 
 func excludeNotes(repo *gitx.Repo) {
 	if added, err := store.EnsureExcluded(repo.GitDir); err != nil {

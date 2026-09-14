@@ -177,16 +177,38 @@ answered first, and how a Yes's note reaches Claude.
 ## Install
 
 ```
+curl -fsSL https://raw.githubusercontent.com/priyanshu-shubham/dv/main/install.sh | sh
+```
+
+That fetches the latest release for your machine — Linux or macOS, x86-64 or
+ARM — checks it against the release's checksums, and puts `dv` in
+`~/.local/bin`. `DV_VERSION=v0.2.0` pins a release and `DV_INSTALL_DIR` picks
+another directory. On Windows, take the zip from the
+[releases page](https://github.com/priyanshu-shubham/dv/releases).
+
+dv needs `git`. `rg` is used for text search when present, with a built-in
+scanner as the fallback. If you use Claude Code, run `dv claude install` once.
+
+### From source
+
+```
 make install     # builds the UI bundle and the binary, installs to ~/.local/bin
 ```
 
-Requires Go 1.24+ and Node (for the one-time asset bundle). `rg` is used for
-text search when present, with a built-in scanner as the fallback.
+Requires Go 1.24+ and Node (for the one-time asset bundle).
 
 The UI bundle in `internal/server/static` is generated, not checked in, so
 `make build` is the one required step after cloning or after changing anything
 under `web/frontend`. A binary built without it refuses to start rather than
 serving a blank page.
+
+### Releasing
+
+Push a version tag — `git tag v0.2.0 && git push origin v0.2.0`. The release
+workflow runs the tests, builds every platform with GoReleaser and publishes the
+archives and `checksums.txt` as a GitHub release, which is what `install.sh`
+downloads. `goreleaser release --snapshot --clean` builds the same archives
+into `dist/` without publishing anything.
 
 ## Flags
 
@@ -266,6 +288,8 @@ internal/server      JSON API, SSE ask and prompt endpoints, embedded UI assets
 internal/ask         bridge to the `claude` CLI
 internal/permit      Claude Code's permission prompts: the hook and its install, the requests waiting, edit previews
 web/frontend         React UI, bundled by esbuild into internal/server/static
+install.sh           the curl | sh installer, reading the GitHub releases
+.goreleaser.yaml     release builds, run by .github/workflows/release.yml on a v* tag
 ```
 
 Diffs are computed in-process rather than parsed out of `git diff`, because the
@@ -273,3 +297,7 @@ UI wants both complete file sides in one payload — that is what makes expandin
 context free and keeps syntax highlighting correct across hunk boundaries. The
 algorithm is patience decomposition (split on lines unique to both sides) with a
 traced Myers search on the leftover blocks.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

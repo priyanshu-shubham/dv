@@ -1,0 +1,35 @@
+# Release build, run by .github/workflows/release.yml when a v* tag is pushed.
+# `goreleaser release --snapshot --clean` tries it locally without publishing.
+version: 2
+
+before:
+  hooks:
+    # The UI is embedded in the binary, so it is bundled first.
+    - sh -c "cd web/frontend && npm ci --no-audit --no-fund && npm run build"
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  # No version in the name, so releases/latest/download/<name> is a stable URL
+  # for install.sh.
+  - name_template: "dv_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
