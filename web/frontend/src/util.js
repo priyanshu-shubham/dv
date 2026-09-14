@@ -3,11 +3,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export const cx = (...parts) => parts.filter(Boolean).join(" ");
 
 // usePersisted keeps a small preference in localStorage so the viewer opens the
-// way you left it. Storage failures (private windows) degrade to in-memory.
-export function usePersisted(key, initial) {
+// way you left it; `session` keeps it for the tab only. Storage failures
+// (private windows) degrade to in-memory.
+export function usePersisted(key, initial, { session = false } = {}) {
+  const store = () => (session ? sessionStorage : localStorage);
   const read = () => {
     try {
-      const raw = localStorage.getItem("dv:" + key);
+      const raw = store().getItem("dv:" + key);
       return raw === null ? initial : JSON.parse(raw);
     } catch {
       return initial;
@@ -16,8 +18,8 @@ export function usePersisted(key, initial) {
   const [value, setValue] = useState(read);
   const keyRef = useRef(key);
 
-  // A changed key means we are now looking at different state — which files are
-  // marked viewed belongs to one comparison, not to whichever opened first.
+  // A changed key names different state, so it is read afresh rather than
+  // carrying the old key's value across.
   useEffect(() => {
     if (keyRef.current === key) return;
     keyRef.current = key;
@@ -28,7 +30,7 @@ export function usePersisted(key, initial) {
     setValue((prev) => {
       const next = typeof v === "function" ? v(prev) : v;
       try {
-        localStorage.setItem("dv:" + keyRef.current, JSON.stringify(next));
+        store().setItem("dv:" + keyRef.current, JSON.stringify(next));
       } catch {}
       return next;
     });
@@ -102,8 +104,8 @@ export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(
 export const modKey = isMac ? "⌘" : "Ctrl";
 
 // isTyping guards the single-key shortcuts so they do not fire while a comment
-// is being written. A checkbox is not text entry: leaving focus on the Viewed
-// box must not disable every shortcut on the page.
+// is being written. A checkbox is not text entry: leaving focus on one must not
+// disable every shortcut on the page.
 const NON_TEXT_INPUTS = new Set([
   "checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image",
 ]);
@@ -124,6 +126,10 @@ export const statusLabel = {
   T: "type changed",
 };
 
+// statusLetter is the letter VS Code decorates a changed file with, where an
+// untracked file is U rather than A.
+export const statusLetter = (f) => (f.untracked ? "U" : f.status);
+
 // LRM is a left-to-right mark. Elements that ellipsize a path at its *start*
 // do it with direction:rtl, which otherwise moves leading punctuation to the
 // end — ".dockerignore" renders as "dockerignore.". Prefixing the text with
@@ -135,6 +141,38 @@ export const LRM = "\u200e";
 export function splitPath(p) {
   const i = p.lastIndexOf("/");
   return i < 0 ? ["", p] : [p.slice(0, i + 1), p.slice(i + 1)];
+}
+
+// globMatcher compiles a comma-separated list of globs into a path test, or
+// null for an empty list. It speaks the search panel's dialect - a pattern
+// without a slash matches a name anywhere, one with a slash is anchored at the
+// root, `**` spans folders - plus one thing a file filter needs: a pattern that
+// names a folder matches everything inside it.
+export function globMatcher(list) {
+  const res = list
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean)
+    .map(globRegExp);
+  return res.length ? (path) => res.some((re) => re.test(path)) : null;
+}
+
+function globRegExp(glob) {
+  // A trailing slash only says "folder"; any other slash anchors the pattern.
+  let src = glob.slice(0, -1).includes("/") ? "^" : "(?:^|/)";
+  const body = glob.replace(/^\.?\//, "").replace(/\/$/, "");
+  for (let i = 0; i < body.length; i++) {
+    if (body.startsWith("**/", i)) {
+      src += "(?:.*/)?";
+      i += 2;
+    } else if (body.startsWith("**", i)) {
+      src += ".*";
+      i++;
+    } else if (body[i] === "*") src += "[^/]*";
+    else if (body[i] === "?") src += "[^/]";
+    else src += body[i].replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(src + "(?:/|$)", "i");
 }
 
 export function relTime(iso) {

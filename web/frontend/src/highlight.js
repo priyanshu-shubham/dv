@@ -65,13 +65,18 @@ const MAX_HIGHLIGHT_LINES = 12000;
 
 const cache = new Map();
 
+// langReady reports whether lang's grammar is registered. Lines highlighted
+// before it was are plain text, so callers recompute when this flips.
+export const langReady = (lang) => !!lang && !!hljs.getLanguage(lang);
+
 // highlightLines returns one HTML string per line of `lines`.
 export function highlightLines(key, lines, lang) {
+  const ready = langReady(lang);
   const hit = cache.get(key);
-  if (hit && hit.lines === lines) return hit.html;
+  if (hit && hit.lines === lines && hit.ready === ready) return hit.html;
 
   let html;
-  if (!lang || !hljs.getLanguage(lang) || lines.length > MAX_HIGHLIGHT_LINES) {
+  if (!ready || lines.length > MAX_HIGHLIGHT_LINES) {
     html = lines.map(escapeHtml);
   } else {
     try {
@@ -83,7 +88,7 @@ export function highlightLines(key, lines, lang) {
       html = lines.map(escapeHtml);
     }
   }
-  cache.set(key, { lines, html });
+  cache.set(key, { lines, ready, html });
   if (cache.size > 40) cache.delete(cache.keys().next().value);
   return html;
 }

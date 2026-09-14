@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
-import { cx, LRM, modKey, useDebounced } from "./util.js";
-import { ensureLanguage, escapeHtml, highlightLines } from "./highlight.js";
-import { IconBack, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
+import { cx, LRM, modKey, statusLabel, useDebounced } from "./util.js";
+import { ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
+import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -59,15 +59,40 @@ function sourceNote(source, n, name) {
   );
 }
 
+// usePaletteNav drives a result list from its input: arrows or Ctrl+N/P move
+// the selection, which is kept in sight, and Enter opens it.
+function usePaletteNav(count, open) {
+  const [sel, setSel] = useState(0);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    listRef.current?.querySelector(".on")?.scrollIntoView({ block: "nearest" });
+  }, [sel]);
+
+  const onKey = (e) => {
+    if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
+      e.preventDefault();
+      setSel((s) => Math.max(0, Math.min(count - 1, s + 1)));
+    } else if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
+      e.preventDefault();
+      setSel((s) => Math.max(0, s - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (sel < count) open(sel);
+    }
+    e.stopPropagation();
+  };
+  return { sel, setSel, onKey, listRef };
+}
+
 // SymbolPalette is the Cmd+K jump-to-definition list. It also serves as the
 // disambiguator when a double-clicked identifier has several definitions.
 export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOpen, onClose, onBack, backTo }) {
   const [q, setQ] = useState(initialQuery);
   const [hits, setHits] = useState(seed || []);
   const [status, setStatus] = useState(null);
-  const [sel, setSel] = useState(0);
   const debounced = useDebounced(q, 90);
-  const listRef = useRef(null);
+  const { sel, setSel, onKey, listRef } = usePaletteNav(hits.length, (i) => onOpen(hits[i]));
   const seeded = seed && q === initialQuery;
 
   useEffect(() => {
@@ -86,24 +111,6 @@ export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOp
       live = false;
     };
   }, [debounced, seeded, from]);
-
-  useEffect(() => {
-    listRef.current?.querySelector(".on")?.scrollIntoView({ block: "nearest" });
-  }, [sel]);
-
-  const onKey = (e) => {
-    if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
-      e.preventDefault();
-      setSel((s) => Math.min(hits.length - 1, s + 1));
-    } else if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
-      e.preventDefault();
-      setSel((s) => Math.max(0, s - 1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (hits[sel]) onOpen(hits[sel]);
-    }
-    e.stopPropagation();
-  };
 
   return (
     <Modal onClose={onClose} onBack={onBack} className="palette">
@@ -134,7 +141,8 @@ export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOp
           >
             <span className={cx("kind", "kind-" + h.kind)}>{h.kind}</span>
             <span className="sym" dangerouslySetInnerHTML={{ __html: markMatches(h.name, h.matches) }} />
-            {h.why && <span className="why">{h.why}</span>}
+            {/* Said once per run: the same reason on every row hides the one that differs. */}
+            {h.why && h.why !== hits[i - 1]?.why && <span className="why">{h.why}</span>}
             <span className="spacer" />
             <span className="dim loc">
               {LRM}
@@ -166,6 +174,87 @@ function markMatches(name, matches) {
     out += set.has(i) ? `<b>${escapeHtml(name[i])}</b>` : escapeHtml(name[i]);
   }
   return out;
+}
+
+// FilePalette is Cmd+P: any file in the repository, by a fuzzy match on its
+// path. Until something is typed it offers the files in this diff.
+export function FilePalette({ initialQuery = "", changed, onOpen, onClose, onBack, backTo }) {
+  const [q, setQ] = useState(initialQuery);
+  const [res, setRes] = useState(null);
+  const debounced = useDebounced(q.trim(), 60);
+  const hits = debounced ? res?.hits || [] : changed;
+  const { sel, setSel, onKey, listRef } = usePaletteNav(hits.length, (i) => onOpen(hits[i].path, q));
+  const status = useMemo(() => new Map(changed.map((f) => [f.path, f.status])), [changed]);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .files(debounced)
+      .then((r) => {
+        if (!live) return;
+        setRes(r);
+        setSel(0);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [debounced]);
+
+  return (
+    <Modal onClose={onClose} onBack={onBack} className="palette">
+      <div className="palette-input">
+        <Back onBack={onBack} to={backTo} />
+        <IconFile size={15} />
+        <input
+          autoFocus
+          value={q}
+          placeholder="Go to file..."
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onKey}
+        />
+      </div>
+      <div className="palette-list" ref={listRef}>
+        {hits.map((h, i) => {
+          const base = h.path.lastIndexOf("/") + 1;
+          // Offsets count bytes, which stop lining up with characters past ASCII.
+          // eslint-disable-next-line no-control-regex
+          const m = /[^\x00-\x7F]/.test(h.path) ? [] : h.matches || [];
+          const st = status.get(h.path);
+          return (
+            <button
+              key={h.path}
+              className={cx("palette-row", "file-hit", i === sel && "on")}
+              onMouseEnter={() => setSel(i)}
+              onClick={() => onOpen(h.path, q)}
+              title={st ? `${h.path} - ${statusLabel[st].toLowerCase()} in this diff` : h.path}
+            >
+              <span className={cx("dot", st ? "st-" + st : "unchanged")} />
+              <span
+                className="sym"
+                dangerouslySetInnerHTML={{ __html: markMatches(h.path.slice(base), m.map((x) => x - base)) }}
+              />
+              <span className="spacer" />
+              <span
+                className="dim loc"
+                dangerouslySetInnerHTML={{ __html: LRM + markMatches(h.path.slice(0, Math.max(0, base - 1)), m) }}
+              />
+            </button>
+          );
+        })}
+        {hits.length === 0 && (
+          <div className="empty">{debounced ? "No files match." : "Type to search the repository's files."}</div>
+        )}
+      </div>
+      {res && (
+        <div className="palette-foot dim">
+          {debounced
+            ? `${res.matched.toLocaleString()} of ${res.total.toLocaleString()} files match`
+            : `${changed.length} changed file${changed.length === 1 ? "" : "s"} - type to search all ${res.total.toLocaleString()}`}
+        </div>
+      )}
+    </Modal>
+  );
 }
 
 // SearchPanel is repo-wide text search, grouped by file.
@@ -288,8 +377,9 @@ function markSpans(text, spans) {
 }
 
 // FileViewer shows a whole source file, which is where symbol jumps and search
-// hits land. It is read-only on purpose: dv reviews, it does not edit.
-export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, onSymbol }) {
+// hits land. It is read-only on purpose: dv reviews, it does not edit. `side`
+// reads the file off that side of the scope instead of the working tree.
+export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBack, backTo, onSymbol }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [, force] = useState(0);
@@ -299,10 +389,10 @@ export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, on
     setData(null);
     setError("");
     api
-      .file(file)
+      .file(file, scope, side)
       .then(setData)
       .catch((e) => setError(e.message));
-  }, [file]);
+  }, [file, scope, side]);
 
   useEffect(() => {
     if (data?.lang) ensureLanguage(data.lang, () => force((n) => n + 1));
@@ -321,9 +411,10 @@ export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, on
     el?.scrollIntoView({ block: "center" });
   }, [data, line, scroll]);
 
+  const ready = langReady(data?.lang);
   const html = useMemo(
-    () => (data ? highlightLines("view:" + file, data.lines, data.lang) : []),
-    [data, file],
+    () => (data ? highlightLines(`view:${side || ""}:${file}`, data.lines, data.lang) : []),
+    [data, file, side, ready],
   );
 
   return (
@@ -331,7 +422,12 @@ export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, on
       <div className="viewer-head">
         <Back onBack={onBack} to={backTo} />
         <span className="path">{file}</span>
-        <span className="dim">:{line}</span>
+        {line > 0 && <span className="dim">:{line}</span>}
+        {data?.at && (
+          <span className="at" title={`The ${side} side of the comparison, not the working tree`}>
+            {data.at}
+          </span>
+        )}
         <span className="spacer" />
         <button className="ghost" onClick={onClose}>
           <IconX size={13} />
@@ -340,19 +436,22 @@ export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, on
       <div className="viewer-body" ref={bodyRef}>
         {error && <div className="empty error">{error}</div>}
         {!data && !error && <div className="empty">Loading...</div>}
-        {data &&
-          data.lines.map((_, i) => (
-            <div key={i} className={cx("vrow", i + 1 === line && "hit")} data-line={i + 1}>
-              <span className="ln">{i + 1}</span>
-              <code
-                onDoubleClick={() => {
-                  const sel = window.getSelection()?.toString().trim();
-                  if (sel && /^[A-Za-z_$][\w$]*$/.test(sel)) onSymbol(sel, file, bodyRef.current?.scrollTop || 0);
-                }}
-                dangerouslySetInnerHTML={{ __html: html[i] || "&nbsp;" }}
-              />
-            </div>
-          ))}
+        {data && (
+          <div className="viewer-lines">
+            {data.lines.map((_, i) => (
+              <div key={i} className={cx("vrow", i + 1 === line && "hit")} data-line={i + 1}>
+                <span className="ln">{i + 1}</span>
+                <code
+                  onDoubleClick={() => {
+                    const sel = window.getSelection()?.toString().trim();
+                    if (sel && /^[A-Za-z_$][\w$]*$/.test(sel)) onSymbol(sel, file, bodyRef.current?.scrollTop || 0);
+                  }}
+                  dangerouslySetInnerHTML={{ __html: html[i] || "&nbsp;" }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Modal>
   );
@@ -360,19 +459,23 @@ export function FileViewer({ file, line, scroll = 0, onClose, onBack, backTo, on
 
 export function HelpOverlay({ onClose }) {
   const keys = [
+    ["m", "Switch between Diff and Code"],
+    [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, "Go to symbol"],
     [`${modKey}+Shift+F`, "Search the repository"],
     ["/", "Filter the file list"],
-    ["j / k", "Next / previous file"],
+    ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
     ["n / p", "Next / previous change"],
+    ["f", "View the whole file at the focused line"],
     ["c", "Comment on the focused line"],
     ["a", "Ask Claude about the focused line"],
-    ["v", "Mark the current file viewed"],
+    ["v", "Mark the current file viewed, in Diff"],
     ["u", "Toggle split / unified"],
     ["w", "Toggle line wrapping"],
     ["r", "Reload the diff"],
     ["double-click", "Jump to a symbol's definition"],
-    ["Alt+Left", "Back to the previous definition"],
+    ["Alt+Left", "Back to the previous definition, or file in Code"],
+    ["Alt+Right", "Forward again, in Code"],
     ["select code", "Comment on the selected lines"],
     ["drag line numbers", "Comment on a range of lines"],
     ["click a gap bar", "Expand 20 more lines of context"],

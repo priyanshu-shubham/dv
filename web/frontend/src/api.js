@@ -22,16 +22,39 @@ export const api = {
 
   diffList: (scope) => req(`/api/diff?${scopeQuery(scope)}`),
 
+  // version fingerprints the repository; it moves whenever any diff could have.
+  version: () => req("/api/version"),
+
   diffFile: (scope, path) => {
     const p = scopeQuery(scope);
     p.set("path", path);
     return req(`/api/diff/file?${p}`);
   },
 
-  file: (path, rev = "") =>
-    req(`/api/file?${new URLSearchParams(rev ? { path, rev } : { path })}`),
+  // Without a side this is the working tree; with "old" or "new", that side of
+  // the scope, which is where the diff's line numbers come from.
+  file: (path, scope, side) => {
+    const p = side ? scopeQuery(scope) : new URLSearchParams();
+    p.set("path", path);
+    if (side) p.set("side", side);
+    return req(`/api/file?${p}`);
+  },
+
+  files: (q, limit = 60) => req(`/api/files?${new URLSearchParams({ q, limit: String(limit) })}`),
+
+  // tree lists every file on the scope's new side, for Code mode's explorer.
+  tree: (scope) => req(`/api/tree?${scopeQuery(scope)}`),
 
   threads: () => req("/api/threads"),
+
+  // key is the comparison's label: a file is viewed in one diff, not all of them.
+  viewed: (key) => req(`/api/viewed?${new URLSearchParams({ key })}`),
+
+  markViewed: (key, paths, viewed) =>
+    req("/api/viewed", { method: "POST", body: JSON.stringify({ key, paths, viewed }) }),
+
+  // reset deletes every comment and viewed mark, as `dv reset` does.
+  reset: () => req("/api/reset", { method: "POST" }),
 
   createThread: (body) =>
     req("/api/threads", { method: "POST", body: JSON.stringify(body) }),

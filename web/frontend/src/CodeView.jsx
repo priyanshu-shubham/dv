@@ -1,0 +1,121 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DiffBody } from "./FileDiff.jsx";
+import { AskButton } from "./AskPanel.jsx";
+import { newLineFor } from "./hunks.js";
+import { ensureLanguage } from "./highlight.js";
+import { cx, LRM, splitPath, statusLabel, statusLetter } from "./util.js";
+import { IconBack, IconForward, IconSplit } from "./icons.jsx";
+
+const NO_EXPAND = {};
+const noop = () => {};
+
+// CodeView is Code mode's reading pane: one file, whole and read-only, with
+// what the diff changed marked in the gutter. It renders through the diff's own
+// rows, so commenting, selecting, go-to-definition and n/p work as they do there.
+export default function CodeView({
+  path, entry, fd, error, at, threads, wrap, reveal, hit, composing, setComposing,
+  onComment, onThreadAction, onSymbol, onAsk, onDiff, onBack, onForward,
+}) {
+  const [selection, setSelection] = useState(null);
+  const [, force] = useState(0);
+  // A deleted file has nothing on the new side; it is read as it was.
+  const side = entry?.status === "D" ? "old" : "new";
+
+  useEffect(() => {
+    if (fd?.lang) ensureLanguage(fd.lang, () => force((n) => n + 1));
+  }, [fd?.lang]);
+  useEffect(() => setSelection(null), [path]);
+
+  const startComment = useCallback(
+    (s, start, end) => {
+      const src = s === "old" ? fd?.oldLines : fd?.newLines;
+      setComposing({ path, side: s, start, end, quote: src ? src.slice(start - 1, end) : [] });
+      setSelection(null);
+    },
+    [fd, path, setComposing],
+  );
+
+  // A comment on a removed line has no row of its own here, so it hangs under
+  // the line now standing in that line's place.
+  const shown = useMemo(() => {
+    if (side === "old" || !fd) return threads.filter((t) => t.side === side);
+    return threads.map((t) => (t.side === "old" ? { ...t, side: "new", endLine: newLineFor(fd, t.endLine) } : t));
+  }, [threads, fd, side]);
+
+  const [dir, name] = splitPath(path);
+
+  return (
+    <section className="file code-file" data-path={path} data-pending={(!fd && !error) || undefined}>
+      <header className="file-head">
+        <button className="nav" onClick={onBack} disabled={!onBack} title="Back (Alt+Left)">
+          <IconBack size={13} />
+        </button>
+        <button className="nav" onClick={onForward} disabled={!onForward} title="Forward (Alt+Right)">
+          <IconForward size={13} />
+        </button>
+        {entry && (
+          <span className={cx("badge", "st-" + statusLetter(entry))} title={(entry.untracked ? "untracked" : statusLabel[entry.status]) + " in this diff"}>
+            {statusLetter(entry)}
+          </span>
+        )}
+        <h3 className="file-path" title={path}>
+          <span className="dir">
+            {LRM}
+            {dir}
+            {LRM}
+          </span>
+          <span className="name">{name}</span>
+        </h3>
+        {at && (
+          <span className="at" title={`The ${side} side of the comparison, not the working tree`}>
+            {at}
+          </span>
+        )}
+        <span className="spacer" />
+        {entry && (
+          <>
+            <span className="stat">
+              <span className="add">+{entry.additions}</span>
+              <span className="del">-{entry.deletions}</span>
+            </span>
+            <button className="view-file" onClick={() => onDiff(path)} title="Show this file's diff (m)">
+              <IconSplit size={12} />
+              <span className="btn-label">Diff</span>
+            </button>
+          </>
+        )}
+        <AskButton onClick={() => onAsk({ file: path })} title="Ask Claude about this file" />
+      </header>
+      <div className={cx("file-body", wrap && "wrap")}>
+        {error && <div className="file-note error">{error}</div>}
+        {!fd && !error && <div className="file-note">Loading...</div>}
+        {fd?.binary && <div className="file-note">Binary file - not shown.</div>}
+        {fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
+        {fd && !fd.binary && !fd.tooLarge && (
+          <DiffBody
+            view="code"
+            side={side}
+            fd={fd}
+            contextLines={0}
+            expanded={NO_EXPAND}
+            onExpand={noop}
+            threads={shown}
+            selection={selection}
+            setSelection={setSelection}
+            composing={composing}
+            setComposing={setComposing}
+            onStartComment={startComment}
+            onComment={onComment}
+            onThreadAction={onThreadAction}
+            onSymbol={onSymbol}
+            onAsk={onAsk}
+            path={path}
+            wrap={wrap}
+            reveal={reveal}
+            hit={hit}
+          />
+        )}
+      </div>
+    </section>
+  );
+}

@@ -89,6 +89,8 @@ var (
 	protoRules = []rule{
 		r("type", `^\s*(?:message|service|enum)\s+(\w+)`),
 		r("method", `^\s*rpc\s+(\w+)`),
+		// Enum values: a lone name before the number. A field has its type first.
+		r("const", `^\s+([A-Z][A-Z0-9_]*)\s*=\s*-?\w+\s*[;\[]`),
 	}
 
 	makeRules = []rule{

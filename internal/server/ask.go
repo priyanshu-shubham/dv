@@ -116,7 +116,31 @@ func (s *Server) buildAskPrompt(req askRequest) (string, error) {
 			}
 		}
 		if entry == nil {
-			return "", fmt.Errorf("%s is not part of this diff", req.File)
+			// Code mode can ask about any file. One the comparison leaves alone
+			// has no diff to send, so it goes as it stands.
+			lines, _, err := s.repo.FileAt(req.File, sc, false)
+			if err != nil {
+				return "", err
+			}
+			from, to := 1, min(len(lines), 400)
+			if req.StartLine > 0 {
+				end := max(req.StartLine, req.EndLine)
+				fmt.Fprintf(&b, "The reviewer is reading %s, which this comparison does not change, at lines %d-%d.\n\n",
+					req.File, req.StartLine, end)
+				from, to = max(1, req.StartLine-40), min(len(lines), end+40)
+			} else {
+				fmt.Fprintf(&b, "The reviewer is reading %s, which this comparison does not change.\n\n", req.File)
+			}
+			b.WriteString("```\n")
+			for i := from; i <= to; i++ {
+				fmt.Fprintf(&b, "%5d  %s\n", i, lines[i-1])
+			}
+			b.WriteString("```\n")
+			if from > 1 || to < len(lines) {
+				fmt.Fprintf(&b, "(lines %d-%d of %d; use Read for the rest)\n", from, to, len(lines))
+			}
+			fmt.Fprintf(&b, "\nQuestion: %s\n", strings.TrimSpace(req.Question))
+			return b.String(), nil
 		}
 		fd, err := s.repo.Diff(sc, *entry)
 		if err != nil {

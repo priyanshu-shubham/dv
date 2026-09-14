@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import { api } from "./api.js";
 import { cx, modKey } from "./util.js";
 import {
-  IconBranch, IconChevronDown, IconKeyboard, IconMoon, IconRefresh,
-  IconSearch, IconSpark, IconSplit, IconSun, IconSymbol, IconUnified,
+  IconBranch, IconCheck, IconChevronDown, IconKeyboard, IconMoon, IconPin, IconRefresh,
+  IconSearch, IconSpark, IconSplit, IconSun, IconSymbol, IconUndo, IconUnified, IconWrap,
 } from "./icons.jsx";
 
+// AUTO is the scope dv starts on: whichever comparison has something in it,
+// followed as the work moves. Any other scope is a pin.
+export const AUTO = { kind: "auto", rev: "" };
+
 export default function Header({
-  meta, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
+  meta, mode, onMode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
   theme, onTheme, onRefresh, refreshing, onPalette, onSearch, onHelp, onAsk, askOn,
 }) {
   return (
@@ -26,35 +31,50 @@ export default function Header({
         </div>
       )}
 
-      <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} onScope={onScope} />
+      <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />
 
-      <span className="spacer" />
-
-      <div className="seg" role="group" aria-label="Diff layout">
-        <button className={cx(view === "split" && "on")} onClick={() => onView("split")} title="Split view (u toggles)">
-          <IconSplit size={14} />
+      <div className="seg mode-switch" role="group" aria-label="Mode">
+        <button className={cx(mode === "diff" && "on")} aria-pressed={mode === "diff"} onClick={() => onMode("diff")} title="The changes (m toggles)">
+          Diff
         </button>
-        <button className={cx(view === "unified" && "on")} onClick={() => onView("unified")} title="Unified view (u toggles)">
-          <IconUnified size={14} />
+        <button className={cx(mode === "code" && "on")} aria-pressed={mode === "code"} onClick={() => onMode("code")} title="The whole repository (m toggles)">
+          Code
         </button>
       </div>
 
-      <label className="ctx" title="Lines of context around each change">
-        ctx
-        <select value={contextLines} onChange={(e) => onContext(Number(e.target.value))}>
-          {[0, 3, 8, 20].map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
-      </label>
+      <span className="spacer" />
 
-      <button className={cx("icon", wrap && "on")} onClick={() => onWrap(!wrap)} title="Wrap long lines">
-        wrap
+      {mode === "diff" && (
+        <>
+          <div className="seg" role="group" aria-label="Diff layout">
+            <button className={cx(view === "split" && "on")} aria-pressed={view === "split"} onClick={() => onView("split")} title="Split view (u toggles)">
+              <IconSplit size={14} />
+            </button>
+            <button className={cx(view === "unified" && "on")} aria-pressed={view === "unified"} onClick={() => onView("unified")} title="Unified view (u toggles)">
+              <IconUnified size={14} />
+            </button>
+          </div>
+
+          <label className="ctx" title="Lines of context around each change">
+            ctx
+            <select value={contextLines} onChange={(e) => onContext(Number(e.target.value))}>
+              {[0, 3, 8, 20].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
+
+      <button className={cx("icon", wrap && "on")} aria-pressed={wrap} onClick={() => onWrap(!wrap)} title="Wrap long lines (w)">
+        <IconWrap size={14} />
       </button>
 
-      <button className={cx("icon", askOn && "on")} onClick={onAsk} title="Ask Claude about this change (a)">
+      <span className="divider" />
+
+      <button className={cx("icon", askOn && "on")} aria-pressed={askOn} onClick={onAsk} title="Ask Claude about this change (a)">
         <IconSpark size={14} />
       </button>
       <button className="icon" onClick={onPalette} title={`Go to symbol (${modKey}+K)`}>
@@ -77,66 +97,161 @@ export default function Header({
 }
 
 const PRESETS = [
-  { kind: "auto", label: "Auto", hint: "whichever of the below has something in it" },
-  { kind: "working", label: "Uncommitted", hint: "working tree vs HEAD" },
-  { kind: "staged", label: "Staged", hint: "index vs HEAD" },
-  { kind: "head", label: "Last commit", hint: "HEAD vs its parent" },
-  { kind: "branch", label: "This branch", hint: "since the merge base with the default branch" },
+  { kind: "working", label: "Uncommitted", hint: () => "working tree vs HEAD" },
+  { kind: "staged", label: "Staged", hint: () => "index vs HEAD" },
+  { kind: "head", label: "Last commit", hint: () => "HEAD vs its parent" },
+  { kind: "branch", label: "This branch", hint: (base) => (base ? `since it left ${base}` : "since the merge base") },
 ];
 
-function ScopePicker({ scope, resolved, meta, onScope }) {
-  const [open, setOpen] = useState(false);
-  const [custom, setCustom] = useState(scope.rev || "");
-  const ref = useRef(null);
+// readingLabel names what Code mode shows, which is the comparison's new side.
+// Automatic reads as the working tree even when it settled on the last commit:
+// it only does that with nothing uncommitted, so the files are the same.
+function readingLabel(scope, resolved) {
+  const at = resolved?.newAt || "";
+  if (scope.kind === "auto" || !at) return "Working tree";
+  if (at === "index") return "Staged";
+  if (scope.kind === "custom") {
+    const rev = scope.rev.trim();
+    const right = rev.includes("...") ? rev.split("...")[1] : rev.includes("..") ? rev.split("..")[1] : rev;
+    return right.trim() || "Working tree";
+  }
+  return at;
+}
 
+// ScopePicker chooses what the review compares. In the diff that is the
+// comparison itself; in Code mode it is the version being read - the working
+// tree, or any branch or commit, read-only.
+function ScopePicker({ scope, resolved, meta, mode, onScope }) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(scope.kind === "custom" ? scope.rev : "");
+  const [wouldShow, setWouldShow] = useState("");
+  const ref = useRef(null);
+  const auto = scope.kind === "auto";
+  const code = mode === "code";
+  const base = meta?.defaultBranch || "";
+
+  // A click outside or Escape anywhere closes it. Escape is taken in the
+  // capture phase so it closes only the menu, not whatever the page has open.
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     };
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+    };
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
   }, [open]);
 
-  const label = resolved?.label || PRESETS.find((p) => p.kind === scope.kind)?.label || scope.kind;
+  // What automatic would show now, so the way back says where it leads.
+  useEffect(() => {
+    if (!open || auto) return;
+    let live = true;
+    api.diffList(AUTO).then((r) => live && setWouldShow(r.scope?.label || "")).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [open, auto]);
+
+  const pick = (s) => {
+    onScope(s);
+    setOpen(false);
+  };
+
+  const label = code
+    ? readingLabel(scope, resolved)
+    : resolved?.label || PRESETS.find((p) => p.kind === scope.kind)?.label || scope.rev || scope.kind;
+
+  const worktree = auto || !resolved?.newAt;
+  const against = resolved?.picked === "branch" || scope.kind === "branch" ? base : resolved?.oldAt;
+  const branchRev = (b) => (base && b !== base ? `${base}...${b}` : b);
+  const branches = (meta?.branches || []).slice(0, 8);
+  const onBranch = scope.kind === "custom" && branches.some((b) => branchRev(b) === scope.rev);
 
   return (
     <div className="scope" ref={ref}>
-      <button className="scope-button" onClick={() => setOpen((o) => !o)}>
+      <button
+        className="scope-button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={[resolved?.desc, auto ? "follows your work" : "pinned for this tab"].filter(Boolean).join(" - ")}
+      >
         <span>{label}</span>
-        {resolved?.picked && <span className="auto-tag">auto</span>}
+        {!auto && <IconPin size={12} className="pin" />}
         <IconChevronDown size={12} />
       </button>
       {open && (
         <div className="scope-menu">
-          {PRESETS.map((p) => (
-            <button
-              key={p.kind}
-              className={cx("scope-item", scope.kind === p.kind && "on")}
-              onClick={() => {
-                onScope({ kind: p.kind, rev: "" });
-                setOpen(false);
-              }}
-            >
-              <span className="scope-label">{p.label}</span>
-              <span className="dim">{p.hint}</span>
-            </button>
-          ))}
+          {!auto && !code && (
+            <>
+              <button className="scope-item back" onClick={() => pick(AUTO)}>
+                <span className="scope-tick">
+                  <IconUndo size={12} />
+                </span>
+                <span className="scope-label">Back to automatic</span>
+                {wouldShow && <span className="scope-hint">would show {wouldShow}</span>}
+              </button>
+              <div className="scope-rule" />
+            </>
+          )}
 
-          <div className="scope-sep">Compare a range</div>
+          {code ? (
+            <>
+              <div className="scope-sep">Reading</div>
+              <ScopeItem
+                on={worktree}
+                label="Working tree"
+                sub={worktree && against ? `Changes marked against ${against}` : ""}
+                hint="files on disk"
+                onClick={() => pick(AUTO)}
+              />
+              {!worktree && !onBranch && (
+                <ScopeItem on mono={resolved?.newAt !== "index"} label={label} hint="read-only" onClick={() => setOpen(false)} />
+              )}
+              {branches.map((b) => (
+                <ScopeItem
+                  key={b}
+                  on={scope.kind === "custom" && scope.rev === branchRev(b)}
+                  mono
+                  label={b}
+                  hint={branchRev(b) === b ? "as committed" : `since it left ${base}`}
+                  onClick={() => pick({ kind: "custom", rev: branchRev(b) })}
+                />
+              ))}
+            </>
+          ) : (
+            PRESETS.map((p) => {
+              const on = auto ? resolved?.picked === p.kind : scope.kind === p.kind;
+              return (
+                <ScopeItem
+                  key={p.kind}
+                  on={on}
+                  label={p.label}
+                  hint={p.hint(base)}
+                  onClick={() => pick({ kind: p.kind, rev: "" })}
+                />
+              );
+            })
+          )}
+
+          <div className="scope-sep">{code ? "A commit or tag" : "Compare a range"}</div>
           <form
             className="scope-custom"
             onSubmit={(e) => {
               e.preventDefault();
-              if (custom.trim()) {
-                onScope({ kind: "custom", rev: custom.trim() });
-                setOpen(false);
-              }
+              if (custom.trim()) pick({ kind: "custom", rev: custom.trim() });
             }}
           >
             <input
               value={custom}
-              placeholder="main...HEAD, HEAD~3.., abc123"
+              placeholder={code ? "v0.1.0, HEAD~3, abc123" : "main...HEAD, HEAD~3.., abc123"}
               onChange={(e) => setCustom(e.target.value)}
               onKeyDown={(e) => e.stopPropagation()}
             />
@@ -145,25 +260,38 @@ function ScopePicker({ scope, resolved, meta, onScope }) {
             </button>
           </form>
 
-          {meta?.branches?.length > 0 && (
+          {!code && branches.length > 0 && (
             <div className="scope-chips">
-              {meta.branches.slice(0, 6).map((b) => (
-                <button
-                  key={b}
-                  onClick={() => {
-                    onScope({ kind: "custom", rev: `${b}...` });
-                    setOpen(false);
-                  }}
-                  title={`Everything since the merge base with ${b}`}
-                >
+              {branches.slice(0, 6).map((b) => (
+                <button key={b} onClick={() => pick({ kind: "custom", rev: `${b}...` })} title={`Everything since the merge base with ${b}`}>
                   {b}
                 </button>
               ))}
             </div>
           )}
-          {resolved?.desc && <div className="scope-desc">{resolved.desc}</div>}
+
+          <div className="scope-desc">
+            {code
+              ? "Branches and commits open read-only, as committed. Nothing is checked out."
+              : auto
+                ? "Follows your work: uncommitted changes, else this branch, else the last commit. Picking one pins it for this tab."
+                : "Pinned for this tab. A new dv session starts automatic again."}
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function ScopeItem({ on, label, sub, hint, mono, onClick }) {
+  return (
+    <button className={cx("scope-item", on && "on")} onClick={onClick}>
+      <span className="scope-tick">{on && <IconCheck size={12} />}</span>
+      <span className={cx("scope-label", mono && "mono")}>
+        {label}
+        {sub && <span className="scope-sub">{sub}</span>}
+      </span>
+      {hint && <span className="scope-hint">{hint}</span>}
+    </button>
   );
 }

@@ -74,6 +74,39 @@ func TestCommentsAreNotDefinitions(t *testing.T) {
 	}
 }
 
+func TestProtoDefinitions(t *testing.T) {
+	ix := build(t, map[string]string{
+		"users.proto": strings.Join([]string{
+			`syntax = "proto3";`,
+			"message User {",
+			"  string id = 1;",
+			"  Status status = 2;",
+			"  message Address { string line = 1; }",
+			"}",
+			"enum Status {",
+			"  STATUS_UNSPECIFIED = 0;",
+			"  STATUS_ACTIVE = 1 [deprecated = true];",
+			"}",
+			"service Users {",
+			"  rpc GetUser(GetUserRequest) returns (User);",
+			"}",
+		}, "\n"),
+	})
+	for name, kind := range map[string]string{
+		"User": "type", "Address": "type", "Status": "type", "Users": "type",
+		"GetUser": "method", "STATUS_UNSPECIFIED": "const", "STATUS_ACTIVE": "const",
+	} {
+		if got := ix.Lookup(name); len(got) != 1 || got[0].Kind != kind {
+			t.Errorf("%s: want one %s, got %+v", name, kind, got)
+		}
+	}
+	for _, field := range []string{"id", "status", "line"} {
+		if got := ix.Lookup(field); len(got) != 0 {
+			t.Errorf("indexed the field %s: %+v", field, got)
+		}
+	}
+}
+
 func TestCommentMarkerInsideStringDoesNotTruncate(t *testing.T) {
 	ix := build(t, map[string]string{
 		"a.go": "package a\n\nvar Endpoint = \"https://example.com/x\" // trailing\n",

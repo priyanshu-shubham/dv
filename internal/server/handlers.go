@@ -39,6 +39,9 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
+	// Taken before listing, so an edit that lands mid-request reads as newer on
+	// the client's next poll rather than being folded into this one unnoticed.
+	version, _ := s.repo.Version()
 	sc, ok := s.scopeFromRequest(w, r)
 	if !ok {
 		return
@@ -52,9 +55,25 @@ func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
 		files = []gitx.FileEntry{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scope": sc,
-		"files": files,
-		"head":  s.repo.Head(),
+		"scope":   sc,
+		"files":   files,
+		"head":    s.repo.Head(),
+		"version": version,
+	})
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	v, err := s.repo.Version()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	// The notes are fingerprinted apart from the repository: they change on
+	// their own, and a page follows them without reloading the diff.
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version":  v,
+		"comments": s.store.Version(),
+		"viewed":   s.viewed.Version(),
 	})
 }
 
@@ -90,6 +109,8 @@ func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
 	writeErr(w, http.StatusNotFound, fmt.Errorf("%s is not part of this diff", path))
 }
 
+// handleFile serves the viewer: the working tree, or with side=old|new, that
+// side of the scope the request names.
 func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	path := q.Get("path")
@@ -97,7 +118,14 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("path is required"))
 		return
 	}
-	lines, err := s.repo.FileAt(path, q.Get("rev"))
+	var sc *gitx.Scope
+	if q.Get("side") != "" {
+		var ok bool
+		if sc, ok = s.scopeFromRequest(w, r); !ok {
+			return
+		}
+	}
+	lines, at, err := s.repo.FileAt(path, sc, q.Get("side") == "old")
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -106,11 +134,90 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		"path":  path,
 		"lines": lines,
 		"lang":  gitx.LangFor(path),
+		"at":    at,
 	})
 }
 
+// handleTree lists the whole repository as the scope's new side has it.
+func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
+	sc, ok := s.scopeFromRequest(w, r)
+	if !ok {
+		return
+	}
+	files, err := s.repo.SideFiles(sc)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if files == nil {
+		files = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// handleFiles is quick open: every file in the repository, ranked against q.
+func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	paths, err := s.repo.TrackedFiles()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 60
+	}
+	hits, matched := symindex.RankPaths(paths, q.Get("q"), limit)
+	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "matched": matched, "total": len(paths)})
+}
+
+// handleThreads and handleViewed take the version first, as handleDiffList
+// does, so a write landing mid-request reads as newer on the next poll.
 func (s *Server) handleThreads(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"threads": s.store.Threads()})
+	version := s.store.Version()
+	writeJSON(w, http.StatusOK, map[string]any{"threads": s.store.Threads(), "version": version})
+}
+
+func (s *Server) handleViewed(w http.ResponseWriter, r *http.Request) {
+	version := s.viewed.Version()
+	paths := s.viewed.Paths(r.URL.Query().Get("key"))
+	writeJSON(w, http.StatusOK, map[string]any{"paths": paths, "version": version})
+}
+
+func (s *Server) handleMarkViewed(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key    string   `json:"key"`
+		Paths  []string `json:"paths"`
+		Viewed bool     `json:"viewed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Key == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("key is required"))
+		return
+	}
+	if err := s.viewed.Mark(req.Key, req.Paths, req.Viewed); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleReset is `dv reset` from the page: every comment and viewed mark goes.
+func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
+	threads, err := s.store.Reset()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	marks, err := s.viewed.Reset()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"threads": threads, "marks": marks})
 }
 
 type threadReq struct {

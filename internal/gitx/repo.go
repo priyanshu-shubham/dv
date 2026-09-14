@@ -9,9 +9,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -116,6 +118,59 @@ func (r *Repo) Head() HeadRef {
 	return h
 }
 
+// Version fingerprints what every scope is computed from - HEAD, the index,
+// and the content of each changed or untracked file - so a client can poll it
+// to learn that the diff it is showing has gone stale. It is one `git status`.
+func (r *Repo) Version() (string, error) {
+	// Plain status refreshes the index under index.lock; polled, that makes the
+	// user's own commits fail now and then on the lock.
+	out, err := r.run("--no-optional-locks", "status", "--porcelain=v2", "-z",
+		"--branch", "--no-ahead-behind", "--untracked-files=all")
+	if err != nil {
+		return "", err
+	}
+	h := fnv.New64a()
+	h.Write([]byte(out))
+	// status says which files differ, not what they now hold: a second edit to
+	// an already modified file shows only in its size and mtime.
+	for _, p := range statusPaths(out) {
+		if fi, err := os.Lstat(filepath.Join(r.Root, p)); err == nil {
+			fmt.Fprintf(h, "\x00%d.%d", fi.Size(), fi.ModTime().UnixNano())
+		}
+	}
+	return strconv.FormatUint(h.Sum64(), 36), nil
+}
+
+// statusPaths pulls the paths out of `git status --porcelain=v2 -z`.
+func statusPaths(z string) []string {
+	var paths []string
+	fields := strings.Split(z, "\x00")
+	for i := 0; i < len(fields); i++ {
+		rec := fields[i]
+		if len(rec) < 3 {
+			continue
+		}
+		switch rec[0] {
+		case '1':
+			if f := strings.SplitN(rec, " ", 9); len(f) == 9 {
+				paths = append(paths, f[8])
+			}
+		case '2':
+			if f := strings.SplitN(rec, " ", 10); len(f) == 10 {
+				paths = append(paths, f[9])
+			}
+			i++ // the rename's original path follows as a field of its own
+		case 'u':
+			if f := strings.SplitN(rec, " ", 11); len(f) == 11 {
+				paths = append(paths, f[10])
+			}
+		case '?':
+			paths = append(paths, rec[2:])
+		}
+	}
+	return paths
+}
+
 // DefaultBranch guesses the repository's trunk, used by the "branch" scope. It
 // prefers the remote's HEAD, then the conventional names, then gives up.
 func (r *Repo) DefaultBranch() string {
@@ -205,13 +260,31 @@ func (r *Repo) worktreeFile(path string) ([]byte, bool, error) {
 // TrackedFiles lists every file git knows about plus untracked-but-not-ignored
 // ones. It is the corpus for the symbol index and repo-wide search.
 func (r *Repo) TrackedFiles() ([]string, error) {
-	out, err := r.run("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	return r.paths("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+}
+
+// SideFiles lists every file on the new side of the scope: the repository as
+// the diff leaves it, which is what Code mode browses.
+func (r *Repo) SideFiles(s *Scope) ([]string, error) {
+	switch {
+	case s.new.worktree:
+		return r.TrackedFiles()
+	case s.new.index:
+		return r.paths("ls-files", "--cached", "-z")
+	}
+	return r.paths("ls-tree", "-r", "--name-only", "-z", s.new.rev)
+}
+
+// paths runs a git listing that prints NUL-separated paths.
+func (r *Repo) paths(args ...string) ([]string, error) {
+	out, err := r.run(args...)
 	if err != nil {
 		return nil, err
 	}
 	var files []string
 	for _, p := range strings.Split(out, "\x00") {
-		if p != "" {
+		// A conflicted path is listed once per merge stage, one after another.
+		if p != "" && (len(files) == 0 || files[len(files)-1] != p) {
 			files = append(files, p)
 		}
 	}

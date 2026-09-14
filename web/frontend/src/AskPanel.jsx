@@ -18,10 +18,16 @@ const PRESETS = [
 ];
 
 const DEFAULT_WIDTH = 430;
-const MIN_WIDTH = 320;
+const MIN_WIDTH = 220;
+// Below this the panel floats over the diff (styles.css has the same width).
+const DRAWER = "(max-width: 900px)";
 
-// Leave enough of the diff visible that the panel stays a side panel.
-const clampWidth = (w) => Math.max(MIN_WIDTH, Math.min(w, Math.max(MIN_WIDTH, window.innerWidth - 560)));
+// As a column it leaves enough of the diff that it stays a side panel; as a
+// drawer it only has to leave an edge of the diff to click back into.
+const clampWidth = (w) => {
+  const room = window.matchMedia(DRAWER).matches ? window.innerWidth - 60 : window.innerWidth - 560;
+  return Math.max(MIN_WIDTH, Math.min(w, Math.max(MIN_WIDTH, room)));
+};
 
 // AskPanel is a conversation about one slice of the diff. Follow-ups continue
 // the same CLI session, so the diff and earlier answers stay in context without
@@ -47,7 +53,7 @@ export default function AskPanel({ target, scope, onClose, onSaveComment }) {
     e.preventDefault();
     drag.current = { x: e.clientX, w: rootRef.current.offsetWidth, to: 0 };
     e.currentTarget.setPointerCapture(e.pointerId);
-    document.body.classList.add("resizing");
+    document.body.classList.add("resizing", "resizing-ask");
   };
   const onResizeMove = (e) => {
     const d = drag.current;
@@ -59,7 +65,7 @@ export default function AskPanel({ target, scope, onClose, onSaveComment }) {
     const d = drag.current;
     if (!d) return;
     drag.current = null;
-    document.body.classList.remove("resizing");
+    document.body.classList.remove("resizing", "resizing-ask");
     if (d.to) setWidth(d.to);
   };
 
@@ -390,7 +396,8 @@ function ModelMenu({ models, value, label, onChange }) {
 export function AskButton({ className, onClick, title }) {
   return (
     <button className={cx("ask-btn", className)} onClick={onClick} title={title || "Ask Claude about this"}>
-      <IconSpark size={12} /> Ask
+      <IconSpark size={12} />
+      <span className="btn-label">Ask</span>
     </button>
   );
 }

@@ -1,10 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { buildBlocks, pairRows, unifiedRows } from "./hunks.js";
+import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
-import { applyRanges, ensureLanguage, highlightLines } from "./highlight.js";
-import { charWidth, cx, splitPath, statusLabel, useElementWidth, visualLength } from "./util.js";
+import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { charWidth, cx, LRM, splitPath, statusLabel, statusLetter, useElementWidth, visualLength } from "./util.js";
 import { ThreadList, Composer } from "./Threads.jsx";
-import { IconCheck, IconChevron, IconChevronDown } from "./icons.jsx";
+import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "./icons.jsx";
 import { AskButton } from "./AskPanel.jsx";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
@@ -15,7 +15,7 @@ import { AskButton } from "./AskPanel.jsx";
 function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
-  isActive, composing, setComposing, onAsk, reveal, generatedHidden, onShowGenerated,
+  isActive, composing, setComposing, onAsk, onView, reveal, generatedHidden, onShowGenerated,
 }) {
   const [expanded, setExpanded] = useState({});
   const [selection, setSelection] = useState(null); // { side, start, end }
@@ -27,6 +27,8 @@ function FileDiff({
 
   const [dir, name] = splitPath(entry.path);
   const openThreads = threads.filter((t) => !t.resolved).length;
+  // An added or deleted file has one side; split would leave half of it blank.
+  const oneSided = entry.status === "A" || entry.status === "D";
 
   const expand = useCallback((id, amount) => {
     setExpanded((e) => ({
@@ -45,32 +47,63 @@ function FileDiff({
     [fd, entry.path, setComposing],
   );
 
+  // A body that is on its way; stepping between changes has to be able to
+  // find it before it has any rows.
+  const pending = !collapsed && !generatedHidden && !fd && !error;
+
   return (
-    <section className={cx("file", isActive && "file-active")} id={`file-${cssId(entry.path)}`} data-path={entry.path}>
+    <section
+      className={cx("file", isActive && "file-active")}
+      id={`file-${cssId(entry.path)}`}
+      data-path={entry.path}
+      data-pending={pending || undefined}
+    >
       <header className="file-head">
         <button className="file-collapse" onClick={() => onToggleCollapse(entry.path)} title={collapsed ? "Expand" : "Collapse"}>
           {collapsed ? <IconChevron /> : <IconChevronDown />}
         </button>
-        <span className={cx("badge", "st-" + entry.status)} title={statusLabel[entry.status]}>
-          {entry.status}
+        <span className={cx("badge", "st-" + statusLetter(entry))} title={entry.untracked ? "untracked" : statusLabel[entry.status]}>
+          {statusLetter(entry)}
         </span>
         <h3 className="file-path" title={entry.path}>
-          <span className="dim">{dir}</span>
-          {name}
+          <span className="dir">
+            {LRM}
+            {dir}
+            {LRM}
+          </span>
+          <span className="name">{name}</span>
         </h3>
         {entry.oldPath && <span className="renamed-from">from {entry.oldPath}</span>}
         {entry.generated && <span className="tag-generated" title="Machine-written; see the README for what counts">generated</span>}
         <span className="spacer" />
-        {openThreads > 0 && <span className="file-comments">{openThreads} open</span>}
-        <AskButton onClick={() => onAsk({ file: entry.path })} title="Ask Claude about this file's diff" />
+        {openThreads > 0 && (
+          <span className="file-comments">
+            <IconComment size={12} /> {openThreads}
+            <span className="btn-label">open</span>
+          </span>
+        )}
         <span className="stat">
           <span className="add">+{entry.additions}</span>
           <span className="del">-{entry.deletions}</span>
         </span>
-        <label className="viewed">
-          <input type="checkbox" checked={viewed} onChange={() => onToggleViewed(entry.path)} />
-          <IconCheck size={13} /> Viewed
-        </label>
+        <button
+          className="view-file"
+          onClick={() => onView(entry.path)}
+          title={entry.status === "D" ? "View the file as it was before it was deleted (f)" : "View the whole file (f)"}
+        >
+          <IconFile size={12} />
+          <span className="btn-label">File</span>
+        </button>
+        <AskButton onClick={() => onAsk({ file: entry.path })} title="Ask Claude about this file's diff" />
+        <button
+          className={cx("btn", "outline", "viewed", viewed && "on")}
+          aria-pressed={viewed}
+          onClick={() => onToggleViewed(entry.path)}
+          title="Mark the file viewed (v)"
+        >
+          <IconCheck size={12} />
+          <span className="btn-label">Viewed</span>
+        </button>
       </header>
 
       {!collapsed && generatedHidden && (
@@ -98,7 +131,7 @@ function FileDiff({
           {fd && !fd.binary && !fd.tooLarge && (
             <DiffBody
               fd={fd}
-              view={view}
+              view={oneSided && view === "split" ? "unified" : view}
               contextLines={contextLines}
               expanded={expanded}
               onExpand={expand}
@@ -131,14 +164,37 @@ export const cssId = (p) => p.replace(/[^A-Za-z0-9_-]/g, "_");
 // a skipped block's height, which the browser replaces once it has rendered it.
 const ROW_HEIGHT = 20;
 
-function DiffBody({
-  fd, view, contextLines, expanded, onExpand, threads, selection, setSelection,
+// The code cell's +/- slot and its padding-right, from styles.css.
+const SIGN_PX = 12;
+const TRAIL_PX = 16;
+
+// Code mode renders a file through the same rows as a diff - one column, every
+// line, in runs this long so virtualisation still has blocks to let go of.
+const CODE_BLOCK = 200;
+
+// DiffBody renders a file's rows. view "code" is Code mode: just `side` of the
+// file, whole, with changes marked in the gutter.
+export function DiffBody({
+  fd, view, side, contextLines, expanded, onExpand, threads, selection, setSelection,
   composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAsk, path, wrap,
-  reveal,
+  reveal, hit = 0,
 }) {
-  const blocks = useMemo(() => buildBlocks(fd, contextLines, expanded), [fd, contextLines, expanded]);
-  const oldHtml = useMemo(() => highlightLines(path + " old", fd.oldLines, fd.lang), [path, fd]);
-  const newHtml = useMemo(() => highlightLines(path + " new", fd.newLines, fd.lang), [path, fd]);
+  // Where comments hang, which stay in view whatever the context setting.
+  const anchors = useMemo(() => {
+    const out = threads.map((t) => ({ side: t.side, start: t.startLine, end: t.endLine }));
+    if (composing) out.push({ side: composing.side, start: composing.start, end: composing.end });
+    return out;
+  }, [threads, composing]);
+  const blocks = useMemo(() => {
+    if (view !== "code") return buildBlocks(fd, contextLines, expanded, anchors);
+    const lines = codeLines(fd, side);
+    const out = [];
+    for (let i = 0; i < lines.length; i += CODE_BLOCK) out.push({ kind: "rows", lines: lines.slice(i, i + CODE_BLOCK) });
+    return out;
+  }, [fd, view, side, contextLines, expanded, anchors]);
+  const ready = langReady(fd.lang);
+  const oldHtml = useMemo(() => highlightLines(path + " old", fd.oldLines, fd.lang), [path, fd, ready]);
+  const newHtml = useMemo(() => highlightLines(path + " new", fd.newLines, fd.lang), [path, fd, ready]);
 
   // Threads keyed by the row they hang under, so rendering stays a lookup.
   const byAnchor = useMemo(() => {
@@ -221,11 +277,11 @@ function DiffBody({
   const ctx = useMemo(
     () => ({
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit,
     }),
     [
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit,
     ],
   );
 
@@ -246,14 +302,13 @@ function DiffBody({
     };
     const oldCols = widest(fd.oldLines);
     const newCols = widest(fd.newLines);
-    // 12px for the +/- sign plus 16px of trailing padding.
-    const px = (cols) => Math.ceil(cols * cw) + 28;
+    const px = (cols) => Math.ceil(cols * cw) + SIGN_PX + TRAIL_PX;
     return { old: px(oldCols), new: px(newCols), both: px(Math.max(oldCols, newCols)) };
   }, [fd]);
 
   const split = view === "split";
-  // Roughly what the gutter occupies: one line number in split, two in unified.
-  const gutter = split ? 46 : 86;
+  // What the gutter occupies: one line number in split and code, two in unified.
+  const gutter = view === "unified" ? 96 : 60;
 
   // What a rendered row is actually as wide as, gutter included, reported by
   // the blocks on screen. It only ever grows, so the scroll range does not
@@ -267,14 +322,17 @@ function DiffBody({
   // The estimate covers the lines that are not mounted; the measurement covers
   // the ones that are. Whichever is larger is the honest width.
   const paneWidth = split ? widthPx / 2 : widthPx;
+  // Code mode shows one side, so a long line only the other side has must not widen it.
+  const single = view === "code" ? content[side === "old" ? "old" : "new"] : content.both;
   const need = {
     old: Math.max(content.old + gutter, measured.old),
     new: Math.max(content.new + gutter, measured.new),
-    both: Math.max(content.both + gutter, measured.old, measured.new),
+    both: Math.max(single + gutter, measured.old, measured.new),
   };
-  const overflows =
-    !wrap && widthPx > 0 &&
-    (split ? need.old > paneWidth || need.new > paneWidth : need.both > paneWidth);
+  // The trailing padding is only room past the end of a scrolled line, so a
+  // line that fits without it needs no scrollbar.
+  const fits = (px) => px - TRAIL_PX <= paneWidth;
+  const overflows = !wrap && widthPx > 0 && (split ? !fits(need.old) || !fits(need.new) : !fits(need.both));
 
   // Pre-negated: the stylesheet uses the variable straight, so scrolling does
   // not re-evaluate a calc() on every code element in the file.
@@ -305,8 +363,9 @@ function DiffBody({
     const onWheel = (e) => {
       const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;
       if (!dx) return;
+      // One column has one bar, and it is barOld; split has one per side.
       const cell = e.target.closest?.("[data-side]");
-      const bar = split && cell?.dataset.side === "old" ? barOld.current : barNew.current;
+      const bar = !split || cell?.dataset.side === "old" ? barOld.current : barNew.current;
       if (!bar) return;
       e.preventDefault();
       bar.scrollLeft += dx;
@@ -319,7 +378,8 @@ function DiffBody({
     <div
       // hscroll gates the per-line transform. Files that fit - nearly all of
       // them - must not pay for a transform node on every line they render.
-      className={cx("diff", split ? "diff-split" : "diff-unified", overflows && "hscroll")}
+      // Code mode is one column, so it scrolls sideways the way unified does.
+      className={cx("diff", split ? "diff-split" : "diff-unified", view === "code" && "diff-code", overflows && "hscroll")}
       ref={rootRef}
     >
       {blocks.map((b, i) =>
@@ -327,9 +387,9 @@ function DiffBody({
           <GapRow key={b.id + i} gap={b} onExpand={onExpand} />
         ) : (
           <Block
-            key={`${i}:${split}:${wrap}`}
+            key={`${i}:${view}:${wrap}`}
             lines={b.lines}
-            split={split}
+            view={view}
             wrap={wrap}
             ctx={ctx}
             onMeasure={onMeasure}
@@ -391,7 +451,7 @@ function holdsLine(lines, line) {
   return lines.some((l) => l.o === i || l.n === i);
 }
 
-function Block({ lines, split, wrap, ctx, onMeasure, force }) {
+function Block({ lines, view, wrap, ctx, onMeasure, force }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
   // force keeps the block holding a jump's target line mounted even while it is
@@ -401,10 +461,13 @@ function Block({ lines, split, wrap, ctx, onMeasure, force }) {
   // replacement, so a block of 14 lines can render as 7 rows. Getting this
   // wrong makes every spacer the wrong height and the page walks under you.
   const rows = useMemo(
-    () => (split ? pairRows(lines).length : unifiedRows(lines).length),
-    [lines, split],
+    () => (view === "split" ? pairRows(lines).length : view === "code" ? lines.length : unifiedRows(lines).length),
+    [lines, view],
   );
   const height = useRef(rows * ROW_HEIGHT);
+  // Marks a block with changes in it even while it is only a spacer, so
+  // stepping to the next change can find one that is not rendered.
+  const changes = useMemo(() => lines.some((l) => l.t !== "e" || l.mark), [lines]);
 
   useEffect(() => {
     const el = ref.current;
@@ -458,8 +521,20 @@ function Block({ lines, split, wrap, ctx, onMeasure, force }) {
   }, [shown, onMeasure, lines]);
 
   return (
-    <div className="block" ref={ref} style={shown ? undefined : { height: height.current }}>
-      {shown && (split ? <SplitRows lines={lines} ctx={ctx} /> : <UnifiedRows lines={lines} ctx={ctx} />)}
+    <div
+      className="block"
+      ref={ref}
+      style={shown ? undefined : { height: height.current }}
+      data-changes={changes || undefined}
+    >
+      {shown &&
+        (view === "split" ? (
+          <SplitRows lines={lines} ctx={ctx} />
+        ) : view === "code" ? (
+          <CodeRows lines={lines} ctx={ctx} />
+        ) : (
+          <UnifiedRows lines={lines} ctx={ctx} />
+        ))}
     </div>
   );
 }
@@ -564,6 +639,27 @@ const UnifiedRows = memo(function UnifiedRows({ lines, ctx }) {
   });
 });
 
+// CodeRows is Code mode: one line per row, from whichever side the lines came
+// off (a deleted file has only its old one), its change mark as a class.
+const CodeRows = memo(function CodeRows({ lines, ctx }) {
+  return lines.flatMap((l, i) => {
+    const side = l.n < 0 ? "old" : "new";
+    const idx = side === "old" ? l.o : l.n;
+    return [
+      <div className="row" key={"r" + i}>
+        <LineCell
+          ctx={ctx}
+          side={side}
+          no={idx + 1}
+          html={(side === "old" ? ctx.oldHtml : ctx.newHtml)[idx]}
+          mark={l.mark && "mk mk-" + l.mark}
+        />
+      </div>,
+      ...anchorNodes({ side, no: idx + 1 }, ctx, `t${i}`),
+    ];
+  });
+});
+
 // anchorNodes renders any threads anchored at a line plus the open composer.
 function anchorNodes(anchor, ctx, key) {
   const nodes = [];
@@ -646,7 +742,7 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
   const body = ranges?.length ? applyRanges(html ?? "", ranges, "wd") : html ?? "";
 
   return (
-    <div className={cx("cell", mark, selected && "sel")} data-side={side} data-line={no}>
+    <div className={cx("cell", mark, selected && "sel", ctx.hit === no && "hit")} data-side={side} data-line={no}>
       {/* The gutter's "+" affordance and the +/- sign are both CSS
           pseudo-elements. As real nodes they were five extra elements on every
           line, and a large review renders tens of thousands of lines. Clicking

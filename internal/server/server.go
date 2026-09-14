@@ -37,15 +37,16 @@ func AssetsBuilt() bool {
 	return true
 }
 
-// Server wires the three pieces of state a review needs.
+// Server wires the state a review needs.
 type Server struct {
-	repo  *gitx.Repo
-	store *store.Store
-	index *symindex.Index
+	repo   *gitx.Repo
+	store  *store.Store
+	viewed *store.Viewed
+	index  *symindex.Index
 }
 
-func New(repo *gitx.Repo, st *store.Store, ix *symindex.Index) *Server {
-	return &Server{repo: repo, store: st, index: ix}
+func New(repo *gitx.Repo, st *store.Store, vw *store.Viewed, ix *symindex.Index) *Server {
+	return &Server{repo: repo, store: st, viewed: vw, index: ix}
 }
 
 // Handler builds the route table.
@@ -55,7 +56,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/diff", s.handleDiffList)
 	mux.HandleFunc("GET /api/diff/file", s.handleDiffFile)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/file", s.handleFile)
+	mux.HandleFunc("GET /api/files", s.handleFiles)
+	mux.HandleFunc("GET /api/tree", s.handleTree)
 
 	mux.HandleFunc("GET /api/threads", s.handleThreads)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
@@ -64,6 +68,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("PATCH /api/threads/{id}/comments/{cid}", s.handleEditComment)
 	mux.HandleFunc("DELETE /api/threads/{id}/comments/{cid}", s.handleDeleteComment)
+
+	mux.HandleFunc("GET /api/viewed", s.handleViewed)
+	mux.HandleFunc("POST /api/viewed", s.handleMarkViewed)
+	mux.HandleFunc("POST /api/reset", s.handleReset)
 
 	mux.HandleFunc("GET /api/symbols", s.handleSymbols)
 	mux.HandleFunc("GET /api/symbols/status", s.handleSymbolStatus)

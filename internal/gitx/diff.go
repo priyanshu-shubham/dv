@@ -3,6 +3,8 @@ package gitx
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -33,6 +35,10 @@ type Scope struct {
 	Label  string `json:"label"`            // short human label, e.g. "main...HEAD"
 	Desc   string `json:"desc"`             // one-line explanation shown under the picker
 	Picked string `json:"picked,omitempty"` // for kind=auto, the concrete kind it settled on
+	// Where each side is read from, to label a file shown off it; empty for
+	// the working tree.
+	OldAt string `json:"oldAt,omitempty"`
+	NewAt string `json:"newAt,omitempty"`
 
 	old, new         side
 	includeUntracked bool
@@ -61,6 +67,15 @@ func (r *Repo) baseSide() side {
 
 // ResolveScope turns a picker selection into concrete comparison sides.
 func (r *Repo) ResolveScope(kind, rev string) (*Scope, error) {
+	s, err := r.resolve(kind, rev)
+	if err != nil {
+		return nil, err
+	}
+	s.OldAt, s.NewAt = s.old.name(), s.new.name()
+	return s, nil
+}
+
+func (r *Repo) resolve(kind, rev string) (*Scope, error) {
 	s := &Scope{Kind: kind, Rev: rev}
 	switch kind {
 	case "auto":
@@ -271,16 +286,21 @@ type FileEntry struct {
 	// Generated means machine-written: still listed, but its diff is not shown
 	// until asked for. See generated.go for what counts.
 	Generated bool `json:"generated,omitempty"`
+	// Rev identifies the content on both sides, so a client holding this
+	// file's diff can tell from a fresh listing whether it has gone stale.
+	Rev string `json:"rev"`
+
+	oldOID, newOID string
 }
 
 // Files lists what changed in the scope, sorted by path.
 func (r *Repo) Files(s *Scope) ([]FileEntry, error) {
-	args := append([]string{"diff", "--name-status", "-M", "-z"}, s.diffArgs()...)
-	nameOut, err := r.run(args...)
+	args := append([]string{"diff", "--raw", "--no-abbrev", "-M", "-z"}, s.diffArgs()...)
+	rawOut, err := r.run(args...)
 	if err != nil {
 		return nil, err
 	}
-	entries := parseNameStatus(nameOut)
+	entries := parseRaw(rawOut)
 
 	// numstat carries the line counts; "-" in either column means binary.
 	args = append([]string{"diff", "--numstat", "-M", "-z"}, s.diffArgs()...)
@@ -312,35 +332,56 @@ func (r *Repo) Files(s *Scope) ([]FileEntry, error) {
 
 	out := make([]FileEntry, 0, len(entries))
 	for _, e := range entries {
+		e.Rev = r.rev(e)
 		out = append(out, *e)
 	}
 	sortFiles(out)
 	return out, nil
 }
 
-func parseNameStatus(z string) []*FileEntry {
+// rev is the content identity behind FileEntry.Rev. An all-zero id is git
+// saying "whatever is in the working tree", which it has not hashed, so the
+// file's size and mtime stand in for it.
+func (r *Repo) rev(e *FileEntry) string {
+	if e.Status == "D" {
+		return e.oldOID + ":-"
+	}
+	if strings.Trim(e.newOID, "0") != "" {
+		return e.oldOID + ":" + e.newOID
+	}
+	fi, err := os.Stat(filepath.Join(r.Root, e.Path))
+	if err != nil {
+		return e.oldOID + ":-"
+	}
+	return fmt.Sprintf("%s:%d.%d", e.oldOID, fi.Size(), fi.ModTime().UnixNano())
+}
+
+// parseRaw reads `git diff --raw -z`: ":oldmode newmode oldid newid status",
+// then the path, then a second path for renames and copies.
+func parseRaw(z string) []*FileEntry {
 	fields := strings.Split(z, "\x00")
 	var entries []*FileEntry
 	for i := 0; i < len(fields); i++ {
-		st := fields[i]
-		if st == "" {
+		meta := strings.Fields(strings.TrimPrefix(fields[i], ":"))
+		if len(meta) < 5 {
 			continue
 		}
-		code := st[:1]
-		switch code {
+		e := &FileEntry{Status: meta[4][:1], oldOID: meta[2], newOID: meta[3]}
+		switch e.Status {
 		case "R", "C":
 			if i+2 >= len(fields) {
 				return entries
 			}
-			entries = append(entries, &FileEntry{Status: "R", OldPath: fields[i+1], Path: fields[i+2]})
+			e.Status, e.OldPath, e.Path = "R", fields[i+1], fields[i+2]
 			i += 2
 		default:
 			if i+1 >= len(fields) {
 				return entries
 			}
-			entries = append(entries, &FileEntry{Status: code, Path: fields[i+1]})
+			e.Path = fields[i+1]
 			i++
 		}
+		entries = append(entries, e)
 	}
 	return entries
 }
@@ -414,33 +455,19 @@ func (r *Repo) Diff(s *Scope, entry FileEntry) (*FileDiff, error) {
 	}
 
 	var oldRaw, newRaw []byte
-	if entry.Status != "A" && !s.old.empty {
-		b, _, err := r.blob(s.old.rev, oldPath)
+	if entry.Status != "A" {
+		b, _, err := r.read(s.old, oldPath)
 		if err != nil {
 			return nil, err
 		}
 		oldRaw = b
 	}
 	if entry.Status != "D" {
-		switch {
-		case entry.Untracked || s.new.worktree:
-			b, _, err := r.worktreeFile(entry.Path)
-			if err != nil {
-				return nil, err
-			}
-			newRaw = b
-		case s.new.index:
-			b, err := r.runBytes("show", s.new.spec(entry.Path))
-			if err == nil {
-				newRaw = b
-			}
-		default:
-			b, _, err := r.blob(s.new.rev, entry.Path)
-			if err != nil {
-				return nil, err
-			}
-			newRaw = b
+		b, _, err := r.read(s.new, entry.Path)
+		if err != nil {
+			return nil, err
 		}
+		newRaw = b
 	}
 
 	if isBinary(oldRaw) || isBinary(newRaw) {
@@ -473,36 +500,64 @@ func (r *Repo) Diff(s *Scope, entry FileEntry) (*FileDiff, error) {
 	return fd, nil
 }
 
-// FileAt reads a whole file for the source viewer, preferring the working tree
-// so "go to definition" lands on what is actually on disk.
-func (r *Repo) FileAt(path, rev string) ([]string, error) {
-	var raw []byte
-	if rev == "" {
-		b, ok, err := r.worktreeFile(path)
-		if err != nil {
-			return nil, err
+// read loads path from one side of a comparison, and whether it is there.
+func (r *Repo) read(sd side, path string) ([]byte, bool, error) {
+	switch {
+	case sd.worktree:
+		return r.worktreeFile(path)
+	case sd.empty:
+		return nil, false, nil
+	case sd.index:
+		b, err := r.runBytes("show", sd.spec(path))
+		return b, err == nil, nil
+	}
+	return r.blob(sd.rev, path)
+}
+
+// name labels a side for the viewer. The working tree goes unlabelled: it is
+// what a file is taken to mean.
+func (sd side) name() string {
+	switch {
+	case sd.worktree, sd.empty:
+		return ""
+	case sd.index:
+		return "index"
+	case len(sd.rev) >= 40 && strings.Trim(sd.rev, "0123456789abcdef") == "":
+		return sd.rev[:7] // a resolved merge base
+	}
+	return sd.rev
+}
+
+// FileAt reads a whole file for the source viewer. Without a scope it reads
+// the working tree, so a jump to a definition lands on what is on disk; with
+// one it reads that side of the comparison, so a file opened from the diff
+// has the diff's line numbers. at names the side read, if not the working tree.
+func (r *Repo) FileAt(path string, s *Scope, old bool) (lines []string, at string, err error) {
+	sd := side{worktree: true}
+	if s != nil {
+		sd = s.new
+		if old {
+			sd = s.old
 		}
-		if !ok {
-			return nil, fmt.Errorf("no such file: %s", path)
+	}
+	raw, ok, err := r.read(sd, path)
+	if err != nil {
+		return nil, "", err
+	}
+	at = sd.name()
+	if !ok {
+		if at != "" {
+			return nil, "", fmt.Errorf("no such file at %s: %s", at, path)
 		}
-		raw = b
-	} else {
-		b, ok, err := r.blob(rev, path)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("no such file at %s: %s", rev, path)
-		}
-		raw = b
+		return nil, "", fmt.Errorf("no such file: %s", path)
 	}
 	if isBinary(raw) {
-		return nil, fmt.Errorf("binary file")
+		return nil, "", fmt.Errorf("binary file")
 	}
 	if len(raw) > maxFileBytes {
-		return nil, fmt.Errorf("file too large")
+		return nil, "", fmt.Errorf("file too large")
 	}
-	return splitLines(raw), nil
+	return splitLines(raw), at, nil
 }
 
 func splitLines(b []byte) []string {

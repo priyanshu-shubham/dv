@@ -1,13 +1,13 @@
-// Package store persists review comments as a single JSON file inside the
-// repository being reviewed (.dv/comments.json). The directory is registered in
-// .git/info/exclude rather than .gitignore so the notes never appear in git
-// status and never end up in a commit — the repo's own ignore rules stay clean.
+// Package store persists a review inside the repository being reviewed: its
+// comments (.dv/comments.json) and the files marked viewed (.dv/viewed.json).
+// The directory is registered in .git/info/exclude rather than .gitignore so
+// the notes never appear in git status and never end up in a commit — the
+// repo's own ignore rules stay clean.
 package store
 
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,11 +57,11 @@ type File struct {
 	Threads []*Thread `json:"threads"`
 }
 
-// Store owns the JSON file. Every mutation rewrites it, so a crash mid-write
-// cannot leave a half-file: the write goes to a temp file and is renamed.
+// Store owns the comments file. Every mutation rewrites it.
 type Store struct {
 	mu   sync.Mutex
-	path string
+	file jsonFile
+	name string
 	doc  File
 }
 
@@ -69,27 +69,35 @@ type Store struct {
 // not created here: opening a repo just to read a diff should leave nothing
 // behind, so it appears the first time a comment is written.
 func Open(repoRoot, repoName string) (*Store, error) {
-	s := &Store{path: filepath.Join(repoRoot, dirName, fileName)}
-	s.doc = File{Format: format, Repo: repoName, Threads: []*Thread{}}
-
-	b, err := os.ReadFile(s.path)
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(b, &s.doc); err != nil {
-			return nil, fmt.Errorf("%s is not valid JSON: %w", s.path, err)
-		}
-		if s.doc.Threads == nil {
-			s.doc.Threads = []*Thread{}
-		}
-	case !os.IsNotExist(err):
+	s := &Store{file: jsonFile{path: filepath.Join(repoRoot, dirName, fileName)}, name: repoName}
+	s.doc = s.empty()
+	if err := s.sync(); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
+func (s *Store) empty() File {
+	return File{Format: format, Repo: s.name, Threads: []*Thread{}}
+}
+
+// sync picks up a change made outside this process. Callers hold s.mu.
+func (s *Store) sync() error {
+	doc := s.empty()
+	changed, err := s.file.load(&doc)
+	if err != nil || !changed {
+		return err
+	}
+	if doc.Threads == nil {
+		doc.Threads = []*Thread{}
+	}
+	s.doc = doc
+	return nil
+}
+
 // Path is the file comments live in, shown in the UI so it is obvious where the
 // notes went.
-func (s *Store) Path() string { return s.path }
+func (s *Store) Path() string { return s.file.path }
 
 // EnsureExcluded adds the store directory to .git/info/exclude when it is not
 // already ignored. Returns whether the line was added.
@@ -117,20 +125,26 @@ func EnsureExcluded(gitDir string) (bool, error) {
 }
 
 // save writes the document. Callers hold s.mu.
-func (s *Store) save() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
+func (s *Store) save() error { return s.file.save(s.doc) }
+
+// Version moves whenever the comments do, whoever changed them.
+func (s *Store) Version() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return s.file.stamp
+}
+
+// Reset deletes every thread, returning how many there were.
+func (s *Store) Reset() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return 0, err
 	}
-	b, err := json.MarshalIndent(s.doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	b = append(b, '\n')
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	n := len(s.doc.Threads)
+	s.doc = s.empty()
+	return n, s.file.remove()
 }
 
 // Threads returns a copy sorted by file then line, so the UI's ordering does not
@@ -138,6 +152,7 @@ func (s *Store) save() error {
 func (s *Store) Threads() []*Thread {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sync() // unreadable, it still has the last good copy to show
 	out := make([]*Thread, len(s.doc.Threads))
 	copy(out, s.doc.Threads)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -156,6 +171,9 @@ func (s *Store) Threads() []*Thread {
 func (s *Store) AddThread(t *Thread, body, author string) (*Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	t.ID = newID("t")
 	t.CreatedAt, t.UpdatedAt = now, now
@@ -169,6 +187,9 @@ func (s *Store) AddThread(t *Thread, body, author string) (*Thread, error) {
 func (s *Store) AddReply(threadID, body, author string) (*Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return nil, err
+	}
 	t := s.find(threadID)
 	if t == nil {
 		return nil, fmt.Errorf("no such thread: %s", threadID)
@@ -184,6 +205,9 @@ func (s *Store) AddReply(threadID, body, author string) (*Thread, error) {
 func (s *Store) EditComment(threadID, commentID, body string) (*Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return nil, err
+	}
 	t := s.find(threadID)
 	if t == nil {
 		return nil, fmt.Errorf("no such thread: %s", threadID)
@@ -205,6 +229,9 @@ func (s *Store) EditComment(threadID, commentID, body string) (*Thread, error) {
 func (s *Store) DeleteComment(threadID, commentID string) (*Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return nil, err
+	}
 	t := s.find(threadID)
 	if t == nil {
 		return nil, fmt.Errorf("no such thread: %s", threadID)
@@ -228,6 +255,9 @@ func (s *Store) DeleteComment(threadID, commentID string) (*Thread, error) {
 func (s *Store) SetResolved(threadID string, resolved bool) (*Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return nil, err
+	}
 	t := s.find(threadID)
 	if t == nil {
 		return nil, fmt.Errorf("no such thread: %s", threadID)
@@ -241,6 +271,9 @@ func (s *Store) SetResolved(threadID string, resolved bool) (*Thread, error) {
 func (s *Store) DeleteThread(threadID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
 	if s.find(threadID) == nil {
 		return fmt.Errorf("no such thread: %s", threadID)
 	}
