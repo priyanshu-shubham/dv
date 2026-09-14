@@ -6,6 +6,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"hash/fnv"
@@ -13,12 +15,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"dv/internal/gitx"
+	"dv/internal/permit"
 	"dv/internal/server"
 	"dv/internal/store"
 	"dv/internal/symindex"
@@ -40,9 +46,11 @@ func run() error {
 		version = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n\n"+
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n       dv claude install\n\n"+
 			"Review the current repository's diff in a browser. reset deletes the\n"+
-			"review's comments and viewed marks, to start it over.\n\nflags:\n")
+			"review's comments and viewed marks, to start it over. claude install\n"+
+			"adds hooks to Claude Code's settings so its permission prompts come up\n"+
+			"in the page too.\n\nflags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -55,6 +63,8 @@ func run() error {
 	case "":
 	case "reset":
 		return reset(*dir, flag.Args()[1:])
+	case "claude":
+		return claude(flag.Args()[1:])
 	default:
 		return fmt.Errorf("unknown command %q (dv -h lists them)", cmd)
 	}
@@ -95,14 +105,32 @@ func run() error {
 		openBrowser(url)
 	}
 
+	if unannounce, err := store.Announce(repo.Root, url); err != nil {
+		fmt.Fprintln(os.Stderr, "dv: warning: Claude Code's prompts cannot find this dv:", err)
+	} else {
+		defer unannounce()
+	}
+
 	httpSrv := &http.Server{
 		Handler: srv.Handler(),
-		// No write timeout: /api/ask streams a model's answer and can legitimately
-		// run for minutes. Read timeouts still bound a stuck client.
+		// No write timeout: /api/ask streams a model's answer and a permission
+		// prompt waits on the reader, both for minutes. Read timeouts still bound
+		// a stuck client.
 		ReadHeaderTimeout: 15 * time.Second,
 		ReadTimeout:       60 * time.Second,
 	}
-	return httpSrv.Serve(ln)
+	// Stopping has to return through the deferred unannounce, or the next hook
+	// goes looking for a dv that is not there.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		httpSrv.Close()
+	}()
+	if err := httpSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 const versionString = "0.1.0"
@@ -160,6 +188,49 @@ func reset(dir string, args []string) error {
 		return err
 	}
 	fmt.Println("dv: deleted " + describe(threads, marks))
+	return nil
+}
+
+// claude is dv's side of Claude Code: install writes the hooks into its
+// settings, and hook is what those run.
+func claude(args []string) error {
+	switch strings.Join(args, " ") {
+	case "hook":
+		permit.RunHook(os.Stdin, os.Stdout)
+		return nil
+	case "install":
+		return installHooks()
+	}
+	return fmt.Errorf("usage: dv claude install (hook is for Claude Code to run)")
+}
+
+func installHooks() error {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return err
+	}
+	// `go run` builds into the temp dir and deletes the binary on exit, which
+	// would leave every tool call failing a hook.
+	if strings.HasPrefix(exe, os.TempDir()+string(filepath.Separator)) {
+		return fmt.Errorf("this dv is a temporary build (%s); install it and run that one", exe)
+	}
+	path, err := permit.SettingsPath()
+	if err != nil {
+		return err
+	}
+	changed, err := permit.Install(path, exe)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		fmt.Println("dv: the hooks are already in " + path)
+		return nil
+	}
+	fmt.Printf("dv: added hooks to %s, running %s claude hook\n", path, exe)
+	fmt.Println("    Claude Code's permission prompts now come up in the dv open on the session's repository, too.")
 	return nil
 }
 

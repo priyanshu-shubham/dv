@@ -447,8 +447,6 @@ type FileDiff struct {
 
 // Diff assembles the full comparison for one path.
 func (r *Repo) Diff(s *Scope, entry FileEntry) (*FileDiff, error) {
-	fd := &FileDiff{FileEntry: entry, Lang: LangFor(entry.Path), OldLines: []string{}, NewLines: []string{}}
-
 	oldPath := entry.Path
 	if entry.OldPath != "" {
 		oldPath = entry.OldPath
@@ -469,14 +467,20 @@ func (r *Repo) Diff(s *Scope, entry FileEntry) (*FileDiff, error) {
 		}
 		newRaw = b
 	}
+	return DiffContent(entry, oldRaw, newRaw), nil
+}
 
+// DiffContent compares two versions of a file already in hand: the sides of a
+// comparison, or a file and an edit Claude has yet to make to it.
+func DiffContent(entry FileEntry, oldRaw, newRaw []byte) *FileDiff {
+	fd := &FileDiff{FileEntry: entry, Lang: LangFor(entry.Path), OldLines: []string{}, NewLines: []string{}}
 	if isBinary(oldRaw) || isBinary(newRaw) {
 		fd.Binary = true
-		return fd, nil
+		return fd
 	}
 	if len(oldRaw) > maxFileBytes || len(newRaw) > maxFileBytes {
 		fd.TooLarge = true
-		return fd, nil
+		return fd
 	}
 
 	fd.OldLines = splitLines(oldRaw)
@@ -497,7 +501,7 @@ func (r *Repo) Diff(s *Scope, entry FileEntry) (*FileDiff, error) {
 		}
 	}
 	fd.Additions, fd.Deletions = adds, dels
-	return fd, nil
+	return fd
 }
 
 // read loads path from one side of a comparison, and whether it is there.

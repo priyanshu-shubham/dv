@@ -173,11 +173,12 @@ const TRAIL_PX = 16;
 const CODE_BLOCK = 200;
 
 // DiffBody renders a file's rows. view "code" is Code mode: just `side` of the
-// file, whole, with changes marked in the gutter.
+// file, whole, with changes marked in the gutter. readOnly takes the comment
+// affordances away, for an edit Claude has only proposed.
 export function DiffBody({
   fd, view, side, contextLines, expanded, onExpand, threads, selection, setSelection,
   composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAsk, path, wrap,
-  reveal, hit = 0,
+  reveal, hit = 0, readOnly = false,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
@@ -277,11 +278,11 @@ export function DiffBody({
   const ctx = useMemo(
     () => ({
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit, readOnly,
     }),
     [
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit, readOnly,
     ],
   );
 
@@ -379,7 +380,10 @@ export function DiffBody({
       // hscroll gates the per-line transform. Files that fit - nearly all of
       // them - must not pay for a transform node on every line they render.
       // Code mode is one column, so it scrolls sideways the way unified does.
-      className={cx("diff", split ? "diff-split" : "diff-unified", view === "code" && "diff-code", overflows && "hscroll")}
+      className={cx(
+        "diff", split ? "diff-split" : "diff-unified", view === "code" && "diff-code", overflows && "hscroll",
+        readOnly && "read-only",
+      )}
       ref={rootRef}
     >
       {blocks.map((b, i) =>
@@ -393,7 +397,9 @@ export function DiffBody({
             wrap={wrap}
             ctx={ctx}
             onMeasure={onMeasure}
-            force={holdsLine(b.lines, reveal)}
+            // A proposed edit sits in a modal that is hidden and shown again, which
+            // the visibility observer has been seen to miss; it is small, so drawn whole.
+            force={readOnly || holdsLine(b.lines, reveal)}
           />
         ),
       )}
@@ -749,9 +755,9 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
           the gutter opens the composer for this line; dragging selects a range. */}
       <div
         className="gutter"
-        title="Click to comment on this line, drag for a range"
-        onMouseDown={ctx.onGutterDown(side, no)}
-        onMouseEnter={ctx.onGutterEnter(side, no)}
+        title={ctx.readOnly ? undefined : "Click to comment on this line, drag for a range"}
+        onMouseDown={ctx.readOnly ? undefined : ctx.onGutterDown(side, no)}
+        onMouseEnter={ctx.readOnly ? undefined : ctx.onGutterEnter(side, no)}
       >
         {dualGutter ? (
           <>

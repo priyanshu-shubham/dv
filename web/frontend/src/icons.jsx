@@ -40,3 +40,4 @@ export const IconKeyboard = svg(<><rect x="1.5" y="4" width="13" height="8" rx="
 export const IconWrap = svg(<path d="M3 4h9a2 2 0 0 1 0 4H6M8 6l-2 2 2 2M3 12h6" />, { stroke: true });
 export const IconPin = svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { stroke: true });
 export const IconUndo = svg(<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2v3.5H6" />, { stroke: true });
+export const IconBell = svg(<path d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1.2 1.2H2.8zM6.5 14.2a1.6 1.6 0 0 0 3 0" />, { stroke: true });

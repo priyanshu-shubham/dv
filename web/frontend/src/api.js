@@ -120,6 +120,22 @@ export const api = {
     }
   },
 
+  // claudeRequests follows the Claude Code prompts waiting on the reader, as a
+  // stream rather than a poll so they still arrive while the tab is hidden.
+  claudeRequests: (onList) => {
+    const es = new EventSource("/api/claude/requests");
+    es.onmessage = (e) => onList(JSON.parse(e.data).requests || []);
+    // It reconnects on its own and is sent the list afresh; until then nothing
+    // shown could be answered.
+    es.onerror = () => onList([]);
+    return () => es.close();
+  },
+
+  // answer: { allow, note, suggestion } where suggestion indexes the request's
+  // suggestions to apply along with an allow.
+  claudeAnswer: (id, answer) =>
+    req(`/api/claude/requests/${id}`, { method: "POST", body: JSON.stringify(answer) }),
+
   search: (opts) => {
     const p = new URLSearchParams({ q: opts.query });
     if (opts.regex) p.set("regex", "1");

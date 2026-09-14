@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { cx, modKey } from "./util.js";
 import {
-  IconBranch, IconCheck, IconChevronDown, IconKeyboard, IconMoon, IconPin, IconRefresh,
-  IconSearch, IconSpark, IconSplit, IconSun, IconSymbol, IconUndo, IconUnified, IconWrap,
+  IconBell, IconBranch, IconCheck, IconChevronDown, IconKeyboard, IconMoon, IconPin, IconRefresh,
+  IconSearch, IconSpark, IconSplit, IconSun, IconUndo, IconUnified, IconWrap,
 } from "./icons.jsx";
 
 // AUTO is the scope dv starts on: whichever comparison has something in it,
@@ -12,7 +12,7 @@ export const AUTO = { kind: "auto", rev: "" };
 
 export default function Header({
   meta, mode, onMode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
-  theme, onTheme, onRefresh, refreshing, onPalette, onSearch, onHelp, onAsk, askOn,
+  theme, onTheme, onRefresh, refreshing, onSearch, onHelp, onAsk, askOn, waiting, arrived, onBell, bellOn,
 }) {
   return (
     <header className="topbar">
@@ -74,13 +74,24 @@ export default function Header({
 
       <span className="divider" />
 
+      {waiting > 0 && (
+        <button
+          className={cx("icon", "bell", bellOn && "on")}
+          aria-pressed={bellOn}
+          onClick={onBell}
+          title={`Claude is waiting on you: ${waiting === 1 ? "one request" : `${waiting} requests`}`}
+        >
+          {/* Keyed by arrivals, so the bell rings again for each new one. */}
+          <span className="bell-glyph" key={arrived}>
+            <IconBell size={14} />
+          </span>
+          <span className="bell-count">{waiting}</span>
+        </button>
+      )}
       <button className={cx("icon", askOn && "on")} aria-pressed={askOn} onClick={onAsk} title="Ask Claude about this change (a)">
         <IconSpark size={14} />
       </button>
-      <button className="icon" onClick={onPalette} title={`Go to symbol (${modKey}+K)`}>
-        <IconSymbol size={14} />
-      </button>
-      <button className="icon" onClick={onSearch} title={`Search the repo (${modKey}+Shift+F)`}>
+      <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
         <IconSearch size={14} />
       </button>
       <button className={cx("icon", refreshing && "spin")} onClick={onRefresh} title="Reload the diff (r)">

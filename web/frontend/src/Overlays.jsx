@@ -85,87 +85,6 @@ function usePaletteNav(count, open) {
   return { sel, setSel, onKey, listRef };
 }
 
-// SymbolPalette is the Cmd+K jump-to-definition list. It also serves as the
-// disambiguator when a double-clicked identifier has several definitions.
-export function SymbolPalette({ initialQuery = "", seed, source, from = "", onOpen, onClose, onBack, backTo }) {
-  const [q, setQ] = useState(initialQuery);
-  const [hits, setHits] = useState(seed || []);
-  const [status, setStatus] = useState(null);
-  const debounced = useDebounced(q, 90);
-  const { sel, setSel, onKey, listRef } = usePaletteNav(hits.length, (i) => onOpen(hits[i]));
-  const seeded = seed && q === initialQuery;
-
-  useEffect(() => {
-    if (seeded) return; // showing a resolved lookup already
-    let live = true;
-    api
-      .symbols(debounced, from)
-      .then((r) => {
-        if (!live) return;
-        setHits(r.hits || []);
-        setStatus(r.status);
-        setSel(0);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [debounced, seeded, from]);
-
-  return (
-    <Modal onClose={onClose} onBack={onBack} className="palette">
-      <div className="palette-input">
-        <Back onBack={onBack} to={backTo} />
-        <IconSymbol size={15} />
-        <input
-          autoFocus
-          value={q}
-          placeholder="Go to symbol..."
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={onKey}
-        />
-        <button className="ghost" onClick={() => api.refreshSymbols().then(setStatus)} title="Rebuild the index">
-          <IconRefresh size={13} />
-        </button>
-      </div>
-      {seeded && (
-        <div className="palette-note dim">{sourceNote(source, hits.length, initialQuery)}</div>
-      )}
-      <div className="palette-list" ref={listRef}>
-        {hits.map((h, i) => (
-          <button
-            key={`${h.file}:${h.line}:${h.name}`}
-            className={cx("palette-row", i === sel && "on")}
-            onMouseEnter={() => setSel(i)}
-            onClick={() => onOpen(h)}
-          >
-            <span className={cx("kind", "kind-" + h.kind)}>{h.kind}</span>
-            <span className="sym" dangerouslySetInnerHTML={{ __html: markMatches(h.name, h.matches) }} />
-            {/* Said once per run: the same reason on every row hides the one that differs. */}
-            {h.why && h.why !== hits[i - 1]?.why && <span className="why">{h.why}</span>}
-            <span className="spacer" />
-            <span className="dim loc">
-              {LRM}
-              {h.file}:{h.line}
-            </span>
-          </button>
-        ))}
-        {hits.length === 0 && (
-          <div className="empty">
-            {status?.building ? "Building the symbol index..." : q ? "No symbols match." : "Type to search definitions."}
-          </div>
-        )}
-      </div>
-      {status && (
-        <div className="palette-foot dim">
-          {status.symbols.toLocaleString()} symbols in {status.files.toLocaleString()} files
-          {status.building ? " - refreshing" : ""}
-        </div>
-      )}
-    </Modal>
-  );
-}
-
 function markMatches(name, matches) {
   if (!matches?.length) return escapeHtml(name);
   const set = new Set(matches);
@@ -257,18 +176,49 @@ export function FilePalette({ initialQuery = "", changed, onOpen, onClose, onBac
   );
 }
 
-// SearchPanel is repo-wide text search, grouped by file.
-export function SearchPanel({ initialQuery = "", onOpen, onClose, onBack, backTo }) {
+// A few definitions head the results; a fuzzy match on a name finds plenty, and
+// the ones past the first few would push the text matches out of sight.
+const DEFS_SHOWN = 5;
+
+// SearchPanel finds a name or text anywhere in the repository: definitions from
+// the symbol index first, then the lines that contain it, grouped by file. A
+// double-clicked identifier that did not resolve to exactly one definition
+// opens it seeded with its candidates, the text narrowed to the whole word.
+export function SearchPanel({ initialQuery = "", seed, source, from = "", opts = {}, onOpen, onClose, onBack, backTo }) {
   const [query, setQuery] = useState(initialQuery);
-  const [regex, setRegex] = useState(false);
-  const [caseSens, setCaseSens] = useState(false);
-  const [wholeWord, setWholeWord] = useState(false);
-  const [glob, setGlob] = useState("");
+  const [regex, setRegex] = useState(!!opts.regex);
+  const [caseSens, setCaseSens] = useState(!!opts.caseSens);
+  const [wholeWord, setWholeWord] = useState(!!opts.wholeWord);
+  const [glob, setGlob] = useState(opts.glob || "");
   const [res, setRes] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [defs, setDefs] = useState(seed || []);
+  const [status, setStatus] = useState(null);
+  const [allDefs, setAllDefs] = useState(false);
   const debounced = useDebounced(query, 180);
+  const debouncedName = useDebounced(query.trim(), 90);
   const debouncedGlob = useDebounced(glob, 250);
+  const seeded = seed && query === initialQuery;
+
+  useEffect(() => {
+    if (seeded || regex || !debouncedName) {
+      setDefs(seeded ? seed : []);
+      return;
+    }
+    let live = true;
+    api
+      .symbols(debouncedName, from)
+      .then((r) => {
+        if (!live) return;
+        setDefs(r.hits || []);
+        setStatus(r.status);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [debouncedName, seeded, seed, regex, from]);
 
   useEffect(() => {
     if (!debounced.trim()) {
@@ -297,6 +247,27 @@ export function SearchPanel({ initialQuery = "", onOpen, onClose, onBack, backTo
     return [...m.entries()];
   }, [res]);
 
+  useEffect(() => setAllDefs(false), [debouncedName]);
+  const shownDefs = seeded || allDefs || defs.length <= DEFS_SHOWN + 1 ? defs : defs.slice(0, DEFS_SHOWN);
+  const moreDefs = defs.length - shownDefs.length;
+
+  // One list for the keys, definitions then text: the row index is the item's.
+  const items = [
+    ...shownDefs.map((h) => ({ file: h.file, line: h.line })),
+    ...(moreDefs ? [{ more: true }] : []),
+    ...groups.flatMap(([file, hits]) => hits.map((h) => ({ file, line: h.line }))),
+  ];
+  const open = (i) => {
+    const it = items[i];
+    if (it.more) setAllDefs(true);
+    else onOpen(it, { query, opts: { regex, caseSens, wholeWord, glob } });
+  };
+  const { sel, setSel, onKey, listRef } = usePaletteNav(items.length, open);
+  useEffect(() => setSel(0), [debounced, debouncedName, regex, caseSens, wholeWord, debouncedGlob, setSel]);
+
+  let n = shownDefs.length + (moreDefs ? 1 : 0);
+  const matched = res?.matches.length || 0;
+
   return (
     <Modal onClose={onClose} onBack={onBack} wide className="search">
       <div className="palette-input">
@@ -305,9 +276,9 @@ export function SearchPanel({ initialQuery = "", onOpen, onClose, onBack, backTo
         <input
           autoFocus
           value={query}
-          placeholder="Search the repository..."
+          placeholder="Search definitions and text..."
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.stopPropagation()}
+          onKeyDown={onKey}
         />
         <div className="toggles">
           <button className={cx(caseSens && "on")} onClick={() => setCaseSens((v) => !v)} title="Match case">
@@ -316,7 +287,11 @@ export function SearchPanel({ initialQuery = "", onOpen, onClose, onBack, backTo
           <button className={cx(wholeWord && "on")} onClick={() => setWholeWord((v) => !v)} title="Whole word">
             ab
           </button>
-          <button className={cx(regex && "on")} onClick={() => setRegex((v) => !v)} title="Regular expression">
+          <button
+            className={cx(regex && "on")}
+            onClick={() => setRegex((v) => !v)}
+            title="Regular expression - searches the text only"
+          >
             .*
           </button>
         </div>
@@ -324,35 +299,101 @@ export function SearchPanel({ initialQuery = "", onOpen, onClose, onBack, backTo
           className="glob"
           value={glob}
           placeholder="*.go"
+          title="Only text in files matching this"
           onChange={(e) => setGlob(e.target.value)}
           onKeyDown={(e) => e.stopPropagation()}
         />
       </div>
 
-      <div className="search-results">
-        {error && <div className="empty error">{error}</div>}
-        {!error && groups.length === 0 && (
-          <div className="empty">{busy ? "Searching..." : query ? "No matches." : "Type to search."}</div>
+      <div className="search-results" ref={listRef}>
+        {shownDefs.length > 0 && (
+          <div className="search-group">
+            <div className="search-section">
+              <IconSymbol size={12} />
+              {seeded ? (
+                <span>{sourceNote(source, defs.length, initialQuery)}</span>
+              ) : (
+                <>
+                  Definitions <span className="dim">{defs.length}</span>
+                </>
+              )}
+            </div>
+            {shownDefs.map((h, i) => (
+              <button
+                key={`${h.file}:${h.line}:${h.name}`}
+                className={cx("palette-row", i === sel && "on")}
+                onMouseEnter={() => setSel(i)}
+                onClick={() => open(i)}
+              >
+                <span className={cx("kind", "kind-" + h.kind)}>{h.kind}</span>
+                <span className="sym" dangerouslySetInnerHTML={{ __html: markMatches(h.name, h.matches) }} />
+                {/* Said once per run: the same reason on every row hides the one that differs. */}
+                {h.why && h.why !== shownDefs[i - 1]?.why && <span className="why">{h.why}</span>}
+                <span className="spacer" />
+                <span className="dim loc">
+                  {LRM}
+                  {h.file}:{h.line}
+                </span>
+              </button>
+            ))}
+            {moreDefs > 0 && (
+              <button
+                className={cx("palette-row", "search-more", sel === shownDefs.length && "on")}
+                onMouseEnter={() => setSel(shownDefs.length)}
+                onClick={() => setAllDefs(true)}
+              >
+                {moreDefs} more definition{moreDefs === 1 ? "" : "s"}
+              </button>
+            )}
+          </div>
+        )}
+        {groups.length > 0 && (
+          <div className="search-section">
+            <IconSearch size={12} />
+            Text{" "}
+            <span className="dim">
+              {matched} match{matched === 1 ? "" : "es"} in {groups.length} file{groups.length === 1 ? "" : "s"}
+              {res.truncated ? ", more not shown" : ""}
+            </span>
+          </div>
         )}
         {groups.map(([file, hits]) => (
           <div className="search-group" key={file}>
             <div className="search-file">
               {file} <span className="dim">{hits.length}</span>
             </div>
-            {hits.map((h, i) => (
-              <button key={i} className="search-hit" onClick={() => onOpen({ file, line: h.line })}>
-                <span className="ln">{h.line}</span>
-                <code dangerouslySetInnerHTML={{ __html: markSpans(h.text, h.spans) }} />
-              </button>
-            ))}
+            {hits.map((h, i) => {
+              const at = n++;
+              return (
+                <button
+                  key={i}
+                  className={cx("search-hit", at === sel && "on")}
+                  onMouseEnter={() => setSel(at)}
+                  onClick={() => open(at)}
+                >
+                  <span className="ln">{h.line}</span>
+                  <code dangerouslySetInnerHTML={{ __html: markSpans(h.text, h.spans) }} />
+                </button>
+              );
+            })}
           </div>
         ))}
+        {error && <div className="empty error">{error}</div>}
+        {!error && !groups.length && !defs.length && (
+          <div className="empty">
+            {busy ? "Searching..." : query.trim() ? "Nothing matches." : "Type a name or any text."}
+          </div>
+        )}
       </div>
-      {res && (
+      {(res || status) && (
         <div className="palette-foot dim">
-          {res.matches.length} match{res.matches.length === 1 ? "" : "es"} in {groups.length} file
-          {groups.length === 1 ? "" : "s"}
-          {res.truncated ? " (truncated)" : ""} - {res.engine}
+          {[status && `${status.symbols.toLocaleString()} symbols indexed${status.building ? ", refreshing" : ""}`, res?.engine]
+            .filter(Boolean)
+            .join(" · ")}
+          <span className="spacer" />
+          <button className="ghost" onClick={() => api.refreshSymbols().then(setStatus)} title="Rebuild the symbol index">
+            <IconRefresh size={12} />
+          </button>
         </div>
       )}
     </Modal>
@@ -461,8 +502,7 @@ export function HelpOverlay({ onClose }) {
   const keys = [
     ["m", "Switch between Diff and Code"],
     [`${modKey}+P`, "Go to file"],
-    [`${modKey}+K`, "Go to symbol"],
-    [`${modKey}+Shift+F`, "Search the repository"],
+    [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
     ["/", "Filter the file list"],
     ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
     ["n / p", "Next / previous change"],
@@ -473,12 +513,13 @@ export function HelpOverlay({ onClose }) {
     ["u", "Toggle split / unified"],
     ["w", "Toggle line wrapping"],
     ["r", "Reload the diff"],
-    ["double-click", "Jump to a symbol's definition"],
+    ["double-click", "Jump to a symbol's definition, or search its uses"],
     ["Alt+Left", "Back to the previous definition, or file in Code"],
     ["Alt+Right", "Forward again, in Code"],
     ["select code", "Comment on the selected lines"],
     ["drag line numbers", "Comment on a range of lines"],
     ["click a gap bar", "Expand 20 more lines of context"],
+    ["↑ ↓ Enter, 1-9", "Answer what Claude is asking; Tab adds a note, Esc leaves it under the bell"],
     ["Esc", "Back a step, or close what is open"],
     ["Shift+Esc", "Close whatever is open"],
   ];

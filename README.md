@@ -88,21 +88,23 @@ remembered. While either is on the funnel lights up, and a note above the list
 says how many files are hidden and why. *Show all* pauses the filters rather
 than clearing them: *Resume*, or editing one, turns them back on as they were.
 
-**Code navigation.** `Ctrl/Cmd+K` fuzzy-searches every definition in the
-repository; double-clicking an identifier in the diff jumps to where it is
-defined. Definition lookup is exact and whole-word — clicking `inflight` will
+**Code navigation.** `Ctrl/Cmd+K` (or `Ctrl/Cmd+Shift+F`) searches the
+repository in one list: definitions whose names fuzzy-match first, then every
+line containing the text, grouped by file, with regex, case, whole word and
+glob filters. Double-clicking an identifier in the diff jumps to where it is
+defined; when it has several definitions, or none, the same search opens with
+the candidates on top and the word's uses below. Definition lookup is exact and whole-word — clicking `inflight` will
 never offer you `MaxInflightLogChunks` — and comments and string literals are
 excluded, so it lands on the line that declares a name rather than one that
 mentions it. Results are ranked by distance from the file you are reading: same
 file, then same directory, then the nearest shared path. Names the index does
 not carry on its own (struct fields, parameters, locals) are found by a second
-pass that keeps only declaration-shaped lines, and the picker says when that is
+pass that keeps only declaration-shaped lines, and the search says when that is
 what you are looking at. Jumps stack, so following a call into a definition and
 an identifier in *that* into another one leaves a trail: `Esc` or `Alt+←` steps
 back to where you came from — at the line you were reading, not the top of the
 file — and the `←` button in the header names the place it returns to.
-`Shift+Esc` leaves the whole chain at once. `Ctrl/Cmd+Shift+F` is a repo-wide text search with
-regex, case, whole word and glob filters. The symbol index is built in-process
+`Shift+Esc` leaves the whole chain at once. The symbol index is built in-process
 from the files git tracks, so there is nothing to install and no daemon to run.
 It knows the definitions of Go, JavaScript and TypeScript, Python, Rust, Ruby,
 Java, Kotlin, Scala, C#, C, C++, Objective-C, PHP, shell, SQL, Protocol Buffers
@@ -140,6 +142,38 @@ Fable 5. The answer can be saved into the review as a comment. This needs the
 edge to resize it; in a window too narrow to share, it slides over the diff
 instead of squeezing it.
 
+**Claude Code's prompts.** When Claude Code stops to ask permission — to edit
+a file, run a command, fetch a page, use an MCP tool — the question pops up in
+dv too. An edit shows as the diff it would make to the file as it stands:
+highlighted, split or unified like the rest, with context to expand, and
+double-clicking an identifier opens its definition over the request, with `Esc`
+to come back, so you can read around a change before deciding. A command shows
+as the command, a plan as the plan. The answers are the terminal's, in its
+order — Yes, its "don't ask again" choices, No — and so are the keys: `↑` `↓`
+and `Enter`, or the number; `Tab` to add a note, which goes with the answer you
+pick (with Yes it reaches Claude beside the result; with No it is the reason,
+and Claude carries on with it, where a bare No stops Claude); `Shift+Tab` to
+allow all edits for the session. `Esc` puts the request away under the bell in
+the header, which counts what is waiting and brings it back; turn off *Pop up
+when Claude asks* and that is all a request does. The terminal asks at the same
+time, and whichever you answer first wins; the other one goes away. dv only
+sees what the terminal would ask about, so in accept-edits mode edits go
+straight through, as they would anyway.
+
+It works through Claude Code's hooks, which one command puts in place:
+
+```
+dv claude install
+```
+
+That adds three hooks to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`),
+beside any you have, and running it again after moving dv updates them rather
+than adding more. Each runs `dv claude hook`, which looks for a dv open on the
+session's repository and does nothing when there is none, so Claude Code
+behaves as it always has wherever dv is not open. `PermissionRequest` is the
+question; the two `PostToolUse` hooks are how dv hears that the terminal
+answered first, and how a Yes's note reaches Claude.
+
 ## Install
 
 ```
@@ -165,6 +199,9 @@ serving a blank page.
 -version      print the version
 ```
 
+`dv claude install` puts dv's hooks in Claude Code's settings; see *Claude
+Code's prompts* above. `dv claude hook` is what those hooks run.
+
 `dv reset` deletes the review — every comment and viewed mark — after asking.
 `-y` skips the question, and is needed when stdin is not a terminal. A dv
 already running on the repository picks the change up, and so do its pages.
@@ -187,8 +224,8 @@ already running on the repository picks the change up, and so do its pages.
 | `w` | toggle line wrapping |
 | `r` | reload the diff (and look again at what automatic should show) |
 | `Ctrl/Cmd+P` | go to file |
-| `Ctrl/Cmd+K` | go to symbol |
-| `Ctrl/Cmd+Shift+F` | search the repository |
+| `Ctrl/Cmd+K`, `Ctrl/Cmd+Shift+F` | search definitions and text |
+| `↑` `↓` `Enter`, `1`–`9` | answer what Claude is asking; `Tab` adds a note, `Esc` leaves it under the bell |
 | `?` | show all shortcuts |
 
 ## The comments file
@@ -221,12 +258,13 @@ to hand to an agent along with "address these".
 ## Layout
 
 ```
-main.go              CLI entry point: open the repo, start the server, print the URL; dv reset
+main.go              CLI entry point: open the repo, start the server, print the URL; dv reset, dv claude
 internal/gitx        git plumbing, scope resolution, and the diff algorithm
-internal/store       .dv/comments.json, .dv/viewed.json and the .git/info/exclude registration
+internal/store       .dv/comments.json, .dv/viewed.json, .dv/server.json and the .git/info/exclude registration
 internal/symindex    regex symbol index + ripgrep-backed text search
-internal/server      JSON API, SSE ask endpoint, embedded UI assets
+internal/server      JSON API, SSE ask and prompt endpoints, embedded UI assets
 internal/ask         bridge to the `claude` CLI
+internal/permit      Claude Code's permission prompts: the hook and its install, the requests waiting, edit previews
 web/frontend         React UI, bundled by esbuild into internal/server/static
 ```
 

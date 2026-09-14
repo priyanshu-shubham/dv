@@ -5,8 +5,9 @@ import Header, { AUTO } from "./Header.jsx";
 import Sidebar from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SymbolPalette } from "./Overlays.jsx";
+import { FilePalette, FileViewer, HelpOverlay, SearchPanel } from "./Overlays.jsx";
 import AskPanel from "./AskPanel.jsx";
+import ClaudePrompt, { useClaudeRequests } from "./ClaudePrompt.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
 import { mapLine, newLineFor } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
@@ -79,6 +80,30 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  // Claude Code's prompts waiting on the reader. A new one pops up unless the
+  // reader turned that off, when it only lights the bell. The tab title
+  // carries the count, since the tab is usually behind the terminal then.
+  const requests = useClaudeRequests();
+  const [promptOpen, setPromptOpen] = useState(false);
+  const promptRef = useRef(false);
+  promptRef.current = promptOpen && requests.length > 0;
+  const [autoPop, setAutoPop] = usePersisted("claudePopup", true);
+  const [promptFocus, setPromptFocus] = useState(null);
+  const seenRequests = useRef(new Set());
+  const [arrived, setArrived] = useState(0);
+  useEffect(() => {
+    const fresh = requests.filter((r) => !seenRequests.current.has(r.id));
+    for (const r of fresh) seenRequests.current.add(r.id);
+    if (fresh.length) setArrived((n) => n + fresh.length);
+    if (!requests.length) setPromptOpen(false);
+    else if (fresh.length && autoPop) {
+      setPromptFocus(fresh[fresh.length - 1].id);
+      setPromptOpen(true);
+    }
+    document.title = requests.length ? `(${requests.length}) Claude is waiting - dv` : "dv";
+  }, [requests, autoPop]);
+  const closePrompt = useCallback(() => setPromptOpen(false), []);
 
   useEffect(() => {
     api.meta().then(setMeta).catch((e) => setError(e.message));
@@ -602,10 +627,11 @@ export default function App() {
   const goBack = useCallback(() => setStack((s) => s.slice(0, -1)), []);
   const closeOverlay = useCallback(() => setStack([]), []);
 
-  // Where a jump lands: in place in Code mode, and in a viewer over the diff.
+  // Where a jump lands: in place in Code mode, and in a viewer over the diff -
+  // or over Claude's request, when that is open, so Esc comes back to it.
   const goTo = useCallback(
     (file, line, left) => {
-      if (modeRef.current !== "code") return pushOverlay({ type: "file", file, line }, left);
+      if (modeRef.current !== "code" || promptRef.current) return pushOverlay({ type: "file", file, line }, left);
       setStack([]);
       openCode(file, line);
     },
@@ -613,20 +639,19 @@ export default function App() {
   );
 
   // Double-clicking an identifier resolves it to definitions, ranked by how
-  // close each one is to the file it was clicked in: one opens straight away,
-  // several offer a choice, none falls back to a plain text search.
+  // close each one is to the file it was clicked in. One opens straight away;
+  // otherwise the search comes up with the candidates over the word's uses.
   const onSymbol = useCallback(
     async (name, from = "", leftAt = 0) => {
       const left = leftAt ? { scroll: leftAt } : null;
+      const search = { type: "search", query: name, from, opts: { caseSens: true, wholeWord: true } };
       try {
         const r = await api.resolveSymbol(name, from);
         const defs = r.defs || [];
         if (defs.length === 1) goTo(defs[0].file, defs[0].line, left);
-        else if (defs.length > 1)
-          pushOverlay({ type: "palette", query: name, seed: defs, source: r.source, from }, left);
-        else pushOverlay({ type: "search", query: name }, left);
+        else pushOverlay({ ...search, seed: defs, source: r.source }, left);
       } catch {
-        pushOverlay({ type: "search", query: name }, left);
+        pushOverlay(search, left);
       }
     },
     [pushOverlay, goTo],
@@ -653,7 +678,7 @@ export default function App() {
   // this diff deletes is shown from before, having nothing on disk to show.
   const openFromPalette = useCallback(
     (path, query) => {
-      if (modeRef.current === "code") {
+      if (modeRef.current === "code" && !promptRef.current) {
         setStack([]);
         return openCode(path);
       }
@@ -740,19 +765,14 @@ export default function App() {
       if (isTyping(e.target)) return;
       const mod = e.metaKey || e.ctrlKey;
 
-      if (mod && e.key.toLowerCase() === "k") {
+      if ((mod && e.key.toLowerCase() === "k") || (mod && e.shiftKey && e.key.toLowerCase() === "f")) {
         e.preventDefault();
-        openOverlay({ type: "palette" });
+        openOverlay({ type: "search" });
         return;
       }
       if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault(); // the browser's Print
         openOverlay({ type: "files" });
-        return;
-      }
-      if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        openOverlay({ type: "search" });
         return;
       }
       const code = mode === "code";
@@ -884,11 +904,14 @@ export default function App() {
           loadDiff({ keepActive: true });
           loadThreads();
         }}
-        onPalette={() => openOverlay({ type: "palette" })}
         onSearch={() => openOverlay({ type: "search" })}
         onHelp={() => openOverlay({ type: "help" })}
         onAsk={() => setAsk((a) => (a ? null : { file: (mode === "code" ? codePath : activePath) || "" }))}
         askOn={!!ask}
+        waiting={requests.length}
+        arrived={arrived}
+        onBell={() => setPromptOpen((o) => !o)}
+        bellOn={promptOpen}
       />
 
       <div className={cx("main", ask && "with-ask")} style={sideWidth ? { "--side-w": sideWidth + "px" } : undefined}>
@@ -1009,18 +1032,22 @@ export default function App() {
         )}
       </div>
 
-      {overlay?.type === "palette" && (
-        <SymbolPalette
-          initialQuery={overlay.query || ""}
-          seed={overlay.seed}
-          source={overlay.source}
-          from={overlay.from || activePath}
-          onClose={closeOverlay}
-          onBack={behind && goBack}
-          backTo={trailLabel(behind)}
-          onOpen={(h) => goTo(h.file, h.line)}
+      {requests.length > 0 && (
+        <ClaudePrompt
+          requests={requests}
+          open={promptOpen}
+          focusId={promptFocus}
+          view={view}
+          contextLines={contextLines}
+          wrap={wrap}
+          autoPop={autoPop}
+          onAutoPop={setAutoPop}
+          onClose={closePrompt}
+          onSymbol={onSymbol}
+          onOpenFile={goTo}
         />
       )}
+
       {overlay?.type === "files" && (
         <FilePalette
           initialQuery={overlay.query || ""}
@@ -1033,11 +1060,19 @@ export default function App() {
       )}
       {overlay?.type === "search" && (
         <SearchPanel
+          key={stack.length}
           initialQuery={overlay.query || ""}
+          seed={overlay.seed}
+          source={overlay.source}
+          from={overlay.from || activePath}
+          opts={overlay.opts}
           onClose={closeOverlay}
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
-          onOpen={({ file, line }) => goTo(file, line)}
+          onOpen={({ file, line }, { query, opts }) =>
+            // Kept for the way back. The seed answered the query it came with, not an edited one.
+            goTo(file, line, query === overlay.query ? { opts } : { query, opts, seed: undefined, source: undefined })
+          }
         />
       )}
       {overlay?.type === "file" && (
@@ -1240,9 +1275,8 @@ const INTERRUPTS = ["wheel", "touchstart", "keydown", "mousedown"];
 const yOf = (root, el, offset) =>
   root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - offset;
 
-// A file lands with its top border just past the edge, so its header sits
-// where it will stay pinned and the border doesn't double the top bar's.
-const FILE_TOP = -1;
+// A file lands with its header where it will stay pinned.
+const FILE_TOP = 0;
 
 // chase scrolls root to aim().y every frame until it has held still on a final
 // target for a moment. One scroll is not enough: a file the reader has not
@@ -1294,8 +1328,7 @@ function plainDiff(r) {
 function trailLabel(o) {
   if (!o) return "";
   if (o.type === "file") return o.line ? `${o.file}:${o.line}` : o.file;
-  if (o.type === "palette") return `definitions of ${o.query}`;
-  if (o.type === "search") return `search for ${o.query}`;
+  if (o.type === "search") return o.query ? `search for ${o.query}` : "search";
   if (o.type === "files") return o.query ? `files matching ${o.query}` : "files";
   return "";
 }

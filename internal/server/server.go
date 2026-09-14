@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"dv/internal/gitx"
+	"dv/internal/permit"
 	"dv/internal/store"
 	"dv/internal/symindex"
 )
@@ -43,10 +44,11 @@ type Server struct {
 	store  *store.Store
 	viewed *store.Viewed
 	index  *symindex.Index
+	permit *permit.Broker
 }
 
 func New(repo *gitx.Repo, st *store.Store, vw *store.Viewed, ix *symindex.Index) *Server {
-	return &Server{repo: repo, store: st, viewed: vw, index: ix}
+	return &Server{repo: repo, store: st, viewed: vw, index: ix, permit: permit.New(repo.Root)}
 }
 
 // Handler builds the route table.
@@ -80,6 +82,10 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/ask/models", s.handleAskModels)
 	mux.HandleFunc("POST /api/ask", s.handleAsk)
+
+	mux.HandleFunc("POST /api/claude/hook", guarded(s.handleClaudeHook))
+	mux.HandleFunc("GET /api/claude/requests", guarded(s.handleClaudeRequests))
+	mux.HandleFunc("POST /api/claude/requests/{id}", guarded(s.handleClaudeAnswer))
 
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheHeaders(http.FileServer(http.FS(sub)))))

@@ -310,28 +310,30 @@ export default function Sidebar({
           </div>
         </>
       ) : (
-        <div className="comment-list">
-          {threads.length === 0 ? (
-            <div className="empty">
-              No comments yet. Drag across line numbers in the diff, or hover a line and hit +.
-            </div>
-          ) : (
-            <ThreadList
-              threads={threads}
-              compact
-              onAction={(action) => {
-                if (action.type === "jump") onJump(action.thread);
-                else onThreadAction(action);
-              }}
-            />
-          )}
+        <>
+          <div className="comment-list">
+            {threads.length === 0 ? (
+              <div className="empty">
+                No comments yet. Drag across line numbers in the diff, or hover a line and hit +.
+              </div>
+            ) : (
+              <ThreadList
+                threads={threads}
+                compact
+                onAction={(action) => {
+                  if (action.type === "jump") onJump(action.thread);
+                  else onThreadAction(action);
+                }}
+              />
+            )}
+          </div>
           <div className="sidebar-foot">
             <span className="saved-to" title={commentsPath}>
               saved to {commentsPath}
             </span>
             <ResetButton onReset={onReset} />
           </div>
-        </div>
+        </>
       )}
     </aside>
   );
