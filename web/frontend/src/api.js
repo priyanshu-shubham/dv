@@ -31,6 +31,10 @@ export const api = {
     return req(`/api/diff/file?${p}`);
   },
 
+  // diffFiles is diffFile for many paths: { path: { fd } or { error } }.
+  diffFiles: (scope, paths) =>
+    req(`/api/diff/files?${scopeQuery(scope)}`, { method: "POST", body: JSON.stringify({ paths }) }),
+
   // Without a side this is the working tree; with "old" or "new", that side of
   // the scope, which is where the diff's line numbers come from.
   file: (path, scope, side) => {

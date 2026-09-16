@@ -1,6 +1,11 @@
 /* dv — local diff review UI.
    Dark by default; the header toggle flips [data-theme] on <html>. */
 
+/* The code font ships in the binary, so code looks the same on every machine
+   and needs no network. */
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght-italic.css";
+
 /* Regions are told apart by shade, and lines are kept for the few edges a
    shade cannot draw. Four grounds: --bg is the editor and every list or well
    inside a shell; --bg-panel is chrome (sidebar, file heads, gap rows, the ask
@@ -52,6 +57,7 @@
   --del-word: rgba(248, 81, 73, 0.28);
   --add-soft: rgba(63, 185, 80, 0.14);
   --mark: rgba(255, 208, 92, 0.32);
+  --mark-on: rgba(255, 150, 40, 0.6);
 
   --shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.07);
   --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.07);
@@ -105,6 +111,7 @@
   --del-word: rgba(207, 34, 46, 0.22);
   --add-soft: rgba(26, 127, 55, 0.12);
   --mark: rgba(255, 212, 0, 0.4);
+  --mark-on: rgba(255, 140, 0, 0.55);
 
   --shadow-pop: 0 6px 20px rgba(28, 28, 28, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.08);
   --shadow-modal: 0 24px 64px rgba(28, 28, 28, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.08);
@@ -126,7 +133,7 @@
    strip and row one of three, and every size and gap sits on these steps. */
 :root {
   --font-ui: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --fs-tag: 10.5px;
   --fs-xs: 11px;
@@ -210,6 +217,15 @@ pre,
 kbd,
 .mono {
   font-family: var(--font-mono);
+}
+
+/* The code font joins pairs like => and != into one glyph, and a review has to
+   show the characters as they were typed. Each `font` shorthand resets this
+   property on its element, so a plain declaration would not hold. */
+*,
+::before,
+::after {
+  font-variant-ligatures: none !important;
 }
 
 button {
@@ -1541,6 +1557,19 @@ button.link:hover {
   background: var(--del-word);
 }
 
+/* Find in page's matches, drawn into the line's HTML with the rest of it, so
+   a row looks the same whenever it happens to be rendered. */
+.fm {
+  background: var(--mark);
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.fm-on {
+  background: var(--mark-on);
+}
+
 /* The gap bar spans the full scrollable width of the diff, and its two control
    groups are sticky to the viewport's edges — so whichever column you are
    reading, and however far the diff is scrolled sideways, the expand controls
@@ -1996,6 +2025,61 @@ button.link:hover {
 .toggles {
   display: flex;
   gap: 2px;
+}
+
+/* Find in page floats at the top right of the pane, under the pinned file head.
+   The dock is sticky and has no height, so it rides along with the scroll
+   without pushing the files down. */
+.find-dock {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 0;
+}
+
+.find-bar {
+  position: absolute;
+  top: calc(var(--file-head-h) + 6px);
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: min(460px, calc(100% - 24px));
+  padding: 4px;
+  background: var(--bg-raised);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.find-bar input {
+  flex: 1;
+  min-width: 0;
+  margin-right: 2px;
+  font-family: var(--font-mono);
+}
+
+.find-bar input:focus {
+  box-shadow: var(--ring);
+}
+
+.find-bar input.bad {
+  box-shadow: 0 0 0 1px var(--del);
+}
+
+.find-count {
+  flex: none;
+  min-width: 72px;
+  padding: 0 6px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.find-bar button:disabled {
+  color: var(--fg-4);
+  background: none;
 }
 
 .toggles > button {

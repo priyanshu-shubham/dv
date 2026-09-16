@@ -88,10 +88,24 @@ remembered. While either is on the funnel lights up, and a note above the list
 says how many files are hidden and why. *Show all* pauses the filters rather
 than clearing them: *Resume*, or editing one, turns them back on as they were.
 
+**Find in page.** `Ctrl/Cmd+F` opens dv's own find bar rather than the
+browser's, which could only see the rows near the screen: the diff loads files
+as you reach them and draws only what is close by. dv's searches every row the
+diff shows at the current context, loading the files it has not got yet, and
+the path in every file's header, so the count covers the whole review.
+`Enter` / `Shift+Enter` (or `F3`) step through the matches, bringing each into
+view. As on screen, folded context is left out, and a file marked viewed or a
+hidden generated file is found by its header alone. In Code mode it searches
+the open file's lines, as an editor's find does; `Ctrl/Cmd+P` is the way to a
+file by name. It starts from the selection, like search, and has the same case,
+whole word and regex toggles.
+
 **Code navigation.** `Ctrl/Cmd+K` (or `Ctrl/Cmd+Shift+F`) searches the
 repository in one list: definitions whose names fuzzy-match first, then every
 line containing the text, grouped by file, with regex, case, whole word and
-glob filters. Double-clicking an identifier in the diff jumps to where it is
+glob filters. With text selected on one line, it opens searching for that,
+even once the selection has opened a composer, which closes again if nothing
+was typed in it. Double-clicking an identifier in the diff jumps to where it is
 defined; when it has several definitions, or none, the same search opens with
 the candidates on top and the word's uses below. Definition lookup is exact and whole-word — clicking `inflight` will
 never offer you `MaxInflightLogChunks` — and comments and string literals are
@@ -237,7 +251,7 @@ already running on the repository picks the change up, and so do its pages.
 | `f` | view the whole file at the line you are on |
 | `m` | switch between Diff and Code |
 | `c` | comment on the line under the cursor |
-| `Esc` | dismiss the composer, step back a definition, or close an overlay |
+| `Esc` | dismiss a composer with nothing typed in it, step back a definition, or close an overlay |
 | `Shift+Esc` | close an overlay outright, however deep the trail |
 | `Alt+←` / `Alt+→` | back to the previous definition; in Code mode, back and forward through files |
 | `a` | ask Claude about the line under the cursor |
@@ -246,7 +260,8 @@ already running on the repository picks the change up, and so do its pages.
 | `w` | toggle line wrapping |
 | `r` | reload the diff (and look again at what automatic should show) |
 | `Ctrl/Cmd+P` | go to file |
-| `Ctrl/Cmd+K`, `Ctrl/Cmd+Shift+F` | search definitions and text |
+| `Ctrl/Cmd+F` | find in the page, all of it, not just the rows drawn so far; `Enter` / `Shift+Enter` or `F3` step |
+| `Ctrl/Cmd+K`, `Ctrl/Cmd+Shift+F` | search definitions and text, starting from the selection |
 | `↑` `↓` `Enter`, `1`–`9` | answer what Claude is asking; `Tab` adds a note, `Esc` leaves it under the bell |
 | `?` | show all shortcuts |
 
@@ -300,4 +315,5 @@ traced Myers search on the leftover blocks.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). The UI ships JetBrains Mono, under the SIL Open
+Font License 1.1.

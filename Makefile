@@ -24,4 +24,4 @@ test:
 clean:
 	rm -f dv
 	rm -f internal/server/static/bundle.js internal/server/static/bundle.css
-	rm -f internal/server/static/chunk-*.js
+	rm -f internal/server/static/chunk-*.js internal/server/static/*.woff2

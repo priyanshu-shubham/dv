@@ -71,7 +71,7 @@ let cachedCharWidth = 0;
 // charWidth is the advance width of one monospace column, used to guess how
 // wide a line will draw before it is rendered. Measured inside a real diff so
 // it inherits whatever font the code actually resolved to; before the first
-// diff exists it falls back to the declared stack, and that reading is not
+// diff exists, or while the code font is still loading, the reading is not
 // cached because it may not be the font that wins.
 export function charWidth() {
   if (cachedCharWidth) return cachedCharWidth;
@@ -79,12 +79,12 @@ export function charWidth() {
   const probe = document.createElement("span");
   probe.style.cssText =
     "position:absolute;visibility:hidden;white-space:pre" +
-    (host ? "" : ";font:12px/20px ui-monospace,'SF Mono',Menlo,Consolas,monospace");
+    (host ? "" : ";font:12px/20px var(--font-mono)");
   probe.textContent = "0".repeat(100);
   (host || document.body).appendChild(probe);
   const w = probe.getBoundingClientRect().width / 100;
   probe.remove();
-  if (!host) return w || 7.2;
+  if (!host || document.fonts?.status === "loading") return w || 7.2;
   cachedCharWidth = w;
   return cachedCharWidth || 7.2;
 }
@@ -102,6 +102,18 @@ export function visualLength(line) {
 
 export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 export const modKey = isMac ? "⌘" : "Ctrl";
+
+export const isSearchKey = (e) =>
+  (e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === "k" || (e.shiftKey && e.key.toLowerCase() === "f"));
+
+export const isFindKey = (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f";
+
+// searchSeed is what a selection puts in the search box. Search matches within
+// a line, so a selection over several lines puts nothing there.
+export function searchSeed(text) {
+  const t = (text || "").trim();
+  return t.includes("\n") ? "" : t;
+}
 
 // isTyping guards the single-key shortcuts so they do not fire while a comment
 // is being written. A checkbox is not text entry: leaving focus on one must not

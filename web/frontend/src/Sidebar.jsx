@@ -24,11 +24,11 @@ export default function Sidebar({
   const [pathFilterOpen, setPathFilterOpen] = useState(false);
   const pathFilterOn = !!(pathFilter.include.trim() || pathFilter.exclude.trim());
   const hidden = filteredOut + hiddenGenerated;
-  // The tree starts folded and remembers what was opened. A filter starts with
-  // every match showing and keeps its own throwaway folds, so clearing it
-  // brings the tree back as it was.
-  const [opened, setOpened] = useState(() => new Set());
-  const [filterFolded, setFilterFolded] = useState(() => new Set());
+  // Each tree keeps the folders flipped from where it starts. The diff's starts
+  // open, since it holds only what changed; Code mode's is the whole
+  // repository, so it starts folded. A filter starts with every match showing
+  // and keeps its own throwaway folds, so clearing it brings the tree back.
+  const [flips, setFlips] = useState(() => ({ diff: new Set(), code: new Set(), filter: new Set() }));
 
   const openByFile = useMemo(() => {
     const m = new Map();
@@ -42,10 +42,16 @@ export default function Sidebar({
     [files, q],
   );
   const tree = useMemo(() => buildTree(shown), [shown]);
-  const isOpen = useCallback(
-    (path) => (q ? !filterFolded.has(path) : opened.has(path)),
-    [q, opened, filterFolded],
-  );
+  const treeKind = q ? "filter" : mode;
+  const startsOpen = treeKind !== "code";
+  const flipped = flips[treeKind];
+  const isOpen = useCallback((path) => startsOpen !== flipped.has(path), [startsOpen, flipped]);
+  const setOpen = (paths, open) =>
+    setFlips((f) => {
+      const next = new Set(f[treeKind]);
+      for (const p of paths) open === startsOpen ? next.delete(p) : next.add(p);
+      return { ...f, [treeKind]: next };
+    });
   const rows = useMemo(() => visibleRows(tree, isOpen), [tree, isOpen]);
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
   const allFolded = allDirs.length > 0 && !allDirs.some(isOpen);
@@ -53,16 +59,17 @@ export default function Sidebar({
   // Keep the file being read in sight, as VS Code's explorer does: open the
   // folders it sits in, then scroll the tree to it. Only a change of file (or
   // coming back to this tab) does this, so folding or browsing the tree by hand
-  // is never undone from under you.
+  // is never undone from under you. Code mode's tree arrives after its file
+  // does, so the tree turning up counts as a change too.
   const listRef = useRef(null);
   const revealing = useRef(null);
+  const treeReady = tree.length > 0;
   useEffect(() => {
     if (!activePath) return;
     const shut = ancestorsOf(tree, activePath).filter((p) => !isOpen(p));
-    if (shut.length && q) setFilterFolded((s) => new Set([...s].filter((p) => !shut.includes(p))));
-    else if (shut.length) setOpened((s) => new Set([...s, ...shut]));
+    if (shut.length) setOpen(shut, true);
     revealing.current = activePath;
-  }, [activePath, tab, mode]);
+  }, [activePath, tab, mode, treeReady]);
 
   // After every render: scroll once the row a reveal is waiting for exists. It
   // falls back to a folded folder only when that folder is not about to open.
@@ -81,15 +88,8 @@ export default function Sidebar({
     if (off) list.scrollTo({ top: list.scrollTop + off, behavior: "smooth" });
   });
 
-  const toggleDir = (path) =>
-    (q ? setFilterFolded : setOpened)((c) => {
-      const next = new Set(c);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  const setAllOpen = (open) =>
-    q ? setFilterFolded(new Set(open ? [] : allDirs)) : setOpened(new Set(open ? allDirs : []));
+  const toggleDir = (path) => setOpen([path], !isOpen(path));
+  const setAllOpen = (open) => setFlips((f) => ({ ...f, [treeKind]: new Set(open === startsOpen ? [] : allDirs) }));
 
   const totals = useMemo(
     () =>

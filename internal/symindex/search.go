@@ -76,16 +76,10 @@ func (e *badPattern) Error() string { return e.msg }
 
 func (ix *Index) searchRG(opts SearchOpts) (*SearchResult, error) {
 	args := []string{"--json", "--line-number", "--no-heading", "--color", "never", "--max-columns", "400"}
-	if !opts.Regex {
-		args = append(args, "--fixed-strings")
-	}
 	if opts.CaseSens {
 		args = append(args, "--case-sensitive")
 	} else {
 		args = append(args, "--smart-case")
-	}
-	if opts.WholeWord {
-		args = append(args, "--word-regexp")
 	}
 	if opts.Glob != "" {
 		args = append(args, "--glob", opts.Glob)
@@ -93,7 +87,7 @@ func (ix *Index) searchRG(opts SearchOpts) (*SearchResult, error) {
 	for d := range skipDirs {
 		args = append(args, "--glob", "!"+d+"/")
 	}
-	args = append(args, "--regexp", opts.Query, "--", ".")
+	args = append(args, "--regexp", pattern(opts), "--", ".")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -200,14 +194,33 @@ func (ix *Index) searchBuiltin(opts SearchOpts) (*SearchResult, error) {
 	return res, nil
 }
 
-func compile(opts SearchOpts) (*regexp.Regexp, error) {
-	pat := opts.Query
-	if !opts.Regex {
-		pat = regexp.QuoteMeta(pat)
+// pattern is the query as the regular expression both engines run, so they
+// agree on what whole word means. A literal query is held to a word boundary
+// only at an end that is itself a word character: `Get(` must start a word,
+// but a boundary after its `(` would turn away `Get(ctx)`. ripgrep's own
+// --word-regexp wants a non-word character on both sides, which is stricter
+// still.
+func pattern(opts SearchOpts) string {
+	if opts.Regex {
+		if opts.WholeWord {
+			return `\b(?:` + opts.Query + `)\b`
+		}
+		return opts.Query
 	}
+	pat := regexp.QuoteMeta(opts.Query)
 	if opts.WholeWord {
-		pat = `\b(?:` + pat + `)\b`
+		if isWordByte(opts.Query[0]) {
+			pat = `\b` + pat
+		}
+		if isWordByte(opts.Query[len(opts.Query)-1]) {
+			pat += `\b`
+		}
 	}
+	return pat
+}
+
+func compile(opts SearchOpts) (*regexp.Regexp, error) {
+	pat := pattern(opts)
 	// Smart case: an all-lowercase query is case-insensitive, matching rg.
 	if !opts.CaseSens && strings.ToLower(opts.Query) == opts.Query {
 		pat = "(?i)" + pat

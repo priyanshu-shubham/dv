@@ -186,6 +186,9 @@ const DEFS_SHOWN = 5;
 // opens it seeded with its candidates, the text narrowed to the whole word.
 export function SearchPanel({ initialQuery = "", seed, source, from = "", opts = {}, onOpen, onClose, onBack, backTo }) {
   const [query, setQuery] = useState(initialQuery);
+  const inputRef = useRef(null);
+  // A query it opens with was picked up elsewhere, so typing replaces it.
+  useEffect(() => inputRef.current?.select(), []);
   const [regex, setRegex] = useState(!!opts.regex);
   const [caseSens, setCaseSens] = useState(!!opts.caseSens);
   const [wholeWord, setWholeWord] = useState(!!opts.wholeWord);
@@ -274,6 +277,7 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
         <Back onBack={onBack} to={backTo} />
         <IconSearch size={15} />
         <input
+          ref={inputRef}
           autoFocus
           value={query}
           placeholder="Search definitions and text..."
@@ -503,6 +507,7 @@ export function HelpOverlay({ onClose }) {
     ["m", "Switch between Diff and Code"],
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
+    [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
     ["/", "Filter the file list"],
     ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
     ["n / p", "Next / previous change"],

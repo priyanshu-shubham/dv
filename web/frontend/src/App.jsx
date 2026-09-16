@@ -11,7 +11,9 @@ import ClaudePrompt, { useClaudeRequests } from "./ClaudePrompt.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
 import { mapLine, newLineFor } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
-import { cx, globMatcher, isTyping, modKey, usePersisted } from "./util.js";
+import FindBar from "./FindBar.jsx";
+import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
+import { cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, searchSeed, useDebounced, usePersisted } from "./util.js";
 
 // Shared empty list so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
@@ -50,7 +52,7 @@ export default function App() {
   // The line a jump is aiming at. Its block may be virtualised away, so the
   // file is told to keep that one mounted until the jump has landed.
   const [reveal, setReveal] = useState(null);
-  const [composing, setComposing] = useState(null); // { path, side, start, end, quote }
+  const [composing, setComposing] = useState(null); // { path, side, start, end, quote, selected }
   // The overlay trail. Its last entry is what is on screen; the ones behind it
   // are the definitions the reader walked through to reach it, so a jump that
   // led somewhere unhelpful can be retraced instead of restarted.
@@ -82,8 +84,7 @@ export default function App() {
   }, [theme]);
 
   // Claude Code's prompts waiting on the reader. A new one pops up unless the
-  // reader turned that off, when it only lights the bell. The tab title
-  // carries the count, since the tab is usually behind the terminal then.
+  // reader turned that off, when it only lights the bell.
   const requests = useClaudeRequests();
   const [promptOpen, setPromptOpen] = useState(false);
   const promptRef = useRef(false);
@@ -101,9 +102,17 @@ export default function App() {
       setPromptFocus(fresh[fresh.length - 1].id);
       setPromptOpen(true);
     }
-    document.title = requests.length ? `(${requests.length}) Claude is waiting - dv` : "dv";
   }, [requests, autoPop]);
   const closePrompt = useCallback(() => setPromptOpen(false), []);
+
+  // The waiting note trails so a narrow tab still shows which repository it
+  // is; the count up front is enough to catch the eye. The path is for
+  // checkouts that share a name.
+  useEffect(() => {
+    const n = requests.length;
+    const repo = meta ? `dv - ${meta.repo} (${meta.place})` : "dv";
+    document.title = [n ? `(${n}) ${repo}` : repo, n > 0 && "Claude is waiting"].filter(Boolean).join(" - ");
+  }, [requests.length, meta]);
 
   useEffect(() => {
     api.meta().then(setMeta).catch((e) => setError(e.message));
@@ -288,6 +297,50 @@ export default function App() {
       });
     },
     [fetchFile],
+  );
+
+  // needFiles is needFile for a whole list, a batch a request, for find in page:
+  // it wants every file at once, and one request apiece would list the
+  // comparison on the server once for each.
+  const needFiles = useCallback(
+    (paths) => {
+      const fresh = paths.filter((p) => !fileDataRef.current[p]);
+      if (!fresh.length) return;
+      setFileData((prev) => {
+        const next = { ...prev };
+        for (const p of fresh) next[p] ||= { loading: true };
+        return next;
+      });
+      const gen = loadGen.current;
+      for (let i = 0; i < fresh.length; i += FILES_PER_REQUEST) {
+        const batch = fresh.slice(i, i + FILES_PER_REQUEST);
+        const seqs = new Map();
+        for (const p of batch) {
+          const seq = (fetchSeq.current.get(p) || 0) + 1;
+          fetchSeq.current.set(p, seq);
+          seqs.set(p, seq);
+        }
+        const current = (p) => gen === loadGen.current && fetchSeq.current.get(p) === seqs.get(p);
+        const land = (each) => {
+          const landed = {};
+          for (const p of batch) if (current(p)) landed[p] = each(p);
+          setFileData((prev) => ({ ...prev, ...landed }));
+          return landed;
+        };
+        api
+          .diffFiles(scope, batch)
+          .then((res) => {
+            const landed = land((p) => (res[p]?.fd ? { fd: res[p].fd } : { error: res[p]?.error || "Not loaded" }));
+            // The listing may have moved on while this was in flight.
+            for (const [p, st] of Object.entries(landed)) {
+              const e = diffRef.current?.files.find((f) => f.path === p);
+              if (st.fd && e && e.rev !== st.fd.rev) fetchFile(p, true);
+            }
+          })
+          .catch((e) => land(() => ({ error: e.message })));
+      }
+    },
+    [scope, fetchFile],
   );
 
   // liveUpdate folds the repository's current state into the page. Entries
@@ -487,6 +540,196 @@ export default function App() {
   }, [mode, codePath, codeEntry, scope, diff, needFile]);
   const codeState = codeEntry ? fileData[codePath] : plain?.path === codePath ? plain : null;
 
+  // Find in page, in whichever pane is showing. DiffBody publishes the rows each
+  // file lays out into `bodies`, drawn or not, and the matches come from those,
+  // so what is found does not depend on what virtualisation has mounted. `find`
+  // is the bar's query and toggles while it is open; findCur is the match it is
+  // on, { path, side, line, start }.
+  const [find, setFind] = useState(null);
+  const lastFind = useRef({ query: "", caseSens: false, wholeWord: false, regex: false, focus: 0 });
+  const [findCur, setFindCur] = useState(null);
+  const bodies = useRef({ diff: new Map(), code: new Map() });
+  const [bodiesAt, setBodiesAt] = useState(0);
+  const findOpen = useRef(false);
+  findOpen.current = !!find;
+  const onBody = useMemo(() => {
+    const publish = (pane) => (path, body) => {
+      if (body) bodies.current[pane].set(path, body);
+      else bodies.current[pane].delete(path);
+      if (findOpen.current) setBodiesAt((n) => n + 1);
+    };
+    return { diff: publish("diff"), code: publish("code") };
+  }, []);
+
+  const findQuery = useDebounced(find?.query ?? "", 120);
+  const findSpec = find && { ...find, query: findQuery };
+  const compiled = useMemo(() => findSpec && findRegExp(findSpec), [findQuery, find?.caseSens, find?.wholeWord, find?.regex, !!find]);
+  const findPaths = useMemo(() => (mode === "code" ? (codePath ? [codePath] : []) : files.map((f) => f.path)), [mode, codePath, files]);
+  // In the diff a file's header path is found too, expanded or not; in Code
+  // mode the one header is the file already open, so only its lines are.
+  const found = useMemo(() => {
+    if (!compiled?.re) return null;
+    const list = [];
+    const byFile = new Map();
+    const heads = new Map();
+    let capped = false;
+    for (const [i, path] of findPaths.entries()) {
+      if (list.length >= MAX_FOUND) {
+        capped = true;
+        break;
+      }
+      const head = mode === "diff" && headMatches(files[i], compiled.re);
+      if (head) {
+        heads.set(path, head.ranges);
+        for (const m of head.list) list.push(m);
+      }
+      const body = bodies.current[mode].get(path);
+      const f = body && fileMatches(path, body, compiled.re);
+      if (!f?.list.length) continue;
+      byFile.set(path, f.byLine);
+      for (const m of f.list) list.push(m);
+    }
+    return { list, byFile, heads, capped: capped || list.length > MAX_FOUND };
+  }, [compiled, findPaths, files, mode, bodiesAt]);
+  const findIndex = useMemo(() => (found && findCur ? found.list.findIndex((m) => sameMatch(m, findCur)) : -1), [found, findCur]);
+
+  // The diff's files still to load: a match in one of them is not found yet.
+  // Folded files and generated ones are left out, as they would be on screen.
+  const findWants = useMemo(
+    () => (find && mode === "diff" ? files.filter((f) => !f.generated && !collapsed.has(f.path)).map((f) => f.path) : []),
+    [!!find, mode, files, collapsed],
+  );
+  useEffect(() => {
+    if (findQuery && findWants.length) needFiles(findWants);
+  }, [findQuery, findWants, needFiles]);
+  const findPending = findQuery ? findWants.filter((p) => !fileData[p] || fileData[p].loading).length : 0;
+
+  // showMatch puts the find bar on a match, and scrolls to it unless it is
+  // already in view. The row may be virtualised away, so reveal keeps its
+  // block mounted until the scroll lands.
+  const showMatch = useCallback(
+    (m) => {
+      setFindCur({ path: m.path, side: m.side, line: m.line, start: m.start });
+      const code = modeRef.current === "code";
+      const root = code ? codeRef.current : scrollRef.current;
+      const section = code ? root?.querySelector(".code-file") : document.getElementById("file-" + cssId(m.path));
+      if (!root || !section) return;
+      if (!m.line) {
+        setActivePath(m.path);
+        const top = section.getBoundingClientRect().top - root.getBoundingClientRect().top;
+        if (top >= 0 && top <= root.clientHeight - 80) return;
+        return chase(root, () => ({ y: yOf(root, section, FILE_TOP), final: true }));
+      }
+      const cellAt = () => section.querySelector(`[data-side="${m.side}"][data-line="${m.line}"]`);
+      const cell = cellAt();
+      if (cell && inView(root, cell)) return;
+      setReveal({ path: m.path, line: m.line });
+      if (!code) {
+        setActivePath(m.path);
+        needFile(m.path);
+      }
+      chase(root, () => {
+        const c = cellAt();
+        return c ? { y: yOf(root, c, root.clientHeight / 3), final: true } : { y: yOf(root, section, FILE_TOP), final: false };
+      });
+    },
+    [needFile],
+  );
+
+  // nearestMatch is the first match at or after the line at the top of the view.
+  const nearestMatch = () => {
+    const list = found.list;
+    const pane = modeRef.current;
+    const a = captureAnchor(pane === "code" ? codeRef.current : scrollRef.current);
+    const order = new Map(findPaths.map((p, i) => [p, i]));
+    const fa = order.get(a?.path);
+    if (fa === undefined) return list[0];
+    const body = bodies.current[pane].get(a.path);
+    const pa = a.line && body ? cellPos(body, a.side, a.line) : 0;
+    return list.find((m) => order.get(m.path) > fa || (m.path === a.path && m.pos >= pa)) || list[0];
+  };
+
+  const stepFind = useRef(null);
+  stepFind.current = (dir) => {
+    const list = found?.list;
+    if (!list?.length) return;
+    if (findIndex >= 0) return showMatch(list[(findIndex + dir + list.length) % list.length]);
+    const near = nearestMatch();
+    showMatch(dir > 0 ? near : list[(list.indexOf(near) - 1 + list.length) % list.length]);
+  };
+
+  // A new query lands on the match nearest the reader, as a browser's find does,
+  // unless the match it was on still matches. It waits for files still loading
+  // when nothing has matched yet.
+  const landing = useRef(false);
+  useEffect(() => {
+    landing.current = true;
+  }, [findQuery, find?.caseSens, find?.wholeWord, find?.regex]);
+  useEffect(() => {
+    if (!found || !landing.current) return;
+    if (!found.list.length) {
+      if (!findPending) landing.current = false;
+      return;
+    }
+    landing.current = false;
+    if (findIndex < 0) showMatch(nearestMatch());
+  }, [found, findPending]);
+
+  const openFind = useCallback((seed) => {
+    setFind((f) => {
+      const base = f || lastFind.current;
+      return { ...base, query: seed || base.query, focus: base.focus + 1 };
+    });
+  }, []);
+  const changeFind = useCallback((patch) => setFind((f) => f && { ...f, ...patch }), []);
+  const closeFind = useCallback(() => {
+    setFind((f) => {
+      if (f) lastFind.current = f;
+      return null;
+    });
+    setFindCur(null);
+  }, []);
+
+  // Ctrl+F is taken before anything focused can keep it, so it reaches find from
+  // a composer too, seeded like Ctrl+K: the selection in a text box, else on the
+  // page, else the code whose selection opened the composer - which goes if
+  // nothing was typed in it. Over a modal or Claude's request the browser's own
+  // find stays: those draw every line.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (promptRef.current || document.querySelector(".backdrop")) return;
+      if (isFindKey(e)) {
+        e.preventDefault();
+        if (e.target.closest?.(".find-bar")) return openFind("");
+        const t = e.target;
+        const box = t.closest?.(".composer");
+        const typed = typeof t.selectionStart === "number" ? t.value.slice(t.selectionStart, t.selectionEnd) : "";
+        const seed = searchSeed(typed || window.getSelection()?.toString()) || box?.dataset.selected || "";
+        if (box?.dataset.selected && !box.dataset.draft && seed === box.dataset.selected) setComposing(null);
+        openFind(seed);
+      } else if (findOpen.current && (e.key === "F3" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "g"))) {
+        e.preventDefault();
+        stepFind.current(e.shiftKey ? -1 : 1);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [openFind]);
+
+  const findBar = find && (
+    <FindBar
+      find={find}
+      total={found?.list.length || 0}
+      index={findIndex}
+      capped={!!found?.capped}
+      pending={findPending}
+      error={compiled?.error}
+      onChange={changeFind}
+      onStep={(dir) => stepFind.current(dir)}
+      onClose={closeFind}
+    />
+  );
+
   // Switching mode keeps the reader's place: the line at the top of one view is
   // put at the same height in the other, when the other has it.
   const pendingDiff = useRef(null);
@@ -618,6 +861,7 @@ export default function App() {
   // it was scrolled to, what had been typed - so stepping back returns to it as
   // it was rather than to the top of the definition they arrived at.
   const openOverlay = useCallback((o) => setStack([o]), []);
+  const openSearch = useCallback((query) => openOverlay({ type: "search", query: query || undefined }), [openOverlay]);
   const pushOverlay = useCallback((o, left) => {
     setStack((s) => {
       const trail = left && s.length ? [...s.slice(0, -1), { ...s[s.length - 1], ...left }] : s;
@@ -765,9 +1009,9 @@ export default function App() {
       if (isTyping(e.target)) return;
       const mod = e.metaKey || e.ctrlKey;
 
-      if ((mod && e.key.toLowerCase() === "k") || (mod && e.shiftKey && e.key.toLowerCase() === "f")) {
+      if (isSearchKey(e)) {
         e.preventDefault();
-        openOverlay({ type: "search" });
+        openSearch(searchSeed(window.getSelection()?.toString()));
         return;
       }
       if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
@@ -802,7 +1046,10 @@ export default function App() {
       switch (e.key) {
         case "Escape":
           closeOverlay();
-          setComposing(null);
+          closeFind();
+          // Keys typed in a composer stop there, so one reached from here is
+          // unfocused and its draft is read off the page.
+          if (!document.querySelector(".composer[data-draft]")) setComposing(null);
           setAsk(null);
           break;
         case "?":
@@ -866,7 +1113,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     files, activePath, view, wrap, jumpToFile, toggleViewed, setView, setWrap,
-    loadDiff, loadThreads, startCommentAtCursor, askHere, openOverlay, closeOverlay, needFile, viewFile,
+    loadDiff, loadThreads, startCommentAtCursor, askHere, openOverlay, openSearch, closeOverlay, closeFind, needFile, viewFile,
     mode, codePath, openCode, stepCode, switchMode,
   ]);
 
@@ -939,6 +1186,7 @@ export default function App() {
         />
 
         <div className="content" ref={scrollRef} onMouseOver={onMouseOver} hidden={mode !== "diff"}>
+          {mode === "diff" && findBar}
           {error && <div className="banner error">{error}</div>}
           {diff && files.length === 0 && !error && (
             <div className="empty-state">
@@ -977,14 +1225,20 @@ export default function App() {
               onThreadAction={onThreadAction}
               onSymbol={onSymbol}
               onAsk={setAsk}
+              onSearch={openSearch}
               onView={viewFile}
               isActive={activePath === entry.path}
               reveal={reveal?.path === entry.path ? reveal.line : 0}
+              onBody={onBody.diff}
+              found={(mode === "diff" && found?.byFile.get(entry.path)) || null}
+              foundHead={(mode === "diff" && found?.heads.get(entry.path)) || null}
+              foundAt={mode === "diff" && findCur?.path === entry.path ? findCur : null}
             />
           ))}
         </div>
 
         <div className="content code-pane" ref={codeRef} onMouseOver={onMouseOver} hidden={mode !== "code"}>
+          {mode === "code" && findBar}
           {codePath ? (
             <CodeView
               path={codePath}
@@ -1002,6 +1256,10 @@ export default function App() {
               onThreadAction={onThreadAction}
               onSymbol={onSymbol}
               onAsk={setAsk}
+              onSearch={openSearch}
+              onBody={onBody.code}
+              found={(mode === "code" && found?.byFile.get(codePath)) || null}
+              foundAt={mode === "code" && findCur?.path === codePath ? findCur : null}
               onDiff={() => switchMode("diff")}
               onBack={codeNav.at > 0 ? () => stepCode(-1) : null}
               onForward={codeNav.at < codeNav.stack.length - 1 ? () => stepCode(1) : null}
@@ -1277,6 +1535,19 @@ const yOf = (root, el, offset) =>
 
 // A file lands with its header where it will stay pinned.
 const FILE_TOP = 0;
+
+// Batches of file diffs find in page asks for at once.
+const FILES_PER_REQUEST = 50;
+
+const sameMatch = (a, b) => a.path === b.path && a.side === b.side && a.line === b.line && a.start === b.start;
+
+// inView is whether el sits in root's view clear of the pinned file header and
+// the find bar floating under it.
+const inView = (root, el) => {
+  const box = root.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return r.top >= box.top + 80 && r.bottom <= box.bottom - 8;
+};
 
 // chase scrolls root to aim().y every frame until it has held still on a final
 // target for a moment. One scroll is not enough: a file the reader has not

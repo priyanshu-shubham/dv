@@ -14,7 +14,7 @@ const noop = () => {};
 // rows, so commenting, selecting, go-to-definition and n/p work as they do there.
 export default function CodeView({
   path, entry, fd, error, at, threads, wrap, reveal, hit, composing, setComposing,
-  onComment, onThreadAction, onSymbol, onAsk, onDiff, onBack, onForward,
+  onComment, onThreadAction, onSymbol, onAsk, onSearch, onDiff, onBack, onForward, onBody, found, foundAt,
 }) {
   const [selection, setSelection] = useState(null);
   const [, force] = useState(0);
@@ -27,9 +27,9 @@ export default function CodeView({
   useEffect(() => setSelection(null), [path]);
 
   const startComment = useCallback(
-    (s, start, end) => {
+    (s, start, end, selected) => {
       const src = s === "old" ? fd?.oldLines : fd?.newLines;
-      setComposing({ path, side: s, start, end, quote: src ? src.slice(start - 1, end) : [] });
+      setComposing({ path, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
       setSelection(null);
     },
     [fd, path, setComposing],
@@ -109,6 +109,10 @@ export default function CodeView({
             onThreadAction={onThreadAction}
             onSymbol={onSymbol}
             onAsk={onAsk}
+            onSearch={onSearch}
+            onBody={onBody}
+            found={found}
+            foundAt={foundAt}
             path={path}
             wrap={wrap}
             reveal={reveal}

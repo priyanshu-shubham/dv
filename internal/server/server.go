@@ -58,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/diff", s.handleDiffList)
 	mux.HandleFunc("GET /api/diff/file", s.handleDiffFile)
+	mux.HandleFunc("POST /api/diff/files", s.handleDiffFiles)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/file", s.handleFile)
 	mux.HandleFunc("GET /api/files", s.handleFiles)

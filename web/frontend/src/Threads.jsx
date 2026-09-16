@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
-import { cx, LRM, modKey, relTime } from "./util.js";
+import { cx, isSearchKey, LRM, modKey, relTime, searchSeed } from "./util.js";
 import { IconCheck, IconX } from "./icons.jsx";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
@@ -105,8 +105,13 @@ function Thread({ thread, onAction, compact }) {
 }
 
 // Composer is the single text box used for new threads, replies and edits.
-// Cmd/Ctrl+Enter submits, Escape cancels.
-export function Composer({ title, initial = "", submitLabel = "Comment", autoFocus, aside, onSubmit, onCancel }) {
+// Cmd/Ctrl+Enter submits. Escape cancels only when that loses nothing typed;
+// a draft is let go of with Cancel. `selected` is the code whose selection
+// opened it: opening the composer took that selection away, so the search keys
+// look for it here.
+export function Composer({
+  title, initial = "", submitLabel = "Comment", autoFocus, aside, selected = "", onSearch, onSubmit, onCancel,
+}) {
   const [body, setBody] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -114,6 +119,7 @@ export function Composer({ title, initial = "", submitLabel = "Comment", autoFoc
   const rootRef = useRef(null);
   const bodyRef = useRef(initial);
   bodyRef.current = body;
+  const draft = body.trim() !== initial.trim();
 
   useEffect(() => {
     if (autoFocus && ref.current) {
@@ -151,7 +157,7 @@ export function Composer({ title, initial = "", submitLabel = "Comment", autoFoc
   };
 
   return (
-    <div className="composer" ref={rootRef}>
+    <div className="composer" ref={rootRef} data-draft={draft || undefined} data-selected={selected || undefined}>
       {title && <div className="composer-title">{title}</div>}
       <textarea
         ref={ref}
@@ -165,7 +171,13 @@ export function Composer({ title, initial = "", submitLabel = "Comment", autoFoc
             submit();
           } else if (e.key === "Escape") {
             e.preventDefault();
-            onCancel?.();
+            if (!draft) onCancel?.();
+          } else if (onSearch && isSearchKey(e)) {
+            e.preventDefault();
+            const t = e.currentTarget;
+            onSearch(searchSeed(t.value.slice(t.selectionStart, t.selectionEnd)) || selected);
+            // The code was selected to search it, not to comment on it.
+            if (selected && !draft) onCancel?.();
           }
           e.stopPropagation();
         }}

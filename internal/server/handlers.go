@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dv/internal/gitx"
@@ -29,6 +32,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repo":          s.repo.Name(),
 		"root":          s.repo.Root,
+		"place":         homeRelative(s.repo.Root),
 		"head":          s.repo.Head(),
 		"defaultBranch": s.repo.DefaultBranch(),
 		"branches":      s.repo.Branches(),
@@ -36,6 +40,23 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"commentsPath":  s.store.Path(),
 		"symbolStatus":  s.index.Status(),
 	})
+}
+
+// homeRelative writes a path under the home directory as ~/..., as a shell
+// prompt would.
+func homeRelative(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	rel, err := filepath.Rel(home, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return path
+	}
+	if rel == "." {
+		return "~"
+	}
+	return "~/" + filepath.ToSlash(rel)
 }
 
 func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +128,65 @@ func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeErr(w, http.StatusNotFound, fmt.Errorf("%s is not part of this diff", path))
+}
+
+// handleDiffFiles is handleDiffFile for many paths in one request, for find in
+// page, which wants every file at once: the comparison is listed once rather
+// than once a file, and the diffs are worked out a few at a time.
+func (s *Server) handleDiffFiles(w http.ResponseWriter, r *http.Request) {
+	sc, ok := s.scopeFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	files, err := s.repo.Files(sc)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	entries := make(map[string]gitx.FileEntry, len(files))
+	for _, e := range files {
+		entries[e.Path] = e
+	}
+
+	type result struct {
+		FD    *gitx.FileDiff `json:"fd,omitempty"`
+		Error string         `json:"error,omitempty"`
+	}
+	out := make(map[string]result, len(req.Paths))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for _, path := range req.Paths {
+		e, found := entries[path]
+		if !found {
+			mu.Lock()
+			out[path] = result{Error: path + " is not part of this diff"}
+			mu.Unlock()
+			continue
+		}
+		wg.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			fd, err := s.repo.Diff(sc, e)
+			res := result{FD: fd}
+			if err != nil {
+				res = result{Error: err.Error()}
+			}
+			mu.Lock()
+			out[path] = res
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleFile serves the viewer: the working tree, or with side=old|new, that

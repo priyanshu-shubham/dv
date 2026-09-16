@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { charWidth, cx, LRM, splitPath, statusLabel, statusLetter, useElementWidth, visualLength } from "./util.js";
+import { charWidth, cx, LRM, searchSeed, splitPath, statusLabel, statusLetter, useElementWidth, visualLength } from "./util.js";
 import { ThreadList, Composer } from "./Threads.jsx";
 import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "./icons.jsx";
 import { AskButton } from "./AskPanel.jsx";
@@ -15,7 +15,8 @@ import { AskButton } from "./AskPanel.jsx";
 function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
-  isActive, composing, setComposing, onAsk, onView, reveal, generatedHidden, onShowGenerated,
+  isActive, composing, setComposing, onAsk, onSearch, onView, reveal, generatedHidden, onShowGenerated,
+  onBody, found, foundAt, foundHead,
 }) {
   const [expanded, setExpanded] = useState({});
   const [selection, setSelection] = useState(null); // { side, start, end }
@@ -26,6 +27,7 @@ function FileDiff({
   }, [fd?.lang]);
 
   const [dir, name] = splitPath(entry.path);
+  const headAt = foundAt?.side === "head" ? foundAt.start : -1;
   const openThreads = threads.filter((t) => !t.resolved).length;
   // An added or deleted file has one side; split would leave half of it blank.
   const oneSided = entry.status === "A" || entry.status === "D";
@@ -38,10 +40,10 @@ function FileDiff({
   }, []);
 
   const startComment = useCallback(
-    (side, start, end) => {
+    (side, start, end, selected) => {
       const src = side === "old" ? fd?.oldLines : fd?.newLines;
       const quote = src ? src.slice(start - 1, end) : [];
-      setComposing({ path: entry.path, side, start, end, quote });
+      setComposing({ path: entry.path, side, start, end, quote, selected });
       setSelection(null);
     },
     [fd, entry.path, setComposing],
@@ -68,12 +70,18 @@ function FileDiff({
         <h3 className="file-path" title={entry.path}>
           <span className="dir">
             {LRM}
-            {dir}
+            <Found text={dir} ranges={foundHead?.head} at={headAt} />
             {LRM}
           </span>
-          <span className="name">{name}</span>
+          <span className="name">
+            <Found text={name} offset={dir.length} ranges={foundHead?.head} at={headAt} />
+          </span>
         </h3>
-        {entry.oldPath && <span className="renamed-from">from {entry.oldPath}</span>}
+        {entry.oldPath && (
+          <span className="renamed-from">
+            from <Found text={entry.oldPath} ranges={foundHead?.from} at={foundAt?.side === "from" ? foundAt.start : -1} />
+          </span>
+        )}
         {entry.generated && <span className="tag-generated" title="Machine-written; see the README for what counts">generated</span>}
         <span className="spacer" />
         {openThreads > 0 && (
@@ -145,9 +153,13 @@ function FileDiff({
               onThreadAction={onThreadAction}
               onSymbol={onSymbol}
               onAsk={onAsk}
+              onSearch={onSearch}
               path={entry.path}
               wrap={wrap}
               reveal={reveal}
+              onBody={onBody}
+              found={found}
+              foundAt={foundAt}
             />
           )}
         </div>
@@ -157,6 +169,29 @@ function FileDiff({
 }
 
 export default memo(FileDiff);
+
+// Found draws a piece of a header's text with find in page's matches marked,
+// the way a code line's are. ranges are offsets into the whole string, which
+// starts `offset` before this piece; `at` is the start of the current match.
+function Found({ text, offset = 0, ranges, at = -1 }) {
+  if (!ranges) return text;
+  const out = [];
+  let pos = 0;
+  for (const [start, end] of ranges) {
+    const a = Math.max(start - offset, 0);
+    const b = Math.min(end - offset, text.length);
+    if (b <= a) continue;
+    if (a > pos) out.push(text.slice(pos, a));
+    out.push(
+      <span key={a} className={cx("fm", start === at && "fm-on")}>
+        {text.slice(a, b)}
+      </span>,
+    );
+    pos = b;
+  }
+  if (pos < text.length) out.push(text.slice(pos));
+  return out;
+}
 
 export const cssId = (p) => p.replace(/[^A-Za-z0-9_-]/g, "_");
 
@@ -174,11 +209,13 @@ const CODE_BLOCK = 200;
 
 // DiffBody renders a file's rows. view "code" is Code mode: just `side` of the
 // file, whole, with changes marked in the gutter. readOnly takes the comment
-// affordances away, for an edit Claude has only proposed.
+// affordances away, for an edit Claude has only proposed. onBody hears the rows
+// it lays out, which find in page searches; `found` marks the matches on them,
+// by "side:line", and `foundAt` is the one the find bar is on.
 export function DiffBody({
   fd, view, side, contextLines, expanded, onExpand, threads, selection, setSelection,
-  composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAsk, path, wrap,
-  reveal, hit = 0, readOnly = false,
+  composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAsk, onSearch, path, wrap,
+  reveal, hit = 0, readOnly = false, onBody, found, foundAt,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
@@ -193,6 +230,11 @@ export function DiffBody({
     for (let i = 0; i < lines.length; i += CODE_BLOCK) out.push({ kind: "rows", lines: lines.slice(i, i + CODE_BLOCK) });
     return out;
   }, [fd, view, side, contextLines, expanded, anchors]);
+  useEffect(() => {
+    if (!onBody) return;
+    onBody(path, { blocks, view, fd });
+    return () => onBody(path, null);
+  }, [onBody, path, blocks, view, fd]);
   const ready = langReady(fd.lang);
   const oldHtml = useMemo(() => highlightLines(path + " old", fd.oldLines, fd.lang), [path, fd, ready]);
   const newHtml = useMemo(() => highlightLines(path + " new", fd.newLines, fd.lang), [path, fd, ready]);
@@ -267,7 +309,7 @@ export function DiffBody({
 
       const a = Number(from.dataset.line);
       const b = Number(to.dataset.line);
-      onStartComment(from.dataset.side, Math.min(a, b), Math.max(a, b));
+      onStartComment(from.dataset.side, Math.min(a, b), Math.max(a, b), searchSeed(sel.toString()));
     };
     root.addEventListener("mouseup", onMouseUp);
     return () => root.removeEventListener("mouseup", onMouseUp);
@@ -278,11 +320,13 @@ export function DiffBody({
   const ctx = useMemo(
     () => ({
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit, readOnly,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, onSearch, path, hit, readOnly,
+      found, foundAt,
     }),
     [
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, path, hit, readOnly,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, onSearch, path, hit, readOnly,
+      found, foundAt,
     ],
   );
 
@@ -350,6 +394,31 @@ export function DiffBody({
     if (barOld.current) barOld.current.scrollLeft = 0;
     if (barNew.current) barNew.current.scrollLeft = 0;
   }, [overflows, shift]);
+
+  // A match past the edge of a long line is brought into view sideways, once its
+  // row is drawn - which after a jump down the page is some frames away.
+  useEffect(() => {
+    if (!foundAt || !overflows) return;
+    let raf = 0;
+    const until = performance.now() + 2000;
+    const look = () => {
+      const mark = rootRef.current?.querySelector(".fm-on");
+      if (!mark) {
+        if (performance.now() < until) raf = requestAnimationFrame(look);
+        return;
+      }
+      const cell = mark.closest(".cell");
+      const bar = split && cell.dataset.side === "new" ? barNew.current : barOld.current;
+      if (!bar) return;
+      const from = cell.firstElementChild.getBoundingClientRect().right;
+      const to = cell.getBoundingClientRect().right - TRAIL_PX;
+      const r = mark.getBoundingClientRect();
+      if (r.left < from) bar.scrollLeft -= from - r.left + 3 * TRAIL_PX;
+      else if (r.right > to) bar.scrollLeft += r.right - to + 3 * TRAIL_PX;
+    };
+    look();
+    return () => cancelAnimationFrame(raf);
+  }, [foundAt, overflows, split]);
 
   // Trackpad swipes and shift+wheel scroll whichever side is under the cursor.
   //
@@ -693,6 +762,8 @@ function anchorNodes(anchor, ctx, key) {
             />
           }
           autoFocus
+          selected={c.selected}
+          onSearch={ctx.onSearch}
           onCancel={() => ctx.setComposing(null)}
           onSubmit={async (body) => {
             await ctx.onComment({
@@ -745,7 +816,13 @@ function UnifiedCell({ line, ctx, ranges }) {
 function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter }) {
   const sel = ctx.selection;
   const selected = sel && sel.side === side && no >= sel.start && no <= sel.end;
-  const body = ranges?.length ? applyRanges(html ?? "", ranges, "wd") : html ?? "";
+  let body = ranges?.length ? applyRanges(html ?? "", ranges, "wd") : html ?? "";
+  const marks = ctx.found?.get(`${side}:${no}`);
+  if (marks) {
+    const at = ctx.foundAt?.side === side && ctx.foundAt.line === no ? ctx.foundAt.start : -1;
+    body = applyRanges(body, marks.filter((r) => r[0] !== at), "fm");
+    if (at >= 0) body = applyRanges(body, marks.filter((r) => r[0] === at), "fm fm-on");
+  }
 
   return (
     <div className={cx("cell", mark, selected && "sel", ctx.hit === no && "hit")} data-side={side} data-line={no}>

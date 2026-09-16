@@ -32,6 +32,9 @@ const css = {
   entryPoints: ["src/styles.css"],
   outfile: `${outdir}/bundle.css`,
   bundle: true,
+  // Unhashed, so index.html can preload the one every page needs.
+  loader: { ".woff2": "file" },
+  assetNames: "[name]",
   minify: !watch,
   logLevel: "info",
 };
