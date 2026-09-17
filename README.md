@@ -35,6 +35,26 @@ folders, clone repositories and make worktrees - see [Hub](#hub).
 
 In a folder's page, `?` lists the keyboard shortcuts.
 
+## Screenshots
+
+Your changes, side by side, with a comment left on the lines it is about.
+
+![The Diff view, with a comment on a changed line](docs/diff.png)
+
+Claude Code beside the code: what it ran folded away, the edit it made as a
+diff, and a comment going on that edit to send with your next message. Down
+the side, the sessions of both agents - working, waiting on you, or done.
+
+![The Agent view, with a comment going on Claude's own edit](docs/agent.png)
+
+A plan comes up as the document it is, and the answers are the terminal's.
+
+![A plan up for approval, rendered, with its answers](docs/plan.png)
+
+`dv hub` holds many folders on one address, each saying what it is doing.
+
+![The hub's folder list](docs/hub.png)
+
 ## Install
 
 ```
