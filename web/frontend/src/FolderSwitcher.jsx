@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { say } from "./Notices.jsx";
 import { Modal } from "./Overlays.jsx";
-import { cx, isTyping, LRM } from "./util.js";
+import { cx, isTyping, LRM, workingLabel } from "./util.js";
 
 const RECENT = "dv:hubRecent";
 
@@ -118,7 +118,7 @@ export default function FolderSwitcher({ mode }) {
     >
       <div className="palette-list">
         {shown.list.map((f, i) => {
-          const state = f.slug === slug ? "this one" : f.open?.waiting ? "waiting on you" : f.open?.working ? "Claude is working" : "";
+          const state = f.slug === slug ? "this one" : f.open?.waiting ? "waiting on you" : f.open?.working ? workingLabel(f.open) : "";
           return (
             <button
               key={f.slug}

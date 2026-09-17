@@ -113,7 +113,10 @@ func (s *Server) Close() { s.agent.Close() }
 type Status struct {
 	Sessions int `json:"sessions"` // run by dv
 	Working  int `json:"working"`
-	Waiting  int `json:"waiting"` // prompts on the reader
+	// Codex marks Codex among the agents working, which are otherwise Claude.
+	Codex   bool `json:"codex,omitempty"`
+	Claude  bool `json:"claude,omitempty"`
+	Waiting int  `json:"waiting"` // prompts on the reader
 }
 
 func (s *Server) Status() Status {
@@ -124,6 +127,11 @@ func (s *Server) Status() Status {
 		}
 		if a.Busy {
 			st.Working++
+			if a.Agent == "codex" {
+				st.Codex = true
+			} else {
+				st.Claude = true
+			}
 		}
 	}
 	for _, r := range s.permit.Waiting() {

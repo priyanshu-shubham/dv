@@ -14,6 +14,7 @@ import (
 // Session is one row of the Agent view's list.
 type Session struct {
 	ID      string    `json:"id"`
+	Agent   string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
 	Title   string    `json:"title"`
 	Prompt  string    `json:"prompt"` // the last thing asked, which names a session with no title
 	Cwd     string    `json:"cwd"`
@@ -26,7 +27,7 @@ type Session struct {
 	Open    bool   `json:"open"`
 	// Temporary leaves the list once nothing has it open.
 	Temporary bool `json:"temporary,omitempty"`
-	// The last thing said in it, by "you" or "claude".
+	// The last thing said in it, by "you" or "claude" ("agent" for Codex).
 	Last   string `json:"last,omitempty"`
 	LastBy string `json:"lastBy,omitempty"`
 	// How full its context is, as of the last reply the end of the file has.

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { Modal, SettingsOverlay } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
-import { copyText, cx, isMac, isTyping, LRM, PHONE, useDismiss, useMedia, usePersisted } from "./util.js";
+import { copyText, cx, isMac, isTyping, LRM, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconX } from "./icons.jsx";
 
 const POLL_MS = 2000;
@@ -384,7 +384,7 @@ function Entry({ folder: f, main, job, on }) {
   else if (open?.waiting) state = <span className="session-asking">waiting on you</span>;
   else if (open) {
     const n = open.sessions;
-    state = <span>{open.working ? "Claude is working" : n ? `${n === 1 ? "a session" : `${n} sessions`} running` : "open"}</span>;
+    state = <span>{open.working ? workingLabel(open) : n ? `${n === 1 ? "a session" : `${n} sessions`} running` : "open"}</span>;
   }
   const menu = [
     { label: "Rename", run: () => setRenaming(true) },
@@ -570,33 +570,32 @@ function JobState({ job: j, on }) {
 // CardMenu is a card's other actions, behind its dots. The list is in the
 // page's top layer, out of the card's link.
 function CardMenu({ items }) {
-  const [at, setAt] = useState(null);
+  const [open, setOpen] = useState(false);
   const menu = useRef(null);
-  const ref = useDismiss(!!at, () => setAt(null), menu);
+  const ref = useDismiss(open, () => setOpen(false), menu);
+  const at = useFixedMenu(open, ref, menu);
   useEffect(() => {
-    if (!at) return;
-    const close = () => setAt(null);
-    window.addEventListener("scroll", close, true);
+    if (!open) return;
+    const close = () => setOpen(false);
+    const onScroll = (e) => menu.current?.contains(e.target) || close();
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     return () => {
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [at]);
+  }, [open]);
   return (
     <span className="hub-menu" ref={ref}>
       <button
         className="hub-menu-button hub-action"
         title="More"
-        aria-expanded={!!at}
-        onClick={stop(() => {
-          const r = ref.current.getBoundingClientRect();
-          setAt(at ? null : { top: r.bottom + 4, right: window.innerWidth - r.right });
-        })}
+        aria-expanded={open}
+        onClick={stop(() => setOpen((o) => !o))}
       >
         <IconDots size={12} />
       </button>
-      {at &&
+      {open &&
         createPortal(
           <div className="model-list attach-menu hub-menu-list" ref={menu} style={at}>
             {items.map((it) => (
@@ -604,7 +603,7 @@ function CardMenu({ items }) {
                 key={it.label}
                 className={cx(it.danger && "del")}
                 onClick={() => {
-                  setAt(null);
+                  setOpen(false);
                   it.run();
                 }}
               >

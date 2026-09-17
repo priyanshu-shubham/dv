@@ -1359,6 +1359,20 @@ a.logo.to-hub:hover > svg {
   color: var(--ren);
 }
 
+/* A file's name copies its path when clicked, and says so for a moment. */
+.copy-path {
+  cursor: copy;
+}
+
+.copy-path .copied {
+  flex: none;
+  margin-left: 8px;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+
 /* A long path loses the start of its folder first, then the name. */
 .file-head .file-path {
   display: flex;
@@ -2316,6 +2330,11 @@ a.logo.to-hub:hover > svg {
   border-bottom: 5px solid transparent;
 }
 
+/* A plan comes over as a new file, but none of it is a change to mark. */
+.prompt-card.plan .diff-code .cell.mk .gutter::before {
+  content: none;
+}
+
 /* Deleted after the last line: the notch sits at its foot instead. */
 .diff-code .cell.mk-del-end .gutter::before {
   top: auto;
@@ -3059,7 +3078,15 @@ body.resizing * {
   right: auto;
   bottom: calc(100% + 4px);
   left: 0;
-  width: 260px;
+  /* Wider when the effort row needs it, as Codex's six do. */
+  width: min-content;
+  min-width: 260px;
+  overflow: hidden auto;
+}
+
+.model-list.up.below {
+  top: calc(100% + 4px);
+  bottom: auto;
 }
 
 .model-list button {
@@ -3168,6 +3195,19 @@ body.resizing * {
   --fade-to: scale(1.1);
 }
 
+/* Where a turn ended, under it where the working line was. */
+.agent-worked {
+  padding: 2px 0;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.agent-working-time {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .agent-working-label {
   min-width: 0;
   --fade-from: translateY(4px);
@@ -3230,6 +3270,7 @@ body.resizing * {
   min-width: 0;
   min-height: 0;
   background: var(--bg);
+  container-type: inline-size;
 }
 
 .agent-pane > * {
@@ -3265,8 +3306,11 @@ body.resizing * {
   z-index: 7;
   flex: none;
   height: var(--agent-inset);
-  margin: 0 calc(-1 * var(--log-pad)) -4px;
+  margin: 0 0 -4px calc(-1 * var(--log-pad));
   background: var(--bg);
+  /* The right padding is thinner by the scrollbar: a margin reaching over
+     it would push past the scroller and scroll it sideways. */
+  box-shadow: var(--log-pad) 0 var(--bg);
 }
 
 .agent-log .file-head {
@@ -3475,15 +3519,18 @@ button.ghost.agent-context {
   color: var(--mod);
 }
 
-/* Wide enough for a split diff; prose keeps to a reading measure inside it. */
+/* Wide enough for a split diff; prose keeps to a reading measure inside it.
+   100cqw - 100% is the scrollbar (the pane's width less the scroller's):
+   taken off the right padding the gaps either side match, and off the
+   widest it goes too, what is inside sits as it would with no scrollbar. */
 .agent-log {
   --log-pad: 20px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 1100px;
+  max-width: calc(1100px - (100cqw - 100%));
   margin: 0 auto;
-  padding: 8px var(--log-pad) 32px;
+  padding: 8px calc(var(--log-pad) - (100cqw - 100%)) 32px var(--log-pad);
 }
 
 /* Shown only if the wait is long enough to notice. */
@@ -4518,11 +4565,30 @@ button.ghost.composer-add {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 4px;
-  padding: 6px 4px 2px 8px;
+  /* Kept in sight while the models scroll, in a list cut to the room it has,
+     and over the list's padding, where they would show passing below it. */
+  position: sticky;
+  bottom: -4px;
+  margin: 4px 0 -4px;
+  padding: 6px 4px 6px 8px;
   border-top: 1px solid var(--border-soft);
+  background: var(--bg-raised);
   color: var(--fg-3);
   font-size: var(--fs-xs);
+}
+
+.effort-levels {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+
+.effort-levels > * {
+  grid-area: 1 / 1;
+}
+
+.effort-levels > [aria-hidden] {
+  visibility: hidden;
 }
 
 .model-list .model-efforts .seg > button {
@@ -4647,6 +4713,26 @@ button.ghost.composer-add {
 .session-temporary {
   display: inline-flex;
   color: var(--fg-3);
+}
+
+/* Claude's mark in its terracotta; Codex's has no colour of its own. */
+.agent-icon {
+  flex: none;
+}
+
+.agent-icon.claude {
+  color: #d97757;
+}
+
+.session-agent {
+  display: inline-flex;
+  color: var(--fg-2);
+}
+
+.agent-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .session-id {
@@ -4960,8 +5046,7 @@ button.ghost.composer-add {
 }
 
 .notice.ask .notice-icon {
-  background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--fg);
 }
 
 .notice.done .notice-icon {
@@ -5130,6 +5215,11 @@ button.ghost.composer-add {
   content-visibility: visible;
 }
 
+/* A Codex patch, a file at a time. */
+.prompt-card + .prompt-card {
+  margin-top: 12px;
+}
+
 .prompt-card-title {
   flex: 0 1 auto;
   min-width: 0;
@@ -5152,11 +5242,6 @@ button.ghost.composer-add {
   font: 12px/20px var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.prompt-plan {
-  padding: 12px 16px;
-  max-width: 860px;
 }
 
 .prompt-fields {

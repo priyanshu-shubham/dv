@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"dv/internal/store"
@@ -36,6 +37,12 @@ type Item struct {
 
 	Error bool `json:"error,omitempty"` // a note about something that failed, or a command's error
 
+	// Turn marks what began a turn: a message or command sent while idle, or a
+	// background task ending. One sent while Claude worked joins its turn.
+	Turn bool `json:"turn,omitempty"`
+	// Took is, on a turn's end ("worked"), how long it went on, in milliseconds.
+	Took int64 `json:"took,omitempty"`
+
 	// On a compaction, whose Text is Claude's summary of what came before.
 	Compacted *Compacted `json:"compacted,omitempty"`
 
@@ -57,6 +64,10 @@ type Result struct {
 	// on its own, when its card comes into view.
 	Edited *Edited `json:"edited,omitempty"`
 	Detail *Detail `json:"detail,omitempty"`
+	// Took is how long the call ran, in milliseconds. Claude Code records no
+	// such thing, so for Claude it runs from the call to its result, and takes
+	// in any wait for the reader to allow it.
+	Took int64 `json:"took,omitempty"`
 }
 
 // Detail is what a result records beyond its text, for the one line that
@@ -126,6 +137,7 @@ type Transcript struct {
 	results map[string]*Result
 	tasks   map[string]*Task  // by the tool_use id that started them
 	started map[string]string // background task id -> tool_use id
+	calls   map[string]string // when each call still without a result was made
 	// Compaction boundaries by the entry the conversation had reached. Claude
 	// Code carries on from that entry in a chain that goes around the boundary,
 	// so it is placed by where it falls in the file.
@@ -196,7 +208,7 @@ func tail(data []byte) (int, string) {
 func newTranscript(root string) *Transcript {
 	return &Transcript{
 		root: root, entries: map[string]*entry{}, results: map[string]*Result{},
-		tasks: map[string]*Task{}, started: map[string]string{}, compacts: map[string][]*entry{}, msgs: map[string][]*entry{},
+		tasks: map[string]*Task{}, started: map[string]string{}, calls: map[string]string{}, compacts: map[string][]*entry{}, msgs: map[string][]*entry{},
 	}
 }
 
@@ -423,6 +435,7 @@ type rawEntry struct {
 		} `json:"usage"`
 	} `json:"message"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	DurationMs    int64           `json:"durationMs"` // a turn_duration line's
 	Compaction    struct {
 		Trigger string `json:"trigger"`
 		Before  int    `json:"preTokens"`
@@ -496,6 +509,7 @@ func (t *Transcript) parse(line []byte) *entry {
 				}
 			case "tool_use", "server_tool_use":
 				e.items = append(e.items, Item{Key: b.ID, Kind: "tool", At: r.Timestamp, Tool: b.Name, ToolID: b.ID, Input: trimInput(b.Input)})
+				t.calls[b.ID] = r.Timestamp
 			}
 		}
 
@@ -511,7 +525,12 @@ func (t *Transcript) parse(line []byte) *entry {
 						ed = &toolUseResult{}
 					}
 				}
-				t.results[b.ToolUseID] = t.result(b, ed)
+				res := t.result(b, ed)
+				if at, ok := t.calls[b.ToolUseID]; ok {
+					delete(t.calls, b.ToolUseID)
+					res.Took = between(at, r.Timestamp)
+				}
+				t.results[b.ToolUseID] = res
 				t.track(b.ToolUseID, ed)
 				images = 0 // what a result showed Claude, not something said
 			}
@@ -528,7 +547,7 @@ func (t *Transcript) parse(line []byte) *entry {
 		if text == "" && images == 0 || r.Meta {
 			break
 		}
-		t.prompt(e, r, text, images, note)
+		t.prompt(e, r, text, images, note, true)
 
 	case "attachment":
 		// A message sent while Claude was busy joins the turn as an attachment.
@@ -536,11 +555,15 @@ func (t *Transcript) parse(line []byte) *entry {
 			text, images, _ := contentOf(r.Attachment.Prompt)
 			t.finished(text)
 			if text != "" || images > 0 {
-				t.prompt(e, r, text, images, note)
+				t.prompt(e, r, text, images, note, false)
 			}
 		}
 
 	case "system":
+		// Written by the terminal at the end of a turn; a session run headless has none.
+		if r.Subtype == "turn_duration" && r.DurationMs > 0 {
+			e.items = append(e.items, Item{Key: r.UUID, Kind: "worked", At: r.Timestamp, Took: r.DurationMs})
+		}
 		if r.Subtype == "local_command" {
 			var text string
 			json.Unmarshal(r.Content, &text)
@@ -634,7 +657,8 @@ func contentOf(raw json.RawMessage) (text string, images int, blocks []block) {
 }
 
 // prompt files what someone - or something standing in for them - said.
-func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note func(string, bool)) {
+// turn is whether it begins one, rather than joining the one going on.
+func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note func(string, bool), turn bool) {
 	switch {
 	case strings.HasPrefix(text, "[Request interrupted"):
 		note("Interrupted", false)
@@ -645,13 +669,14 @@ func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note 
 		if args := strings.TrimSpace(firstGroup(commandArgs, text)); args != "" {
 			name += " " + args
 		}
-		e.items = append(e.items, Item{Key: r.UUID, Kind: "command", At: r.Timestamp, Text: name, UUID: r.UUID})
+		e.items = append(e.items, Item{Key: r.UUID, Kind: "command", At: r.Timestamp, Text: name, UUID: r.UUID, Turn: turn})
 	case strings.HasPrefix(text, "<local-command-std"):
 		output(e, r, text)
 	case r.Origin.Kind == "task-notification" || strings.HasPrefix(text, "<task-notification>"):
 		note(strings.TrimSpace(firstGroup(taskSummary, text)), false)
+		e.items[len(e.items)-1].Turn = turn
 	default:
-		e.items = append(e.items, Item{Key: r.UUID, Kind: "prompt", At: r.Timestamp, Text: text, Images: images, UUID: r.UUID})
+		e.items = append(e.items, Item{Key: r.UUID, Kind: "prompt", At: r.Timestamp, Text: text, Images: images, UUID: r.UUID, Turn: turn})
 	}
 }
 
@@ -812,6 +837,17 @@ func trimInput(raw json.RawMessage) json.RawMessage {
 	}
 	out, _ := json.Marshal(m)
 	return out
+}
+
+// between is the milliseconds from one of the transcript's timestamps to
+// another, 0 when either does not read.
+func between(from, to string) int64 {
+	a, err1 := time.Parse(time.RFC3339Nano, from)
+	b, err2 := time.Parse(time.RFC3339Nano, to)
+	if err1 != nil || err2 != nil || b.Before(a) {
+		return 0
+	}
+	return b.Sub(a).Milliseconds()
 }
 
 // cut shortens s to about n bytes, on a rune boundary, saying so.

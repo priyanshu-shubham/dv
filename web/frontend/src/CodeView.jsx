@@ -5,7 +5,7 @@ import { AttachButton } from "./Threads.jsx";
 import { newLineFor } from "./hunks.js";
 import { ensureLanguage } from "./highlight.js";
 import { asMedia, MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { cx, LRM, splitPath, statusLabel, statusLetter } from "./util.js";
+import { cx, LRM, splitPath, statusLabel, statusLetter, useCopy } from "./util.js";
 import { IconBack, IconForward, IconSplit } from "./icons.jsx";
 
 export const NO_EXPAND = {};
@@ -53,6 +53,7 @@ export default function CodeView({
   const shown = useMemo(() => commentsOn(threads, side, fd), [threads, fd, side]);
 
   const [dir, name] = splitPath(path);
+  const [copied, copy] = useCopy(path);
   const kind = media ? "" : previewKind(path);
   const lines = side === "old" ? fd?.oldLines : fd?.newLines;
   const readable = fd && !fd.binary && !fd.tooLarge;
@@ -71,13 +72,14 @@ export default function CodeView({
             {statusLetter(entry)}
           </span>
         )}
-        <h3 className="file-path" title={path}>
+        <h3 className="file-path copy-path" title={`Copy the path, ${path}`} onClick={copy}>
           <span className="dir">
             {LRM}
             {dir}
             {LRM}
           </span>
           <span className="name">{name}</span>
+          {copied && <span className="copied">copied</span>}
         </h3>
         {at && (
           <span className="at" title={`The ${side} side of the comparison, not the working tree`}>
@@ -99,7 +101,7 @@ export default function CodeView({
             <span className="btn-label">Diff</span>
           </button>
         )}
-        <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} title="Add this file to your next message to Claude" />
+        <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} what="this file" />
       </header>
       <div className={cx("file-body", wrap && "wrap")}>
         {media && <Media type={media.type} src={api.mediaURL(path, scope, side, media.stamp)} />}

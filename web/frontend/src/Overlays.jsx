@@ -6,7 +6,7 @@ import { CONTEXT_LINES } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
-import { cx, LRM, modKey, statusLabel, useDebounced } from "./util.js";
+import { cx, LRM, modKey, statusLabel, useCopy, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml } from "./highlight.js";
 import { MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
@@ -444,6 +444,7 @@ export function FileViewer({
   const [error, setError] = useState("");
   const [, force] = useState(0);
   const bodyRef = useRef(null);
+  const [copied, copy] = useCopy(file);
   const [selection, setSelection] = useState(null);
   const [composing, setComposing] = useState(null);
   const at = side === "old" ? "old" : "new";
@@ -526,7 +527,10 @@ export function FileViewer({
     <Modal onClose={onClose} onBack={onBack} wide centred className="viewer">
       <div className="viewer-head">
         <Back onBack={onBack} to={backTo} />
-        <span className="path">{file}</span>
+        <span className="path copy-path" title={`Copy the path, ${file}`} onClick={copy}>
+          {file}
+          {copied && <span className="copied">copied</span>}
+        </span>
         {line > 0 && <span className="dim">:{line}</span>}
         {data?.at && (
           <span className="at" title={`The ${side} side of the comparison, not the working tree`}>
@@ -693,7 +697,7 @@ export function HelpOverlay({ onClose }) {
     ["n / p", "Next / previous change"],
     ["f", "View the whole file at the focused line"],
     ["c", "Comment on the focused line"],
-    ["a", "Add the focused line, or the file, to your next message to Claude"],
+    ["a", "Add the focused line, or the file, to your next message to Claude or Codex"],
     ["v", "Mark the current file viewed, in Diff"],
     ["u", "Toggle split / unified"],
     ["w", "Toggle line wrapping"],
@@ -711,9 +715,9 @@ export function HelpOverlay({ onClose }) {
     ["select code", "Comment on the selected lines"],
     ["drag line numbers", "Comment on a range of lines"],
     ["click a gap bar", "Expand 20 more lines of context"],
-    ["↑ ↓ Enter, 1-9", "Answer what Claude is asking; Tab adds a note, Esc leaves it under the bell"],
+    ["↑ ↓ Enter, 1-9", "Answer what Claude or Codex is asking; Tab adds a note, Esc leaves it under the bell"],
     ["Esc Esc", "In the Agent view, rewind the session to before one of your messages"],
-    ["Esc", "In the Agent view, take back a queued message, or one sent a moment ago; otherwise stop Claude"],
+    ["Esc", "In the Agent view, take back a queued message, or one sent a moment ago; otherwise stop the agent"],
     ["[ / ]", "In the Agent view, your previous / next message"],
     [`${modKey}+↓`, "In the Agent view, the end of the conversation (from the message box too)"],
     ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],

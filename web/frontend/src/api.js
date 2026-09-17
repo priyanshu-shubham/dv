@@ -138,11 +138,12 @@ export const api = {
   setClaudeHooks: (on) => req("/api/claude/hooks", { method: "POST", body: JSON.stringify({ on }) }),
 
   agentSessions: () => req("/api/agent/sessions"),
-  // agentCommands is the slash commands a session takes: { commands: [{ name, description, argumentHint }] }.
-  agentCommands: () => req("/api/agent/commands"),
+  // agentCommands is the slash commands an agent's sessions take: { commands: [{ name, description, argumentHint }] }.
+  agentCommands: (agent = "") => req(`/api/agent/commands${agent ? `?agent=${agent}` : ""}`),
 
   // agentCreate makes a session to send a first message to; nothing runs yet.
-  agentCreate: () => req("/api/agent/sessions", { method: "POST", body: "{}" }),
+  // agent is "codex", or "" for Claude Code.
+  agentCreate: (agent = "") => req("/api/agent/sessions", { method: "POST", body: JSON.stringify({ agent }) }),
 
   // Open sessions are the ones whose permission prompts come up in the page.
   agentOpen: (id, open) => req(`/api/agent/sessions/${id}/open`, { method: "POST", body: JSON.stringify({ open }) }),
@@ -174,7 +175,7 @@ export const api = {
 
   agentInterrupt: (id) => req(`/api/agent/sessions/${id}/interrupt`, { method: "POST", body: "{}" }),
 
-  // settings: { model } and/or { mode }.
+  // settings: { model }, { mode } and/or { effort }.
   agentSettings: (id, settings) => req(`/api/agent/sessions/${id}/settings`, { method: "POST", body: JSON.stringify(settings) }),
   agentRename: (id, title) => req(`/api/agent/sessions/${id}/title`, { method: "POST", body: JSON.stringify({ title }) }),
 

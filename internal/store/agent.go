@@ -25,6 +25,8 @@ type sessionsDoc struct {
 	Temporary []string            `json:"temporary,omitempty"` // left out of the list once closed
 	Rewinds   map[string]Rewind   `json:"rewinds,omitempty"`
 	Switches  map[string][]Switch `json:"switches,omitempty"`
+	// Agents names the agent of a session that is not Claude Code's: "codex".
+	Agents map[string]string `json:"agents,omitempty"`
 }
 
 // Switch is a change of permission mode made in dv. Claude Code records a mode
@@ -161,6 +163,31 @@ func (s *Sessions) AddSwitch(id string, sw Switch) error {
 		s.doc.Switches = map[string][]Switch{}
 	}
 	s.doc.Switches[id] = list
+	return s.file.save(s.doc)
+}
+
+// Agent is the agent a session was recorded as, "" for Claude Code.
+func (s *Sessions) Agent(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return s.doc.Agents[id]
+}
+
+// SetAgent records a session's agent.
+func (s *Sessions) SetAgent(id, agent string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	if s.doc.Agents[id] == agent {
+		return nil
+	}
+	if s.doc.Agents == nil {
+		s.doc.Agents = map[string]string{}
+	}
+	s.doc.Agents[id] = agent
 	return s.file.save(s.doc)
 }
 

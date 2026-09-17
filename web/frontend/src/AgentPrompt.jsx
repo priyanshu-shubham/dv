@@ -1,24 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import MarkdownIt from "markdown-it";
 import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { cx, isTyping, LRM, splitPath, usePersisted } from "./util.js";
+import { agentName, cx, isTyping, LRM, splitPath, useCopy, usePersisted } from "./util.js";
 import { usePref } from "./prefs.js";
-import { IconFile, IconSpark, IconX } from "./icons.jsx";
+import { AgentIcon, IconFile, IconX } from "./icons.jsx";
 
 const NO_COMMENTS = [];
-const md = new MarkdownIt({ html: false, linkify: true });
 
 // Keys this soon after a request comes up were meant for whatever had the
 // focus before it, and a stray 1 or Enter would answer for the reader.
 const ARM_MS = 400;
 
-// useClaudeRequests is the list of Claude Code prompts waiting on the reader.
-// useClaudeEvents is the requests waiting on the reader, and the open sessions'
+// useAgentEvents is the requests waiting on the reader, and the open sessions'
 // activity, null until first heard.
-export function useClaudeEvents() {
+export function useAgentEvents() {
   const [requests, setRequests] = useState([]);
   const [sessions, setSessions] = useState(null);
   useEffect(
@@ -32,12 +29,12 @@ export function useClaudeEvents() {
   return { requests, sessions };
 }
 
-// ClaudePrompt is the window Claude Code's requests are answered in, over
+// AgentPrompt is the window Claude Code's and Codex's requests are answered in, over
 // whatever the reader is doing, opened from a request's notice or the header's
 // bell. The terminal asks at the same time; whichever answers first wins, and
 // the request leaves here either way. It stays mounted while anything waits, so
 // a half-written note survives being put away.
-export default function ClaudePrompt({
+export default function AgentPrompt({
   requests, open, focusId, view, contextLines, wrap, onClose, onSymbol, onOpenFile, onOpenSession,
 }) {
   const [shownId, setShownId] = useState(null);
@@ -63,7 +60,7 @@ export default function ClaudePrompt({
   // request as a file in the review, the answers as palette rows.
   return (
     <div className="prompt-backdrop" hidden={!open} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <section className="modal modal-wide prompt" role="dialog" aria-modal="true" aria-label="Claude Code is asking">
+      <section className="modal modal-wide prompt" role="dialog" aria-modal="true" aria-label={`${agentName(req.via)} is asking`}>
         <div className="viewer-head prompt-head">
           <RequestTitle req={req} />
           <button className="prompt-session" onClick={() => onOpenSession(req.session)} title="Answer it in the session, in the Agent view">
@@ -108,8 +105,10 @@ export default function ClaudePrompt({
 export function RequestTitle({ req }) {
   return (
     <>
-      <IconSpark size={14} className="spark" />
-      <span className="prompt-title">Claude wants to {headline(req)}</span>
+      <AgentIcon agent={req.via} size={14} />
+      <span className="prompt-title">
+        {agentName(req.via)} wants to {headline(req)}
+      </span>
       {req.agent && (
         <span className="tag-generated" title="A subagent is asking">
           {req.agent}
@@ -179,9 +178,9 @@ export function Request({
         unsaved.focus();
         return;
       }
-      answer({ allow: o.allow, note: withComments(note, comments, req.preview?.path), suggestion: o.suggestion });
+      answer({ allow: o.allow, note: withComments(note, comments, req), suggestion: o.suggestion });
     },
-    [options, answer, note, comments, req.preview?.path],
+    [options, answer, note, comments, req],
   );
 
   // Each request is met at Yes, with the keys held off for a moment.
@@ -260,6 +259,7 @@ export function Request({
         <Questions
           key={req.id}
           id={req.id}
+          agent={req.via}
           questions={req.input?.questions || []}
           busy={busy}
           armed={armed}
@@ -269,17 +269,21 @@ export function Request({
         />
       ) : (
         <div className="prompt-body" ref={bodyRef}>
-          <RequestCard
-            req={req}
-            what={what}
-            comments={comments}
-            onComments={(next) => onDraft({ comments: next })}
-            view={view}
-            contextLines={contextLines}
-            wrap={wrap}
-            onSymbol={onSymbol}
-            onOpenFile={onOpenFile}
-          />
+          {(req.previews?.length ? req.previews : [null]).map((p) => (
+            <RequestCard
+              key={p?.path ?? ""}
+              req={req}
+              preview={p}
+              what={what}
+              comments={comments}
+              onComments={(next) => onDraft({ comments: next })}
+              view={view}
+              contextLines={contextLines}
+              wrap={wrap}
+              onSymbol={onSymbol}
+              onOpenFile={onOpenFile}
+            />
+          ))}
         </div>
       )}
 
@@ -288,7 +292,8 @@ export function Request({
         <div className="prompt-list">
           <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
             {options.map((o, i) => {
-              const hint = optionHint(o, said);
+              const no = req.tool === "ExitPlanMode" ? "keep planning" : `stops ${agentName(req.via)}`;
+              const hint = optionHint(o, said, no);
               return (
                 <button
                   key={i}
@@ -317,7 +322,9 @@ export function Request({
               ref={noteRef}
               rows={1}
               value={note}
-              placeholder={options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"}
+              placeholder={
+                options[sel]?.allow === false ? `Tell ${agentName(req.via)} what to do instead` : `Add a note for ${agentName(req.via)} - it goes with your answer`
+              }
               onChange={(e) => onDraft({ note: e.target.value })}
             />
           </label>
@@ -351,7 +358,7 @@ export function Request({
             {/* In the conversation it goes without saying where Claude waits. */}
             {(!req.dv || onLater) && (
               <span className="also">
-                {req.dv ? "Claude is waiting in a session dv runs." : "The terminal is asking too; the first answer counts."}
+                {req.dv ? `${agentName(req.via)} is waiting in a session dv runs.` : "The terminal is asking too; the first answer counts."}
               </span>
             )}
           </span>
@@ -380,7 +387,10 @@ const NO_ANSWERS = { picked: {}, other: {}, otherOn: {}, notes: {} };
 // picking it up on another device loses nothing. rootRef is what takes the
 // focus; keysRef is handed the key handler Request calls while it has the
 // keys, which says whether it took the key.
-function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
+function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnswer }) {
+  const name = agentName(agent);
+  // Codex goes on without an answer; Claude stops.
+  const declined = agent === "codex" ? `decline to answer, and ${name} goes on without it` : `decline to answer, which stops ${name}`;
   // The answers so far follow the request to another device; where this one is
   // among the tabs and rows stays with the browser tab.
   const [place, setPlace] = usePersisted("ask:" + id, NO_PLACE, { session: true, folder: true });
@@ -587,7 +597,7 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
               >
                 <span className="badge">✕</span>
                 <span className="label">Cancel</span>
-                <span className="hint">decline to answer, which stops Claude</span>
+                <span className="hint">{declined}</span>
               </button>
             </div>
           </div>
@@ -650,7 +660,7 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
                 ref={noteRef}
                 rows={1}
                 value={notes[q.question] || ""}
-                placeholder="Add a note for Claude on this answer"
+                placeholder={`Add a note for ${name} on this answer`}
                 onFocus={() => setCursors((c) => ({ ...c, [tab]: q.options.length + 1 }))}
                 onChange={(e) => setNotes((ns) => ({ ...ns, [q.question]: e.target.value }))}
               />
@@ -680,7 +690,7 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
       {/* The last tab has these as its rows. */}
       {!(many && tab === n) && (
         <div className="prompt-question-actions">
-          <button className="ghost" disabled={busy} onClick={cancel} title="Decline to answer, which stops Claude">
+          <button className="ghost" disabled={busy} onClick={cancel} title={declined[0].toUpperCase() + declined.slice(1)}>
             Cancel
           </button>
           {many ? (
@@ -703,16 +713,17 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
 // tool. A div rather than the diff's section.file, which the page's scroll
 // anchoring looks for under the pointer and would find here instead. The edit
 // is not in the review yet, so comments on it are only drawn here, until they
-// go with the answer.
-function RequestCard({ req, what, comments, onComments, view, contextLines, wrap, onSymbol, onOpenFile }) {
+// go with the answer. p is the file shown, one of the request's previews;
+// comments are all the request's, each on the file its path names.
+function RequestCard({ req, preview: p, what, comments, onComments, view, contextLines, wrap, onSymbol, onOpenFile }) {
   const [expanded, setExpanded] = useState({});
   const [selection, setSelection] = useState(null);
   const [composing, setComposing] = useState(null);
   const [, force] = useState(0);
   const ref = useRef(null);
-  const p = req.preview;
   const fd = p?.diff;
   const [preview, setPreview] = useState(false);
+  const [copied, copy] = useCopy(p?.path || "");
 
   const startComment = useCallback(
     (side, start, end, selected) => {
@@ -731,24 +742,26 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
   }, [startComment]);
   const threads = useMemo(
     () =>
-      comments.map((c) => ({
-        id: c.id,
-        draft: true,
-        file: p?.path,
-        side: c.side,
-        startLine: c.startLine,
-        endLine: c.endLine,
-        quote: c.quote,
-        comments: [{ id: c.id, author: "you", body: c.body, createdAt: c.createdAt }],
-      })),
+      comments
+        .filter((c) => c.path === p?.path)
+        .map((c) => ({
+          id: c.id,
+          draft: true,
+          file: c.path,
+          side: c.side,
+          startLine: c.startLine,
+          endLine: c.endLine,
+          quote: c.quote,
+          comments: [{ id: c.id, author: "you", body: c.body, createdAt: c.createdAt }],
+        })),
     [comments, p?.path],
   );
   const comment = useCallback(
     async ({ side, startLine, endLine, quote, body }) => {
       const id = "draft-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      onComments([...comments, { id, side, startLine, endLine, quote, body, createdAt: new Date().toISOString() }]);
+      onComments([...comments, { id, path: p.path, side, startLine, endLine, quote, body, createdAt: new Date().toISOString() }]);
     },
-    [comments, onComments],
+    [comments, onComments, p?.path],
   );
   const threadAction = useCallback(
     async (a) => {
@@ -785,6 +798,55 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
   }
 
   const [dir, name] = splitPath(p.path);
+  const commentable = {
+    threads,
+    selection,
+    setSelection,
+    composing,
+    setComposing,
+    onStartComment: startComment,
+    onComment: comment,
+    onThreadAction: threadAction,
+  };
+
+  // A plan is read as the document it is, not as a file being added.
+  if (req.tool === "ExitPlanMode") {
+    return (
+      <div className="file prompt-card plan" ref={ref}>
+        <header className="file-head">
+          <span className="tag-generated">plan</span>
+          {req.input?.planFilePath && (
+            <span className="prompt-card-title mono copy-path" title={`Copy the path, ${p.path}`} onClick={copy}>
+              {name}
+              {copied && <span className="copied">copied</span>}
+            </span>
+          )}
+          <span className="spacer" />
+          <PreviewToggle kind="markdown" on={preview} onChange={setPreview} />
+        </header>
+        <div className={cx("file-body", wrap && "wrap")}>
+          {preview ? (
+            <MarkdownPreview lines={fd.newLines} path={p.path} />
+          ) : (
+            <DiffBody
+              fd={fd}
+              view="code"
+              side="new"
+              contextLines={0}
+              expanded={expanded}
+              onExpand={expand}
+              {...commentable}
+              onSymbol={onSymbol}
+              path={p.path}
+              wrap={wrap}
+              drawAll
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const shown = fd && !fd.binary && !fd.tooLarge;
   // A problem edit shows only the text it would replace, not the file it makes.
   const kind = previewKind(p.path);
@@ -797,13 +859,14 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
             {fd.status}
           </span>
         )}
-        <h3 className="file-path" title={p.path}>
+        <h3 className="file-path copy-path" title={`Copy the path, ${p.path}`} onClick={copy}>
           <span className="dir">
             {LRM}
             {dir}
             {LRM}
           </span>
           <span className="name">{name}</span>
+          {copied && <span className="copied">copied</span>}
         </h3>
         {!p.inRepo && (
           <span className="tag-generated" title="Outside the repository dv is reviewing">
@@ -843,14 +906,7 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
             contextLines={p.problem ? 99 : contextLines}
             expanded={expanded}
             onExpand={expand}
-            threads={threads}
-            selection={selection}
-            setSelection={setSelection}
-            composing={composing}
-            setComposing={setComposing}
-            onStartComment={startComment}
-            onComment={comment}
-            onThreadAction={threadAction}
+            {...commentable}
             onSymbol={onSymbol}
             path={p.path}
             wrap={wrap}
@@ -864,9 +920,6 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
 
 function CallBody({ req }) {
   if (req.tool === "Bash" || req.tool === "PowerShell") return <Command input={req.input} lang={req.tool === "Bash" ? "bash" : "powershell"} />;
-  if (req.tool === "ExitPlanMode" && req.input?.plan) {
-    return <div className="markdown prompt-plan" dangerouslySetInnerHTML={{ __html: md.render(req.input.plan) }} />;
-  }
   return <Fields input={req.input} />;
 }
 
@@ -922,11 +975,14 @@ function Fields({ input }) {
 function describe(req) {
   const input = req.input || {};
   const firstLine = (s) => (s || "").split("\n")[0];
+  const p = req.previews?.[0];
+  // A Codex patch can change several files at once.
+  if (input.files?.length > 1) return { verb: "edit", target: `${input.files.length} files`, many: true };
   switch (req.tool) {
     case "Edit":
-      return { verb: "edit", target: req.preview?.path || input.file_path, path: true };
+      return { verb: "edit", target: p?.path || input.file_path, path: true };
     case "Write":
-      return { verb: req.preview?.diff?.status === "A" ? "create" : "overwrite", target: req.preview?.path || input.file_path, path: true };
+      return { verb: p?.diff?.status === "A" ? "create" : "overwrite", target: p?.path || input.file_path, path: true };
     case "NotebookEdit":
       return { verb: "edit a notebook", target: input.notebook_path, path: true };
     case "Bash":
@@ -957,6 +1013,7 @@ export function headline(req) {
 // question is the line the terminal would ask above its options.
 function question(req, what) {
   const name = what.path && what.target ? splitPath(what.target)[1] : "";
+  if (what.many) return `Make these edits to ${what.target}?`;
   switch (req.tool) {
     case "Edit":
     case "NotebookEdit":
@@ -977,10 +1034,13 @@ function question(req, what) {
 // optionsFor lists the answers in the terminal's order: yes, the suggestions
 // Claude Code offers with it, then no.
 function optionsFor(req) {
+  const plan = req.tool === "ExitPlanMode";
   const offers = (req.suggestions || [])
-    .map((s, i) => ({ ...offer(s), allow: true, suggestion: i }))
+    .map((s, i) => ({ ...offer(s, plan), allow: true, suggestion: i }))
     .filter((o) => o.label);
-  return [{ label: "Yes", allow: true }, ...offers, { label: "No", allow: false }];
+  // A plan's yes always says how edits go from there.
+  const yes = plan && offers.length ? [] : [{ label: "Yes", allow: true }];
+  return [...yes, ...offers, { label: "No", allow: false }];
 }
 
 const WHERE = {
@@ -988,12 +1048,17 @@ const WHERE = {
   localSettings: ".claude/settings.local.json",
   projectSettings: ".claude/settings.json",
   userSettings: "~/.claude/settings.json",
+  codexRules: "Codex's rules",
 };
 
 // offer turns one of Claude Code's suggestions into the option the terminal
 // shows for it. One dv cannot put into words is left out.
-function offer(s) {
+function offer(s, plan) {
   const where = WHERE[s.destination] || "";
+  if (s.type === "setMode" && plan) {
+    const label = s.mode === "acceptEdits" ? "Yes, and accept edits" : s.mode === "default" ? "Yes, and ask before edits" : `Yes, in ${s.mode} mode`;
+    return { label, mode: s.mode };
+  }
   if (s.type === "setMode") {
     const label = s.mode === "acceptEdits" ? "Yes, allow all edits this session" : `Yes, and switch to ${s.mode} mode`;
     return { label, mode: s.mode, where };
@@ -1008,8 +1073,8 @@ function offer(s) {
   return {};
 }
 
-function optionHint(o, said) {
-  if (!o.allow) return said ? `sends ${said} as the reason` : "stops Claude";
+function optionHint(o, said, no) {
+  if (!o.allow) return said ? `sends ${said} as the reason` : no;
   const parts = [];
   if (o.where) parts.push(o.where === "this session" ? "for this session" : `saved to ${o.where}`);
   if (said) parts.push(`with ${said}`);
@@ -1024,11 +1089,12 @@ function saidWith(note, comments) {
 
 // withComments is the note with the comments on the edit after it, set out as
 // the Agent view sets out comments in a message.
-function withComments(note, comments, path) {
+function withComments(note, comments, req) {
+  const on = req.tool === "ExitPlanMode" ? "your plan" : "your proposed edit";
   const parts = comments.map((c) => {
     const lines = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
     const quote = c.quote.map((l) => `> ${l}\n`).join("");
-    return `<comment path="${path}" lines="${lines}" side="${c.side}" on="your proposed edit">\n${quote}${c.body}\n</comment>`;
+    return `<comment path="${c.path}" lines="${lines}" side="${c.side}" on="${on}">\n${quote}${c.body}\n</comment>`;
   });
   return [note.trim(), ...parts].filter(Boolean).join("\n\n");
 }

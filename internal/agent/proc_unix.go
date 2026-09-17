@@ -17,9 +17,10 @@ func alive(pid int) bool {
 }
 
 // ownGroup puts the process in a group of its own, so stopping it takes the
-// commands it started with it.
+// commands it started with it. A new session also leaves it without dv's
+// terminal, so hooks that ring the session's terminal don't ring dv's.
 func ownGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
 func killGroup(cmd *exec.Cmd) {

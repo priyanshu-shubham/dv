@@ -2,17 +2,17 @@ import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffec
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { api } from "./api.js";
-import { commentEvent, Request, RequestTitle } from "./ClaudePrompt.jsx";
+import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { AttachTarget } from "./Threads.jsx";
-import { cx, isTyping, LRM, modKey, relTime, splitPath, useDismiss } from "./util.js";
+import { agentName, cx, duration, isTyping, LRM, menuRoom, modKey, relTime, splitPath, useCopy, useDismiss } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import {
-  IconArrowUp, IconBack, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary, IconUndo,
+  AgentIcon, IconArrowUp, IconBack, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary, IconUndo,
   IconX,
 } from "./icons.jsx";
 
@@ -23,8 +23,12 @@ const NO_THREADS = [];
 const NO_IMAGES = [];
 const NO_QUEUED = [];
 const NO_COMMANDS = [];
+const NO_MODELS = [];
 const DOUBLE_ESC_MS = 600;
-// How long after sending Esc takes the message back instead of stopping Claude.
+// How long the reader goes without a key before a request takes the keys.
+const KEYS_SETTLE_MS = 1000;
+// How long after sending Esc takes the message back instead of stopping the
+// agent. dv holds a message sent to Codex mid-turn for as long (holdFor).
 const TAKE_BACK_MS = 2000;
 const UNDER_PX = 40; // the bar naming the message the view is under, and its gap
 // Claude scales down anything bigger itself; past this, the upload is only slower.
@@ -86,6 +90,16 @@ function loadingNear(scroller) {
   return [...scroller.querySelectorAll(".loading")].some((n) => {
     const r = n.getBoundingClientRect();
     return r.bottom > box.top - 600 && r.top < box.bottom + 600;
+  });
+}
+
+// commentInView is a comment box open where the reader can see it: the main
+// message box is outside the scroller, so every .composer in it is one.
+function commentInView(scroller) {
+  const box = scroller.getBoundingClientRect();
+  return [...scroller.querySelectorAll(".composer")].find((c) => {
+    const r = c.getBoundingClientRect();
+    return r.bottom > box.top && r.top < box.bottom;
   });
 }
 
@@ -208,7 +222,22 @@ function Chip({ kind, path, lines, onClick, onRemove }) {
   );
 }
 
-const EFFORTS = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+const EFFORTS = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra" };
+
+// The agents a new session can start with.
+const agentLabel = (agent) => (
+  <span className="agent-label">
+    <AgentIcon agent={agent} size={12} />
+    {agentName(agent)}
+  </span>
+);
+const AGENT_CHOICES = [
+  { id: "", label: agentLabel(""), description: "Claude Code, with your Claude settings and login" },
+  { id: "codex", label: agentLabel("codex"), description: "Codex, with your Codex config and login" },
+];
+
+// resumeWith is how a closed session is picked up again outside dv.
+const resumeWith = (agent) => (agent === "codex" ? "codex resume" : "claude --resume");
 
 // What the blank session offers to start from: the work dv is for.
 const SUGGESTIONS = [
@@ -270,7 +299,7 @@ async function imageOf(blob, name) {
 // readImage takes a picture for a message, scaled down if it is bigger than
 // Claude would look at or than it takes (5 MB, as base64).
 async function readImage(file) {
-  if (!IMAGE_TYPES.includes(file.type)) throw new Error(`${file.name || "That"} is not an image Claude takes: PNG, JPEG, GIF or WebP.`);
+  if (!IMAGE_TYPES.includes(file.type)) throw new Error(`${file.name || "That"} is not an image dv can send: PNG, JPEG, GIF or WebP.`);
   let blob = file;
   const bitmap = file.type === "image/gif" ? null : await createImageBitmap(file).catch(() => null);
   const long = bitmap ? Math.max(bitmap.width, bitmap.height) : 0;
@@ -281,7 +310,7 @@ async function readImage(file) {
     blob = await canvas.convertToBlob({ type: "image/png" });
     if (blob.size > 3.5e6) blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
   }
-  if (blob.size > 3.75e6) throw new Error(`${file.name || "That image"} is over the 5 MB Claude takes.`);
+  if (blob.size > 3.75e6) throw new Error(`${file.name || "That image"} is over the 5 MB dv sends.`);
   return imageOf(blob, file.name);
 }
 
@@ -382,7 +411,7 @@ const tokens = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n 
 // ContextMeter is how full the session's context is, with a tick where Claude
 // Code compacts it. Near there it says how close, as the terminal does. Given
 // onCompact, it is also where to compact it now.
-function ContextMeter({ context: { used, max, compact }, onCompact }) {
+function ContextMeter({ context: { used, max, compact }, agent, onCompact }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
   const pct = Math.min(100, (used / max) * 100);
@@ -392,9 +421,11 @@ function ContextMeter({ context: { used, max, compact }, onCompact }) {
   const className = cx("agent-context", used >= limit * 0.9 ? "high" : used >= limit * 0.75 && "warn");
   const title =
     `Context: ${used.toLocaleString()} of ${max.toLocaleString()} tokens (${Math.round(pct)}%). ` +
-    (compact
-      ? `Claude Code compacts the conversation at ${compact.toLocaleString()}, summarising it to make room.`
-      : "Claude Code compacts the conversation as it nears the end, when auto-compact is on.");
+    (agent === "codex"
+      ? "Codex compacts the conversation as it nears the end, summarising it to make room."
+      : compact
+        ? `Claude Code compacts the conversation at ${compact.toLocaleString()}, summarising it to make room.`
+        : "Claude Code compacts the conversation as it nears the end, when auto-compact is on.");
   const meter = (
     <>
       <Bar pct={pct} tick={compact && (compact / max) * 100} />
@@ -452,7 +483,7 @@ function prettyModel(id) {
 // AgentView is Agent mode's main pane: one session's conversation, and the box
 // to talk to it in. A session running in a terminal is followed, not talked to.
 export default function AgentView({
-  id, session, available, models, modes, defaultMode, root, view, contextLines, wrap, threads, attached,
+  id, session, agents, newAgent, onNewAgent, modes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
   requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, offline, active = true,
 }) {
@@ -460,21 +491,29 @@ export default function AgentView({
   // came before: by session, where it is shown from then.
   const [fromBy, setFromBy] = useState({});
   const from = fromBy[id] || "";
-  const { items, live, earlier, lost: dropped } = useSession(id, "", from);
+  const { items: read, live, earlier, lost: dropped } = useSession(id, "", from);
+  // Whose session this is, Codex's or Claude Code's (""); for the blank one,
+  // whose the next session will be.
+  const agentKind = id ? session?.agent || live?.agent || "" : newAgent;
+  // Codex's turns come with their times.
+  const items = useMemo(() => (agentKind === "codex" ? read : withWorked(read, !!live?.busy)), [read, agentKind, live?.busy]);
+  const name = agentName(agentKind);
+  const { available, models = NO_MODELS, mode: defaultMode } = agents[agentKind] || agents[""];
   // Hidden rather than gone in the other modes, so coming back draws nothing
   // again; its keys and its grabs for focus wait until then.
   const activeRef = useRef(active);
   activeRef.current = active;
   const lost = offline || dropped;
   const [draft, setDraft] = usePref("repo", "draft:" + (id || "new"), "");
-  // The slash commands Claude Code takes, asked for on coming to the view and
+  // The slash commands the agent takes, asked for on coming to the view and
   // again on starting to type one, which is when a new skill would be wanted.
-  const [commands, setCommands] = useState(NO_COMMANDS);
+  const [commandsBy, setCommandsBy] = useState({});
+  const commands = commandsBy[agentKind] || NO_COMMANDS;
   const slashing = draft.startsWith("/");
   useEffect(() => {
     if (!active || !available || (commands.length && !slashing)) return;
-    api.agentCommands().then((r) => r.commands?.length && setCommands(r.commands), () => {});
-  }, [active, available, slashing]);
+    api.agentCommands(agentKind).then((r) => r.commands?.length && setCommandsBy((by) => ({ ...by, [agentKind]: r.commands })), () => {});
+  }, [active, available, slashing, agentKind]);
   // The suggestions under a slash: which is picked, and the draft Esc put them away for.
   const [pick, setPick] = useState(0);
   const [unsuggested, setUnsuggested] = useState(null);
@@ -552,7 +591,10 @@ export default function AgentView({
   const busy = !!live?.busy && !lost;
   // Code added from a conversation goes with that conversation's next message,
   // whichever session Diff and Files are adding to.
-  const attachTarget = useMemo(() => ({ choices: [{ id, label: "this session" }], target: id, onTarget: () => {} }), [id]);
+  const attachTarget = useMemo(
+    () => ({ choices: [{ id, label: "this session", agent: agentKind }], target: id, onTarget: () => {}, newAgent }),
+    [id, agentKind, newAgent],
+  );
   const byTool = useMemo(() => {
     const m = new Map();
     for (const t of threads) if (t.origin?.session === id) m.set(t.origin.tool, [...(m.get(t.origin.tool) || []), t]);
@@ -647,10 +689,13 @@ export default function AgentView({
       f.back = null;
     }
     if (f.opened && (!f.opened.el.isConnected || performance.now() > f.opened.until)) f.opened = null;
-    if (f.opened) {
+    // Following the end would carry a comment being written out of sight. It
+    // holds the view instead, and the end is followed again once it closes.
+    const writing = !f.opened && f.stick && commentInView(el);
+    if (f.opened || writing) {
       // As much of it as fits, without pushing its top out.
       const box = el.getBoundingClientRect();
-      const r = f.opened.el.getBoundingClientRect();
+      const r = (writing || f.opened.el).getBoundingClientRect();
       const down = Math.min(r.bottom - box.bottom + 12, r.top - box.top - 12);
       if (down > 0) el.scrollTop += down;
       f.top = el.scrollTop;
@@ -938,13 +983,14 @@ export default function AgentView({
     if (i < 0 || busy) {
       const t = setTimeout(() => {
         setUndoing(null);
-        setError("Could not take the message back: Claude Code has not stopped. Esc Esc rewinds to before it once it has.");
+        setError(`Could not take the message back: ${name} has not stopped. Esc Esc rewinds to before it once it has.`);
       }, undoing.until - Date.now());
       return () => clearTimeout(t);
     }
     setUndoing(null);
     const prompt = items[i];
-    const code = items.slice(i + 1).some((it) => it.result?.edited);
+    // Codex keeps no copies of the files, so its edits stay.
+    const code = agentKind !== "codex" && items.slice(i + 1).some((it) => it.result?.edited);
     rewind(prompt, { conversation: true, code });
   }, [undoing, items, busy]);
 
@@ -955,6 +1001,11 @@ export default function AgentView({
   const toggleTemporary = () => {
     if (!id) return onTemporaryNew(!temporary);
     api.agentTemporary(id, !temporary).then(onChanged, (e) => setError(e.message));
+  };
+  // The models are the agent's own, so what was picked goes with the agent.
+  const pickAgent = (kind) => {
+    setPicks({});
+    onNewAgent(kind);
   };
   const settings = (patch) => {
     if (id) return api.agentSettings(id, patch).catch((e) => setError(e.message));
@@ -1098,7 +1149,12 @@ export default function AgentView({
   };
   const modelChoices = useMemo(
     // "" is the model the user's settings start on; Claude Code's "default" is the one it recommends.
-    () => models.map((c) => ({ ...c, label: prettyModel(c.model) || c.label, tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "" })),
+    () =>
+      models.map((c) => ({
+        ...c,
+        label: (/^claude-/.test(c.model) && prettyModel(c.model)) || c.label,
+        tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "",
+      })),
     [models],
   );
   // The model the session is on: what it reports once running, else what was
@@ -1108,7 +1164,9 @@ export default function AgentView({
     (live?.using && modelChoices.find((m) => sameModel(m.model, live.using))) ||
     (!live?.model && live?.lastModel && modelChoices.find((m) => sameModel(m.model, live.lastModel))) ||
     chosen;
-  const modelLabel = prettyModel(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || prettyModel(live.lastModel))) || chosen?.label || asked?.model;
+  // Claude's ids read as names; Codex's are named by its own list.
+  const nameOf = (model) => (/^claude-/.test(model || "") ? prettyModel(model) : modelChoices.find((m) => sameModel(m.model, model))?.label || model);
+  const modelLabel = nameOf(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || nameOf(live.lastModel))) || chosen?.label || asked?.model;
   const effort = live?.effortUsing || asked?.effort || onModel?.effort || "";
 
   // Asked here, where the terminal would ask it, one at a time.
@@ -1121,6 +1179,27 @@ export default function AgentView({
     const a = document.activeElement;
     return activeRef.current && (!a || a === document.body || (a === inputRef.current && !a.value));
   };
+  // Nor while the reader is pressing keys: an empty box is also where Shift+Tab
+  // steps the mode, and the next one would answer the request instead. It shows
+  // at once, and has the keys once they stop.
+  const lastKey = useRef(0);
+  useEffect(() => {
+    const onKey = () => (lastKey.current = performance.now());
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const [settled, setSettled] = useState(null); // the request that has the keys
+  useEffect(() => {
+    if (!ask) return;
+    let t;
+    const wait = () => {
+      const left = lastKey.current + KEYS_SETTLE_MS - performance.now();
+      if (left <= 0) setSettled(ask.id);
+      else t = setTimeout(wait, left);
+    };
+    wait();
+    return () => clearTimeout(t);
+  }, [ask?.id]);
   useEffect(() => {
     const a = document.activeElement;
     if (activeRef.current && !ask && !readOnly && (!a || a === document.body)) inputRef.current?.focus({ preventScroll: true });
@@ -1249,7 +1328,7 @@ export default function AgentView({
           ref={inputRef}
           value={draft}
           rows={blank ? 2 : 1}
-          placeholder={busy ? "Add to what Claude is doing" : blank ? "Ask Claude to do something in this repository" : "Reply to Claude"}
+          placeholder={busy ? `Add to what ${name} is doing` : blank ? `Ask ${name} to do something in this repository` : `Reply to ${name}`}
           onChange={(e) => {
             setDraft(e.target.value);
           }}
@@ -1299,7 +1378,7 @@ export default function AgentView({
         {command && !suggestions.length && (
           <div className="composer-command" title={command.description}>
             <span className="composer-command-name">/{command.name}</span>
-            <span className="composer-command-note">{command.description || "A Claude Code command"}</span>
+            <span className="composer-command-note">{command.description || `A ${agentKind === "codex" ? "Codex" : "Claude Code"} command`}</span>
           </div>
         )}
         <div className="composer-bar">
@@ -1318,7 +1397,10 @@ export default function AgentView({
               e.target.value = "";
             }}
           />
-          {/* Hidden for the moment it takes to ask Claude Code, rather than naming no model. */}
+          {!id && agents[""].available && agents.codex.available && (
+            <Picker label={agentLabel(agentKind)} title="The agent this session runs" choices={AGENT_CHOICES} value={agentKind} onPick={pickAgent} />
+          )}
+          {/* Hidden for the moment it takes to ask the agent, rather than naming no model. */}
           {modelChoices.length > 0 && (
             <ModelPicker
               label={modelLabel}
@@ -1326,12 +1408,14 @@ export default function AgentView({
               model={asked?.model || ""}
               efforts={onModel?.efforts}
               effort={effort}
+              pending={live?.pending}
               onPick={(patch) => settings(patch)}
             />
           )}
           <Picker
-            label={modes.find((m) => m.id === mode)?.label || mode}
-            title="Permission mode (Shift+Tab)"
+            label={modes.find((m) => m.id === mode)?.label || MODE_NAMES[mode] || mode}
+            title={live?.pending ? `Permission mode (Shift+Tab). ${name} takes it from the next turn.` : "Permission mode (Shift+Tab)"}
+            pending={live?.pending}
             choices={modes}
             value={mode}
             onPick={pickMode}
@@ -1343,7 +1427,7 @@ export default function AgentView({
               onClick={toggleTemporary}
               title={
                 temporary
-                  ? "Temporary: once closed, this session leaves the list. Its transcript stays for claude --resume. Click to keep it."
+                  ? `Temporary: once closed, this session leaves the list. Its transcript stays for ${resumeWith(agentKind)}. Click to keep it.`
                   : "Make this session temporary: once closed, it leaves the list"
               }
             >
@@ -1353,7 +1437,7 @@ export default function AgentView({
           )}
           <span className="spacer" />
           {busy && running === "dv" && !canSend ? (
-            <button className="composer-send stop" onClick={interrupt} title="Stop what Claude is doing (Esc)">
+            <button className="composer-send stop" onClick={interrupt} title={`Stop what ${name} is doing (Esc)`}>
               <IconStop size={12} />
             </button>
           ) : (
@@ -1361,7 +1445,7 @@ export default function AgentView({
               className="composer-send"
               onClick={send}
               disabled={!canSend}
-              title={busy ? "Send: Claude reads it once the step it is on is done (Enter)" : "Send (Enter, Shift+Enter for a new line)"}
+              title={busy ? `Send: ${name} reads it once the step it is on is done (Enter)` : "Send (Enter, Shift+Enter for a new line)"}
             >
               <IconArrowUp size={15} />
             </button>
@@ -1383,13 +1467,13 @@ export default function AgentView({
     />
   );
 
-  if (!available) {
+  if (!agents[""].available && !agents.codex.available) {
     return (
       <div className="agent-pane" hidden={!active}>
         <div className="empty-state">
-          <h2>Claude Code is not installed</h2>
+          <h2>Neither Claude Code nor Codex is installed</h2>
           <p>
-            The Agent view runs the <code>claude</code> CLI, which is not on your PATH. Install it and reload.
+            The Agent view runs the <code>claude</code> or <code>codex</code> CLI, and neither is on your PATH. Install one and reload.
           </p>
         </div>
       </div>
@@ -1421,10 +1505,10 @@ export default function AgentView({
             </span>
           )}
           <span className="spacer" />
-          {live?.context?.max > 0 && <ContextMeter context={live.context} onCompact={!readOnly && !lost ? compactNow : null} />}
+          {live?.context?.max > 0 && <ContextMeter context={live.context} agent={agentKind} onCompact={!readOnly && !lost ? compactNow : null} />}
           {live?.cost > 0 && <span className="dim agent-cost">${live.cost.toFixed(2)}</span>}
           {/* As on its card: what closing does depends on what runs it, and says so. */}
-          <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary)}>
+          <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, agentKind)}>
             <IconX size={13} />
           </button>
         </header>
@@ -1456,6 +1540,7 @@ export default function AgentView({
           <SubagentView
             key={peek}
             session={id}
+            agent={agentKind}
             call={peek}
             working={working(peekItem, !!live?.busy, running)}
             root={root}
@@ -1492,6 +1577,7 @@ export default function AgentView({
               key={it.key}
               item={it}
               session={id}
+              agent={agentKind}
               hint={it.uuid === justSent && running === "dv" ? "Esc to edit" : undefined}
               run={runs.byFirst.get(it.key)}
               folded={runs.folded.has(it.key)}
@@ -1517,7 +1603,8 @@ export default function AgentView({
           ))}
           {/* What Claude is doing is under what it was asked; what waits for it, under that. */}
           {incoming.filter((w) => !w.queued).map(bubble)}
-          {busy && !ask && <Activity live={live} items={items} root={root} />}
+          {/* A terminal's turn is only known to have started by its last message. */}
+          {busy && !ask && <Activity live={live} items={items} root={root} since={live?.since || items.findLast((it) => it.turn)?.at} />}
           {incoming.filter((w) => w.queued).map(bubble)}
           {ask && (
             <div className="agent-ask prompt">
@@ -1529,7 +1616,7 @@ export default function AgentView({
               <Request
                 key={ask.id}
                 req={ask}
-                active
+                active={settled === ask.id}
                 grab={grabFocus}
                 draft={drafts[ask.id]}
                 onDraft={(patch) => setDrafts((d) => ({ ...d, [ask.id]: { ...d[ask.id], ...patch } }))}
@@ -1564,7 +1651,7 @@ export default function AgentView({
         <div className="agent-readonly agent-lost">
           Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back.
         </div>
-      ) : peekItem ? null : readOnly && hooks?.on === false ? (
+      ) : peekItem ? null : readOnly && agentKind !== "codex" && hooks?.on === false ? (
         // Asked here, where the prompts would have come up, rather than when dv
         // is installed or first run: hooks go in Claude Code's settings for good.
         <div className="agent-readonly">
@@ -1576,7 +1663,9 @@ export default function AgentView({
         </div>
       ) : readOnly ? (
         <div className="agent-readonly">
-          This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it.
+          {agentKind === "codex"
+            ? "This session is open in a terminal. dv follows it, but only the terminal can talk to it or answer its prompts."
+            : "This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it."}
         </div>
       ) : (
         box
@@ -1590,6 +1679,7 @@ export default function AgentView({
           loading={picking && !!earlier && allPrompts?.id !== id}
           start={rewinding.prompt}
           running={running}
+          agent={agentKind}
           onClose={() => setRewinding(null)}
           onRewind={rewind}
         />
@@ -1867,19 +1957,53 @@ function TaskOutput({ session, call }) {
 }
 
 // closeHint says what closing a session does, which depends on what runs it.
-function closeHint(running, temporary) {
+function closeHint(running, temporary, agent) {
   if (running === "terminal") {
     return "Stop following this session in dv. It keeps running in its terminal, which goes back to being the only place it asks for permission.";
   }
   const after = temporary
     ? "It is temporary, so it leaves the list."
     : "It moves to Recent, and carries on from where it was when you next send to it.";
-  return running === "dv" ? `Close the session: dv stops the Claude Code running it. ${after}` : `Close the session. ${after}`;
+  const what = agent === "codex" ? "stops what Codex is doing and lets the session go" : "stops the Claude Code running it";
+  return running === "dv" ? `Close the session: dv ${what}. ${after}` : `Close the session. ${after}`;
+}
+
+// TURN_STEPS are what a turn does, whose times say when it was last at work.
+const TURN_STEPS = new Set(["text", "thinking", "tool", "note"]);
+
+// withWorked ends each of Claude's turns with how long it worked, as the
+// terminal does, where Claude Code did not write that down: from what began
+// the turn to the last thing done in it. The turn still going has none, and a
+// marker is an item of its own, so the log stays one child per item.
+function withWorked(items, busy) {
+  const out = [];
+  let start = null;
+  let end = 0;
+  let last = -1;
+  let recorded = false;
+  const close = () => {
+    if (start && last >= 0 && !recorded && end > start.at) out.splice(last + 1, 0, { key: "worked:" + start.key, kind: "worked", took: end - start.at });
+  };
+  for (const it of items) {
+    if (it.turn) {
+      close();
+      [start, end, last, recorded] = [{ key: it.key, at: Date.parse(it.at) }, 0, -1, false];
+    } else if (it.kind === "worked") recorded = true;
+    else if (TURN_STEPS.has(it.kind) && it.at) {
+      end = Math.max(end, Date.parse(it.at) + (it.result?.took || 0));
+      last = out.length;
+    }
+    out.push(it);
+  }
+  if (!busy) close();
+  return out;
 }
 
 const Item = memo(function Item(props) {
   const { item } = props;
   switch (item.kind) {
+    case "worked":
+      return <div className="agent-worked">Worked for {duration(Math.max(item.took, 1000), true)}</div>;
     case "prompt":
     case "command":
       return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} />;
@@ -1937,7 +2061,7 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
       )}
       {(queued || hint) && (
         <div className="agent-prompt-foot">
-          {queued && <span title="Claude reads it once the step it is on is done">Queued</span>}
+          {queued && <span title="Read once the step under way is done">Queued</span>}
           {hint && <span className="agent-prompt-hint">{hint}</span>}
         </div>
       )}
@@ -1964,6 +2088,7 @@ const MODE_NAMES = {
   auto: "Auto",
   bypassPermissions: "Bypass permissions",
   dontAsk: "Don't ask",
+  fullAccess: "Full access", // Codex's own config, without its sandbox
 };
 
 // modeChange words a change of permission mode: plan mode is a place Claude
@@ -1990,7 +2115,7 @@ function Compacted({ item }) {
           toggled(ref.current, !open);
         }}
         disabled={!item.text}
-        title={`${auto ? "The context was nearly full, so Claude Code" : "Claude Code"} summarised the conversation. Claude carries on from the summary, not from the messages above.`}
+        title={`${auto ? "The context was nearly full, so the conversation was" : "The conversation was"} summarised. The agent carries on from the summary, not from the messages above.`}
       >
         {item.text && (open ? <IconChevronDown size={11} /> : <IconChevron size={11} />)}
         Conversation compacted{auto ? " automatically" : ""}
@@ -2012,8 +2137,8 @@ function Streaming({ block }) {
 }
 
 // Activity is what Claude is doing, while it works: an orb whose motion is the
-// kind of work, and a word or two for it.
-function Activity({ live, items, root }) {
+// kind of work, a word or two for it, and how long the turn has gone on since.
+function Activity({ live, items, root, since }) {
   const [state, label] = JSON.parse(useDwell(JSON.stringify(activityOf(live, items, root)), ACTIVITY_DWELL_MS));
   return (
     <div className="agent-working">
@@ -2023,8 +2148,20 @@ function Activity({ live, items, root }) {
       <Fade value={label} className="agent-working-label">
         {(l) => l}
       </Fade>
+      {since && <Elapsed from={since} className="agent-working-time" />}
     </div>
   );
+}
+
+// Elapsed is the time since from, counting up.
+function Elapsed({ from, className }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const ms = now - Date.parse(from);
+  return ms >= 0 && <span className={className}>{duration(ms, true)}</span>;
 }
 
 // Longer than a fade, so one finishes before the next starts; a run of quick
@@ -2069,7 +2206,7 @@ function useDwell(value, ms) {
 
 const TOOL_ORBS = {
   Read: "searching", Grep: "searching", Glob: "searching", WebSearch: "searching", WebFetch: "searching",
-  Edit: "shaping", Write: "shaping", NotebookEdit: "shaping",
+  Edit: "shaping", Write: "shaping", NotebookEdit: "shaping", ImageGeneration: "shaping",
   Agent: "connecting", Task: "connecting",
 };
 
@@ -2127,6 +2264,8 @@ function toolSummary(tool, input = {}, root) {
       return { what: "Proposed a plan" };
     case "Skill":
       return { what: input.skill || input.command || "" };
+    case "ImageGeneration":
+      return { name: "Image", what: firstLine(input.prompt) || rel(input.file_path) };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
   if (mcp) return { name: mcp[1], what: mcp[2] };
@@ -2141,7 +2280,10 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
   const d = r?.detail;
   const { name, what, mono } = toolSummary(item.tool, input, root);
   const state = toolState(r, item.task, busy, running);
-  const sum = toolDetail(item.tool, r, item.task, state);
+  const command = item.tool === "Bash" || item.tool === "PowerShell";
+  // One left in the background ran on after its result, so its time is not known.
+  const took = command && r?.took > 0 && !item.task && state !== "background" && duration(r.took);
+  const sum = [toolDetail(item.tool, r, item.task, state), took].filter(Boolean).join(" · ");
   const rel = inRepo(input.file_path, root);
   const file = item.tool === "Read" && d?.kind === "text" && rel && { path: rel, line: d.start || 1 };
   const openCall = useContext(OpenCall);
@@ -2165,9 +2307,10 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
             {what}
           </span>
           {sum && <span className="agent-tool-sum">{sum}</span>}
+          {command && state === "running" && item.at && <Elapsed from={item.at} className="agent-tool-sum" />}
         </button>
         {file && (
-          <button className="view-file" onClick={() => onOpenFile(file.path, file.line)} title="The file as it is now, where Claude read">
+          <button className="view-file" onClick={() => onOpenFile(file.path, file.line)} title="The file as it is now, where it was read">
             <IconFile size={12} />
             <span className="btn-label">File</span>
           </button>
@@ -2179,8 +2322,16 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
         )}
       </div>
       {item.tool === "TodoWrite" && <Todos todos={input.todos} />}
+      {/* A picture made is what the call is for, so it shows without opening. */}
+      {item.tool === "ImageGeneration" && d?.kind === "image" && !r.isError && (
+        <div className="agent-tool-body">
+          <ToolImage src={api.agentImageURL(session, item.toolId)} name={what} />
+        </div>
+      )}
       {open &&
-        (d?.kind === "image" && !r.isError ? (
+        (item.tool === "ImageGeneration" ? (
+          <div className="agent-tool-body">{r?.isError ? <pre className="agent-result error">{r.text}</pre> : <Fields input={input} />}</div>
+        ) : d?.kind === "image" && !r.isError ? (
           <ToolImage src={api.agentImageURL(session, item.toolId)} detail={d} name={what} />
         ) : (
           <div className="agent-tool-body">
@@ -2233,6 +2384,7 @@ const DID = [
   [["WebSearch"], "ran", "a web search", "web searches"],
   [["Agent", "Task"], "ran", "an agent", "agents"],
   [["Skill"], "used", "a skill", "skills"],
+  [["ImageGeneration"], "made", "an image", "images"],
 ];
 // One kind for the rest, so they count together.
 const DID_OTHER = [[], "used", "a tool", "tools"];
@@ -2250,7 +2402,7 @@ function didTogether(calls) {
 // foldable is a call that goes into a run of them: done, and saying no more
 // on its own line than the run's does. An edit is its diff, the to-do list
 // its list, and a question or a plan is read for itself.
-const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode"]);
+const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode", "ImageGeneration"]);
 function foldable(it, busy, running) {
   if (it.kind !== "tool" || it.result?.edited || UNFOLDED.has(it.tool)) return false;
   return ["done", "failed", "stopped"].includes(toolState(it.result, it.task, busy, running));
@@ -2611,7 +2763,8 @@ function Todos({ todos }) {
 // fetched when the card nears the screen, and commented on the way the diff
 // is. A comment here remembers the edit it was left on, and goes with the next
 // message unless taken out.
-function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, onComment, onThreadAction, onSymbol, onOpenFile }) {
+function EditCard({ item, session, agent, view, contextLines, wrap, threads, onAttach, onComment, onThreadAction, onSymbol, onOpenFile }) {
+  const whose = `${agentName(agent)}'s edit`;
   const e = item.result.edited;
   const ref = useRef(null);
   const [state, setState] = useState(null); // { ed } or { error }
@@ -2664,12 +2817,12 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
 
   const comment = useCallback(
     async (payload) => {
-      const t = await onComment({ ...payload, scope: "Claude's edit", origin: { session, tool: item.toolId } });
+      const t = await onComment({ ...payload, scope: whose, origin: { session, tool: item.toolId } });
       if (t && onAttach) onAttach({ kind: "thread", threadId: t.id });
     },
-    [onComment, onAttach, session, item.toolId],
+    [onComment, onAttach, session, item.toolId, whose],
   );
-  const attach = useMemo(() => onAttach && ((a, to) => onAttach({ ...a, at: "Claude's edit" }, to)), [onAttach]);
+  const attach = useMemo(() => onAttach && ((a, to) => onAttach({ ...a, at: whose }, to)), [onAttach, whose]);
   useEffect(() => {
     const el = ref.current;
     const onComment = (ev) => startComment(ev.detail.side, ev.detail.line, ev.detail.line);
@@ -2686,18 +2839,20 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
   }, [startComment, attach, fd, e.path]);
 
   const [dir, name] = splitPath(e.path);
+  const [copied, copy] = useCopy(e.path);
   const first = fd?.ops?.find((o) => o.k !== 0);
   return (
     <div className="file agent-edit" id={"tool-" + item.toolId} ref={ref}>
       <header className="file-head">
         <span className={cx("badge", e.created ? "st-A" : "st-M")}>{e.created ? "A" : "M"}</span>
-        <h3 className="file-path" title={e.path}>
+        <h3 className="file-path copy-path" title={`Copy the path, ${e.path}`} onClick={copy}>
           <span className="dir">
             {LRM}
             {dir}
             {LRM}
           </span>
           <span className="name">{name}</span>
+          {copied && <span className="copied">copied</span>}
         </h3>
         {!e.inRepo && <span className="tag-generated">outside</span>}
         {state?.ed?.partial && (
@@ -2752,17 +2907,35 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
   );
 }
 
-function Picker({ label, title, choices, value, onPick }) {
+// useRoom is the way a composer menu opens and how tall it may be. The box is
+// at the foot of a session but halfway down a new one's page, where opening
+// upwards ran past the top of the pane.
+function useRoom(open, ref) {
+  const [room, setRoom] = useState(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const pane = ref.current.closest(".agent-pane").getBoundingClientRect();
+    const h = ref.current.querySelector(".model-list").scrollHeight;
+    setRoom(menuRoom(ref.current.getBoundingClientRect(), h, pane.top, pane.bottom, false));
+  }, [open]);
+  return open && room;
+}
+
+// Picker is one of the composer's menus. pending marks a pick that waits for
+// the next turn.
+function Picker({ label, title, choices, value, pending, onPick }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
+  const room = useRoom(open, ref);
   return (
     <div className="model-menu" ref={ref}>
       <button className="mini" onClick={() => setOpen((o) => !o)} title={title}>
         {label}
+        {pending && <span className="composer-effort">next turn</span>}
         <IconChevronDown size={10} />
       </button>
       {open && (
-        <div className="model-list up">
+        <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
           {choices.map((c) => (
             <button
               key={c.id}
@@ -2787,18 +2960,20 @@ function Picker({ label, title, choices, value, onPick }) {
 
 // ModelPicker is the model and how hard it thinks, in one menu, as the
 // terminal's /model has them. onPick is given { model } or { effort }.
-function ModelPicker({ label, models, model, efforts, effort, onPick }) {
+function ModelPicker({ label, models, model, efforts, effort, pending, onPick }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
+  const room = useRoom(open, ref);
+  const levels = useMemo(() => [...new Set(models.map((m) => m.efforts?.join(" ")).filter(Boolean))], [models]);
   return (
     <div className="model-menu" ref={ref}>
-      <button className="mini composer-pick" onClick={() => setOpen((o) => !o)} title="Model and effort">
+      <button className="mini composer-pick" onClick={() => setOpen((o) => !o)} title={pending ? "Model and effort, from the next turn" : "Model and effort"}>
         {label}
         {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
         <IconChevronDown size={10} />
       </button>
       {open && (
-        <div className="model-list up">
+        <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
           {models.map((c) => (
             <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
               <span className="model-name">
@@ -2808,23 +2983,40 @@ function ModelPicker({ label, models, model, efforts, effort, onPick }) {
               {c.description && <span className="model-note">{c.description}</span>}
             </button>
           ))}
-          {efforts?.length > 0 && (
-            <div className="model-efforts" title="How hard Claude thinks before answering">
+          {levels.length > 0 && (
+            <div className="model-efforts" title="How hard the model thinks before answering">
               <span>Effort</span>
-              <span className="seg">
-                {efforts.map((e) => (
-                  <button
-                    key={e}
-                    className={cx(e === effort && "on")}
-                    title={EFFORTS[e]}
-                    onClick={() => {
-                      onPick({ effort: e });
-                      setOpen(false);
-                    }}
-                  >
-                    {e}
-                  </button>
+              {/* Every model's levels, out of sight under the picked one's, so
+                  the list keeps one width whichever model is picked. */}
+              <span className="effort-levels">
+                {levels.map((l) => (
+                  <span key={l} className="seg" aria-hidden="true">
+                    {l.split(" ").map((e) => (
+                      <button key={e} tabIndex={-1}>
+                        {e}
+                      </button>
+                    ))}
+                  </span>
                 ))}
+                {efforts?.length > 0 ? (
+                  <span className="seg">
+                    {efforts.map((e) => (
+                      <button
+                        key={e}
+                        className={cx(e === effort && "on")}
+                        title={EFFORTS[e]}
+                        onClick={() => {
+                          onPick({ effort: e });
+                          setOpen(false);
+                        }}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </span>
+                ) : (
+                  <span>not for this model</span>
+                )}
               </span>
             </div>
           )}
@@ -2842,12 +3034,14 @@ const HOW = [
 ];
 
 // RewindPicker is the terminal's double Esc: pick a message, then what to take
-// back to before it.
-function RewindPicker({ prompts, loading, start, running, onClose, onRewind }) {
+// back to before it. Codex keeps no copies of the files it changes, so there
+// only the conversation goes back.
+function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewind }) {
   const list = useMemo(() => prompts.slice().reverse(), [prompts]);
+  const how = agent === "codex" ? HOW.filter((h) => !h.code) : HOW;
   const [prompt, setPrompt] = useState(start || null);
   const [sel, setSel] = useState(0);
-  const rows = prompt ? HOW : list;
+  const rows = prompt ? how : list;
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -2857,9 +3051,9 @@ function RewindPicker({ prompts, loading, start, running, onClose, onRewind }) {
 
   const choose = (i) => {
     if (!prompt) return setPrompt(list[i]);
-    const how = HOW[i];
-    if (!how.conversation && !how.code) return onClose();
-    onRewind(prompt, { conversation: how.conversation, code: how.code });
+    const h = how[i];
+    if (!h.conversation && !h.code) return onClose();
+    onRewind(prompt, { conversation: h.conversation, code: h.code });
   };
 
   const onKey = (e) => {
@@ -2917,14 +3111,14 @@ function RewindPicker({ prompts, loading, start, running, onClose, onRewind }) {
           <kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> rewind · <kbd>Esc</kbd> {prompt && !start ? "back" : "close"}
         </span>
         {running === "dv" && <span className="spacer" />}
-        {running === "dv" && <span>Anything Claude is doing stops.</span>}
+        {running === "dv" && <span>Anything {agentName(agent)} is doing stops.</span>}
       </div>
     </Modal>
   );
 }
 
 // SessionID is enough of the ID to tell sessions apart; a click copies all of
-// it, for claude --resume.
+// it, for claude --resume or codex resume.
 function SessionID({ id }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -2988,7 +3182,7 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
           {isOpen(s) && (
             <button
               className="session-close"
-              title={closeHint(s.running, s.temporary)}
+              title={closeHint(s.running, s.temporary, s.agent)}
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(s.id);
@@ -3010,6 +3204,9 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
           ) : (
             <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? s.status || "working" : "running in dv") : relTime(s.updated)}</span>
           )}
+          <span className="session-agent" title={s.agent === "codex" ? "A Codex session" : "A Claude Code session"}>
+            <AgentIcon agent={s.agent} size={11} />
+          </span>
           <SessionID id={s.id} />
           {s.temporary && (
             <span className="session-temporary" title="Temporary: it leaves the list once closed">
@@ -3048,7 +3245,7 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
         {open.map(row)}
         {recent.length > 0 && <div className="session-group">Recent</div>}
         {recent.map(row)}
-        {!available && <div className="empty">The claude CLI is not on your PATH.</div>}
+        {!available && <div className="empty">Neither the claude nor the codex CLI is on your PATH.</div>}
         {available && shown.length === 0 && <div className="empty">{q ? "No sessions match." : "No sessions in this repository yet."}</div>}
       </div>
       <div className="sidebar-foot">

@@ -718,7 +718,7 @@ func TestATemporarySessionLeavesTheListOnceClosed(t *testing.T) {
 	}
 	saved, _ := store.OpenSessions(root)
 	m := New(root, permit.New(root), saved)
-	m.SetOpen("temp", true)
+	// Marked while closed, as a past session is from the page.
 	m.SetTemporary("temp", true)
 	listed := func() (ids []string) {
 		for _, s := range m.Sessions() {

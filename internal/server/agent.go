@@ -22,11 +22,9 @@ type choice struct {
 	Label string `json:"label"`
 }
 
-// The modes Shift+Tab cycles through in the terminal, in its order.
+// The modes Shift+Tab cycles through in the terminal, in its order. Codex
+// sessions take the same four, made of its sandbox and approval settings.
 var agentModes = []choice{{"default", "Ask before edits"}, {"acceptEdits", "Accept edits"}, {"plan", "Plan"}, {"auto", "Auto"}}
-
-// Every effort level there is; each model takes some of them.
-var agentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 var sessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -44,7 +42,7 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 	opts := s.agent.Options()
 	// Asked with the sessions so the page hears of hooks put in from a terminal.
 	hooks, _ := claudeHooks()
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"available": agent.Available(),
 		"hooks":     hooks,
 		"sessions":  s.agent.Sessions(),
@@ -52,17 +50,34 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 		"modes":     agentModes,
 		"mode":      opts.Mode,
 		"usage":     s.agent.Usage(),
-	})
+	}
+	if agent.CodexAvailable() {
+		c := s.agent.CodexOptions()
+		out["codex"] = map[string]any{"available": true, "models": c.Models, "mode": c.Mode, "usage": s.agent.CodexUsage()}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleAgentCommands is apart from the session list, which is asked for every
 // few seconds; the commands run to tens of kilobytes and seldom change.
 func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"commands": s.agent.Options().Commands})
+	opts := s.agent.Options()
+	if r.URL.Query().Get("agent") == "codex" {
+		opts = s.agent.CodexOptions()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commands": opts.Commands})
 }
 
 func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
-	id, err := s.agent.Create()
+	var req struct {
+		Agent string `json:"agent"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.Agent != "" && req.Agent != "codex" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("dv runs Claude Code and Codex, not %q", req.Agent))
+		return
+	}
+	id, err := s.agent.Create(req.Agent)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -332,10 +347,17 @@ func (s *Server) handleAgentSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	models := s.agent.Options().Models
+	models := s.agent.OptionsFor(id).Models
+	// Any model's effort levels, since the model may change in the same breath.
+	efforts := map[string]bool{}
+	for _, m := range models {
+		for _, e := range m.Efforts {
+			efforts[e] = true
+		}
+	}
 	if req.Model != nil && !slices.ContainsFunc(models, func(m agent.Model) bool { return m.ID == *req.Model }) ||
 		req.Mode != nil && !slices.ContainsFunc(agentModes, func(c choice) bool { return c.ID == *req.Mode }) ||
-		req.Effort != nil && !slices.Contains(agentEfforts, *req.Effort) {
+		req.Effort != nil && !efforts[*req.Effort] {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("that model, mode or effort is not one dv offers"))
 		return
 	}

@@ -3,9 +3,9 @@
 // notification as well while the tab is in the background, if they allowed it.
 import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
-import { headline } from "./ClaudePrompt.jsx";
-import { IconCheck, IconSpark, IconX } from "./icons.jsx";
-import { cx } from "./util.js";
+import { headline } from "./AgentPrompt.jsx";
+import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
+import { agentName, cx } from "./util.js";
 
 // A turn counts as over once idle has held this long: a terminal's record can
 // read idle for a moment between steps.
@@ -15,10 +15,10 @@ const DONE_MS = 8000;
 // Below the header, clear of the message box.
 export const Notices = () => <Toaster position="top-right" offset={{ top: 46, right: 14 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />;
 
-function Notice({ id, kind, title, detail, last, actions }) {
+function Notice({ id, kind, agent, title, detail, last, actions }) {
   return (
     <div className={cx("notice", kind)}>
-      <span className="notice-icon">{kind === "done" ? <IconCheck size={13} /> : <IconSpark size={13} />}</span>
+      <span className="notice-icon">{kind === "done" ? <IconCheck size={13} /> : <AgentIcon agent={agent} size={13} />}</span>
       <div className="notice-body">
         <div className="notice-title">{title}</div>
         {detail && <div className="notice-detail">{detail}</div>}
@@ -95,7 +95,7 @@ export function useNotices({ requests, sessions, looking, desktop, review, open 
     }
     for (const r of requests) {
       const tag = "ask:" + r.id;
-      const title = `Claude wants to ${headline(r)}`;
+      const title = `${agentName(r.via)} wants to ${headline(r)}`;
       const where = `in ${r.title || "a new session"}`;
       if (!told.current.has(r.id)) {
         told.current.add(r.id);
@@ -111,6 +111,7 @@ export function useNotices({ requests, sessions, looking, desktop, review, open 
             <Notice
               id={t}
               kind="ask"
+              agent={r.via}
               title={title}
               detail={where}
               actions={[
@@ -144,7 +145,7 @@ export function useNotices({ requests, sessions, looking, desktop, review, open 
         // Waiting on the reader is not the end of a turn.
         if (busy.current.get(s.id) !== false || requests.some((r) => r.session === s.id)) return;
         const tag = "done:" + s.id;
-        const title = "Claude finished";
+        const title = `${agentName(s.agent)} finished`;
         const where = s.title || "A session";
         if (s.id !== looking) {
           toast.custom(

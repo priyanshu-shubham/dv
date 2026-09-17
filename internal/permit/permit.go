@@ -28,11 +28,14 @@ type Request struct {
 	Input   json.RawMessage `json:"input"`
 	// DV marks a session dv runs, where no terminal is asking alongside.
 	DV bool `json:"dv,omitempty"`
+	// Via names the agent asking when it is not Claude Code: "codex".
+	Via string `json:"via,omitempty"`
 	// Suggestions are the terminal's "Yes, and don't ask again" options, in the
 	// form a hook hands back to apply one.
 	Suggestions []json.RawMessage `json:"suggestions,omitempty"`
 	At          time.Time         `json:"at"`
-	Preview     *Preview          `json:"preview,omitempty"`
+	// Previews are Claude Code's one file, or each of those a Codex patch changes.
+	Previews []*Preview `json:"previews,omitempty"`
 }
 
 // Answer is the reader's decision on a request.
@@ -135,7 +138,7 @@ func (b *Broker) ask(ctx context.Context, in *hookInput) []byte {
 	}
 	req := &Request{
 		ID: newID(), Session: in.Session, Agent: in.Agent, Tool: in.Tool, Input: in.Input,
-		Suggestions: in.Suggestions, At: time.Now(), Preview: preview(b.root, in.Tool, in.Input),
+		Suggestions: in.Suggestions, At: time.Now(), Previews: previews(b.root, in.Tool, in.Input),
 	}
 	a := b.put(ctx, req, in.AgentID)
 	if a == nil {
@@ -148,7 +151,11 @@ func (b *Broker) ask(ctx context.Context, in *hookInput) []byte {
 // means nobody answered: ctx ended first.
 func (b *Broker) Put(ctx context.Context, req *Request) *Answer {
 	req.ID, req.At, req.DV = newID(), time.Now(), true
-	req.Preview = preview(b.root, req.Tool, req.Input)
+	// Codex says what an edit changes; Claude Code's is worked out from its
+	// input, as either's plan is.
+	if req.Previews == nil && (req.Via == "" || req.Tool == "ExitPlanMode") {
+		req.Previews = previews(b.root, req.Tool, req.Input)
+	}
 	return b.put(ctx, req, "")
 }
 

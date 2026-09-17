@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { slug } from "./boot.js";
 
 export const cx = (...parts) => parts.filter(Boolean).join(" ");
@@ -56,6 +56,31 @@ export function useDismiss(open, close, also) {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
   return ref;
+}
+
+// menuRoom is where a menu h tall, opening from the button at r, goes between
+// top and bottom: on its usual side if it fits there, else on the side with
+// more room, and no taller than that room.
+export function menuRoom(r, h, top, bottom, down) {
+  const above = r.top - top - 12;
+  const below = bottom - r.bottom - 12;
+  if ((down ? below : above) < h) down = below > above;
+  return { below: down, max: down ? below : above };
+}
+
+// useFixedMenu is the style of a menu drawn in the page's top layer, by the
+// button ref is on, worked out once the menu is drawn and its height known:
+// under the button, or over it where it would run off the window.
+export function useFixedMenu(open, ref, menu) {
+  const [style, setStyle] = useState(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const r = ref.current.getBoundingClientRect();
+    const { below, max } = menuRoom(r, menu.current.scrollHeight, 0, window.innerHeight, true);
+    const right = window.innerWidth - r.right;
+    setStyle(below ? { top: r.bottom + 4, right, maxHeight: max } : { top: "auto", bottom: window.innerHeight - r.top + 4, right, maxHeight: max });
+  }, [open]);
+  return style;
 }
 
 // PHONE is the width dv lays itself out for a phone under, as styles.css has it.
@@ -152,6 +177,26 @@ export async function copyText(text) {
   if (!ok) throw new Error("The browser would not copy it.");
 }
 
+// useCopy is a click handler that copies text, and whether it just did. A
+// click ending a selection leaves the selection to be copied instead.
+export function useCopy(text) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const copy = useCallback(
+    (e) => {
+      if (window.getSelection()?.toString()) return;
+      e?.stopPropagation();
+      copyText(text).then(() => setCopied(true), () => {});
+    },
+    [text],
+  );
+  return [copied, copy];
+}
+
 export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 export const modKey = isMac ? "⌘" : "Ctrl";
 
@@ -199,6 +244,13 @@ export const statusLetter = (f) => (f.untracked ? "U" : f.status);
 // end — ".dockerignore" renders as "dockerignore.". Prefixing the text with
 // this mark pins the paragraph direction back to LTR.
 export const LRM = "\u200e";
+
+// agentName names the agent a session, request or activity is with: "codex",
+// or Claude's "".
+export const agentName = (agent) => (agent === "codex" ? "Codex" : "Claude");
+
+// workingLabel says which agents are at work in a folder, from its hub status.
+export const workingLabel = (open) => (open.codex && open.claude ? "Claude and Codex are working" : `${open.codex ? "Codex" : "Claude"} is working`);
 
 // splitPath separates a path into its directory and file name so the sidebar
 // can dim the directory.
@@ -260,6 +312,17 @@ function globRegExp(glob) {
     else src += body[i].replace(/[.+^${}()|[\]\\]/g, "\\$&");
   }
   return new RegExp(src + "(?:/|$)", "i");
+}
+
+// duration says how long something took: "0.4s", "12s", "2m 5s", "1h 3m".
+// whole leaves out the tenths, for a count still going up.
+export function duration(ms, whole = false) {
+  const s = ms / 1000;
+  if (s < 10 && !whole) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${Math.floor(s)}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${Math.floor(s % 60)}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 export function relTime(iso) {

@@ -218,6 +218,22 @@ func TestPreviewIsTheFileAfterTheEdit(t *testing.T) {
 	}
 }
 
+func TestAPlanIsPreviewedForEitherAgent(t *testing.T) {
+	b := New(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	claude := &Request{Tool: "ExitPlanMode", Input: json.RawMessage(`{"plan":"# Plan\n\n1. Do it\n","planFilePath":"/home/me/.claude/plans/x.md"}`)}
+	codex := &Request{Tool: "ExitPlanMode", Via: "codex", Input: json.RawMessage(`{"plan":"Do it"}`)}
+	b.Put(ctx, claude)
+	b.Put(ctx, codex)
+	if ps := claude.Previews; len(ps) != 1 || ps[0].Path != "/home/me/.claude/plans/x.md" || len(ps[0].Diff.NewLines) != 3 {
+		t.Errorf("Claude's plan: %+v", ps)
+	}
+	if ps := codex.Previews; len(ps) != 1 || ps[0].Path != "plan.md" || ps[0].Diff.NewLines[0] != "Do it" {
+		t.Errorf("Codex's plan: %+v", ps)
+	}
+}
+
 func TestApplyEditRefusesWhatClaudeCodeWould(t *testing.T) {
 	file := []byte("x := 1\ny := 1\nsay(“hi”)\n")
 	cases := []struct {

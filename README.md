@@ -1,15 +1,16 @@
 # dv
 
-A local place to review code and work with Claude Code, in the browser - a
-phone's too.
+A local place to review code and work with Claude Code and Codex, in the
+browser - a phone's too.
 
-- **Diff** - your changes, a branch or any commits, with comments on any line.
+- **Diff** - your changes, a branch or any commits, with comments on any line
+  that can be added to a message for Claude or Codex.
 - **Files** - the whole repository, or any branch or commit, to read and
   comment on.
-- **Agent** - Claude Code's sessions beside the code: Claude's edits show as
-  diffs you can comment on, the comments go to Claude with your next message,
-  and its permission prompts are answered in the page, whether dv runs the
-  session or a terminal does.
+- **Agent** - Claude Code's and Codex's sessions beside the code: their edits
+  show as diffs you can comment on, the comments go with your next message, and
+  their permission prompts are answered in the page. A plan comes up for
+  approval with its lines open to comments.
 
 Run `dv` in a git repository and it prints a URL. Comments are kept in a file
 inside the repository that git never sees. Outside git, the same page opens on
@@ -43,8 +44,8 @@ ARM — checks it against the release's checksums, and puts `dv` in
 another directory. On Windows, take the zip from the
 [releases page](https://github.com/priyanshu-shubham/dv/releases).
 
-dv needs `git` for the diff, and the `claude` CLI on your PATH for the Agent
-view. `rg` is used for text search when present, with a built-in scanner as the
+dv needs `git` for the diff, and the `claude` or `codex` CLI on your PATH for
+the Agent view. `rg` is used for text search when present, with a built-in scanner as the
 fallback.
 
 To build it yourself: `make install`, with Go 1.24+ and Node.
@@ -66,7 +67,8 @@ them. `dv` in a folder a hub is serving prints the hub's address for it and
 exits, and `dv hub` with a hub already on the port opens that one.
 
 - `-host 0.0.0.0` reaches the hub from other devices on your network, where
-  **anyone who can reach the port can add folders, clone and run Claude in them**.
+  **anyone who can reach the port can add folders, clone and run Claude or Codex
+  in them**.
   Over plain http from another device, browsers allow neither desktop
   notifications nor pasting a copied image; a tunnel with https gives both.
 - Clones use your own git credentials and never stop to ask for a password or a
@@ -99,8 +101,8 @@ In the repository, in `.dv/` at its root:
 - `viewed.json` — files marked viewed, per comparison
 - `prefs.json` — the file filters, unsent messages to Claude and what is added
   to them, half-answered questions
-- `agent.json` — the sessions open in dv, rewinds not yet sent, and where you
-  changed a session's permission mode
+- `agent.json` — the sessions open in dv and which are Codex's, rewinds not yet
+  sent, and where you changed a session's permission mode
 - `server.json` — the address of the dv running here
 
 On first run dv adds `/.dv/` to `.git/info/exclude`, so none of it shows in
@@ -176,6 +178,24 @@ runs `dv claude hook`, which does nothing when no dv is open on the session's
 repository, so Claude Code behaves as always elsewhere. If dv moves, the next dv
 to start points the hooks at itself. **Turn the setting off before removing
 dv**, or the hooks are left running a binary that is not there.
+
+## Codex
+
+dv runs Codex through `codex app-server`, with your Codex config and login: one
+for every folder dv has open, started when the Agent view needs it and stopped
+a few minutes after nothing does. A new session picks Claude or Codex beside
+its model. The list has the folder's Codex sessions from Codex's own history;
+one open in a terminal is followed read-only, and its prompts stay the
+terminal's.
+
+The permission modes are made of Codex's sandbox and approvals: **Ask before
+edits** keeps the sandbox read-only and asks for anything but a safe command,
+**Accept edits** lets Codex write in the folder and asks to go beyond it,
+**Plan** is Codex's plan mode, and **Auto** has Codex's reviewer answer
+instead of you. A mode or model picked while Codex works takes effect from its
+next turn. A message sent while it works waits two seconds, when Esc takes it
+back, and then joins the turn. Rewinding restores the conversation only: Codex
+keeps no copies of the files it changes.
 
 ## License
 

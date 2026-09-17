@@ -58,7 +58,7 @@ export default function Header({
           className={cx("icon", "bell", bellOn && "on")}
           aria-pressed={bellOn}
           onClick={onBell}
-          title={`Claude is waiting on you: ${waiting === 1 ? "one request" : `${waiting} requests`}`}
+          title={`Waiting on you: ${waiting === 1 ? "one request" : `${waiting} requests`}`}
         >
           {/* Keyed by arrivals, so the bell rings again for each new one. */}
           <span className="bell-glyph" key={arrived}>
@@ -109,7 +109,7 @@ export function ModeSwitch({ mode, modes, onMode, attached }) {
         className={cx(agent && "on")}
         aria-pressed={agent}
         onClick={() => onMode("agent")}
-        title={`Claude Code sessions (Shift+←/→ steps through the modes)${attached ? ` - ${attached} added to your next message` : ""}`}
+        title={`Claude Code and Codex sessions (Shift+←/→ steps through the modes)${attached ? ` - ${attached} added to your next message` : ""}`}
       >
         Agent
         {/* Keyed by the count, so each addition pulses. */}

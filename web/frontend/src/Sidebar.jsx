@@ -364,7 +364,7 @@ export default function Sidebar({
 // CommentsPanel is every comment in the review, at the page's right in any
 // mode, opened and closed from the header, which counts them. Its width is
 // dragged from its left edge.
-export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, widthVar, onWidth }) {
+export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, onAttach, widthVar, onWidth }) {
   const rootRef = useRef(null);
   const drag = useRef(null);
   const onResizeDown = (e) => {
@@ -407,6 +407,7 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, w
           <ThreadList
             threads={threads}
             compact
+            onAttach={onAttach}
             onAction={(action) => {
               if (action.type === "jump") onJump(action.thread);
               else onThreadAction(action);

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { charWidth, cx, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useElementWidth, useMedia, visualLength } from "./util.js";
+import { charWidth, cx, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
 import { asMedia, MarkdownPreview, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
@@ -36,6 +36,7 @@ function FileDiff({
   }, [fd?.lang]);
 
   const [dir, name] = splitPath(entry.path);
+  const [copied, copy] = useCopy(entry.path);
   const headAt = foundAt?.side === "head" ? foundAt.start : -1;
   const openThreads = threads.filter((t) => !t.resolved).length;
   // An added or deleted file has one side; split would leave half of it blank.
@@ -76,7 +77,7 @@ function FileDiff({
         <span className={cx("badge", "st-" + statusLetter(entry))} title={entry.untracked ? "untracked" : statusLabel[entry.status]}>
           {statusLetter(entry)}
         </span>
-        <h3 className="file-path" title={entry.path}>
+        <h3 className="file-path copy-path" title={`Copy the path, ${entry.path}`} onClick={copy}>
           <span className="dir">
             {LRM}
             <Found text={dir} ranges={foundHead?.head} at={headAt} />
@@ -85,6 +86,7 @@ function FileDiff({
           <span className="name">
             <Found text={name} offset={dir.length} ranges={foundHead?.head} at={headAt} />
           </span>
+          {copied && <span className="copied">copied</span>}
         </h3>
         {entry.oldPath && (
           <span className="renamed-from">
@@ -114,7 +116,7 @@ function FileDiff({
           <IconFile size={12} />
           <span className="btn-label">File</span>
         </button>
-        <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} title="Add this file to your next message to Claude" />
+        <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} what="this file" />
         <button
           className={cx("btn", "outline", "viewed", viewed && "on")}
           aria-pressed={viewed}
@@ -922,7 +924,11 @@ function anchorNodes(anchor, ctx, key) {
     nodes.push(
       <div className={cx("row-threads", "side-" + anchor.side)} key={key + "-th"}>
         <div className="thread-slot">
-          <ThreadList threads={list} onAction={ctx.onThreadAction} />
+          <ThreadList
+            threads={list}
+            onAction={ctx.onThreadAction}
+            onAttach={ctx.onAttach && ((t, to) => ctx.onAttach({ kind: "thread", threadId: t.id }, to))}
+          />
         </div>
       </div>,
     );
@@ -935,15 +941,20 @@ function anchorNodes(anchor, ctx, key) {
           <Composer
           title={c.start === c.end ? `Line ${c.end}` : `Lines ${c.start}-${c.end}`}
           aside={
-            ctx.onAttach && (
+            ctx.onAttach &&
+            ((body) => (
+              // With something written, it is saved and goes as the comment; empty, the lines go.
               <AttachButton
-                onClick={(to) => {
-                  ctx.onAttach({ kind: "lines", file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote }, to);
+                onClick={async (to) => {
+                  if (body) {
+                    const t = await ctx.onComment({ file: ctx.path, side: c.side, startLine: c.start, endLine: c.end, quote: c.quote, body });
+                    if (t) ctx.onAttach({ kind: "thread", threadId: t.id }, to);
+                  } else ctx.onAttach({ kind: "lines", file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote }, to);
                   ctx.setComposing(null);
                 }}
-                title="Add these lines to your next message to Claude instead"
+                what={body ? "this comment" : "these lines"}
               />
-            )
+            ))
           }
           autoFocus
           selected={c.selected}

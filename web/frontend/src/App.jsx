@@ -8,7 +8,7 @@ import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import AgentView from "./Agent.jsx";
-import ClaudePrompt, { useClaudeEvents } from "./ClaudePrompt.jsx";
+import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useNotices } from "./Notices.jsx";
 import { AttachTarget } from "./Threads.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
@@ -18,7 +18,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, usePref } from "./prefs.js";
 import { boot } from "./boot.js";
 
@@ -85,6 +85,18 @@ export default function App() {
   const [attachedBy, setAttachedBy] = usePref("repo", "agentAttachedBy", NO_ATTACHED_BY);
   const [attachPick, setAttachPick] = usePref("repo", "agentAttachTo", null);
   const [temporaryNew, setTemporaryNew] = useState(false); // the blank session's Temporary toggle
+  // The agent a new session starts with, "" for Claude Code, as last picked;
+  // one that is not installed gives way to the one that is.
+  const [newAgentPicked, setNewAgent] = usePref("user", "newAgent", "");
+  const newAgent = agent.codex?.available && (newAgentPicked === "codex" || !agent.available) ? "codex" : "";
+  const agents = useMemo(
+    () => ({
+      "": { available: agent.available, models: agent.models || [], mode: agent.mode, usage: agent.usage },
+      // Its models are null until the app-server has answered.
+      codex: agent.codex ? { ...agent.codex, models: agent.codex.models || [] } : { available: false, models: [] },
+    }),
+    [agent],
+  );
   const [settings, setSettings] = usePref("user", "settings", NO_SETTINGS);
   const sideRight = settings.sidebar === "right";
   const [agentReveal, setAgentReveal] = useState(null);
@@ -134,7 +146,7 @@ export default function App() {
   // Claude Code's prompts waiting on the reader. The session on screen in the
   // Agent view asks in its conversation; the rest are told of in notices, and
   // answered in a window over the page opened from one or from the bell.
-  const { requests, sessions: activity } = useClaudeEvents();
+  const { requests, sessions: activity } = useAgentEvents();
   const windowed = useMemo(() => requests.filter((r) => mode !== "agent" || r.session !== agentId), [requests, mode, agentId]);
   const askingSessions = useMemo(() => new Set(requests.map((r) => r.session)), [requests]);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -1018,9 +1030,9 @@ export default function App() {
     const t = setInterval(() => document.hidden || loadSessions(), 2500);
     return () => clearInterval(t);
   }, [mode, loadSessions]);
-  // The models come from asking Claude Code, which the first load sets off.
+  // The models come from asking Claude Code and Codex, which the first load sets off.
   useEffect(() => {
-    if (mode !== "agent" || !agent.available || agent.models?.length) return;
+    if (mode !== "agent" || (!agent.available || agent.models?.length) && (!agent.codex || agent.codex.models?.length)) return;
     const t = setTimeout(loadSessions, 500);
     return () => clearTimeout(t);
   }, [mode, agent, loadSessions]);
@@ -1038,11 +1050,11 @@ export default function App() {
   // A session is made when its first message is sent; until then it is the
   // page's blank one.
   const newSession = useCallback(async () => {
-    const { id } = await api.agentCreate();
+    const { id } = await api.agentCreate(newAgent);
     setAgentId(id);
     loadSessions();
     return id;
-  }, [setAgentId, loadSessions]);
+  }, [newAgent, setAgentId, loadSessions]);
   const startSession = useCallback(() => {
     setAgentId("");
     requestAnimationFrame(() => document.querySelector(".agent-composer textarea")?.focus());
@@ -1050,7 +1062,7 @@ export default function App() {
   const closeSession = useCallback(
     async (id) => {
       const row = agent.sessions.find((x) => x.id === id);
-      if (row?.running === "dv" && row.busy && !confirm("Claude is still working in this session. Stop it and close?")) return;
+      if (row?.running === "dv" && row.busy && !confirm(`${agentName(row.agent)} is still working in this session. Stop it and close?`)) return;
       await api.agentOpen(id, false).catch(() => {});
       if (id === agentId) setAgentId("");
       loadSessions();
@@ -1099,9 +1111,9 @@ export default function App() {
   useEffect(() => {
     const n = requests.length;
     const repo = meta ? `dv - ${meta.repo} (${meta.place})` : "dv";
-    const note = n > 0 ? "Claude is waiting" : ended > 0 && "Claude finished";
+    const note = n > 0 ? `${agentName(requests[0].via)} is waiting` : ended > 0 && "Finished";
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
-  }, [requests.length, ended, meta]);
+  }, [requests, ended, meta]);
 
   // Shift+Up and Down go through the open sessions in the order the list has
   // them. The message box keeps them for selecting text, unless it is empty.
@@ -1128,11 +1140,14 @@ export default function App() {
   // the one picked while it stays open, else the first in the list, else a new
   // one. The open sessions come with the requests, in every mode.
   const attachChoices = useMemo(
-    () => (activity || []).filter((s) => s.running !== "terminal").map((s) => ({ id: s.id, label: s.title || "Untitled session" })),
+    () => (activity || []).filter((s) => s.running !== "terminal").map((s) => ({ id: s.id, label: s.title || "Untitled session", agent: s.agent || "" })),
     [activity],
   );
   const attachTo = attachChoices.some((c) => c.id === attachPick) ? attachPick : attachChoices[0]?.id || "";
-  const attachTarget = useMemo(() => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick }), [attachChoices, attachTo, setAttachPick]);
+  const attachTarget = useMemo(
+    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent }),
+    [attachChoices, attachTo, setAttachPick, newAgent],
+  );
 
   // attach adds to what goes with a session's next message. Code is taken as
   // it reads on screen, so it says which version that was. A new session has
@@ -1455,8 +1470,9 @@ export default function App() {
           onReset={resetReview}
           agent={{
             sessions: agent.sessions,
-            available: agent.available,
-            usage: agent.usage,
+            available: agent.available || !!agent.codex?.available,
+            // The limits of the agent on screen, or the one a new session starts with.
+            usage: agents[agentId ? agent.sessions.find((s) => s.id === agentId)?.agent || "" : newAgent]?.usage,
             activeId: agentId,
             added: attachedLive,
             asking: askingSessions,
@@ -1582,10 +1598,10 @@ export default function App() {
             active={mode === "agent"}
             id={agentId}
             session={agent.sessions.find((x) => x.id === agentId)}
-            available={agent.available}
-            models={agent.models || []}
+            agents={agents}
+            newAgent={newAgent}
+            onNewAgent={setNewAgent}
             modes={agent.modes}
-            defaultMode={agent.mode}
             root={meta?.root || ""}
             view={view}
             contextLines={contextLines}
@@ -1625,6 +1641,7 @@ export default function App() {
               onThreadAction({ type: "jump", thread });
             }}
             onThreadAction={onThreadAction}
+            onAttach={(thread, to) => attach({ kind: "thread", threadId: thread.id }, to)}
             // Over the sidebar on the right, the two are one column, one width.
             widthVar={sideRight ? "--side-w" : "--comments-w"}
             onWidth={sideRight ? setSideWidth : setCommentsWidth}
@@ -1633,7 +1650,7 @@ export default function App() {
       </div>
 
       {windowed.length > 0 && (
-        <ClaudePrompt
+        <AgentPrompt
           requests={windowed}
           open={promptOpen}
           focusId={promptFocus}

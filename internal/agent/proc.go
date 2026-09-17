@@ -74,6 +74,7 @@ type proc struct {
 	replies     map[string]chan reply
 	asks        map[string]context.CancelFunc
 	lastUsed    time.Time
+	since       time.Time // when the turn going on began
 	nextReq     int
 	planCall    string // an EnterPlanMode call not yet answered
 	apiErr      string // the API error Claude Code last said, which its transcript holds
@@ -284,7 +285,7 @@ func (p *proc) send(id, text string, images []Image) (string, error) {
 		// It waits for the step Claude is on, unseen in the transcript till then.
 		p.queued = append(p.queued, Queued{id, text, len(images)})
 	} else {
-		p.blocks = nil
+		p.blocks, p.since = nil, time.Now()
 	}
 	p.busy, p.err, p.lastUsed = true, "", time.Now()
 	p.mu.Unlock()
@@ -429,6 +430,10 @@ func (p *proc) handle(line []byte) {
 		case "compact_boundary":
 			p.status = ""
 		case "session_state_changed":
+			// A turn can start with no message, as when a background task ends.
+			if m.State != "idle" && !p.busy {
+				p.since = time.Now()
+			}
 			p.states, p.busy = true, m.State != "idle"
 			if !p.busy {
 				p.queued = nil
@@ -553,12 +558,22 @@ func (p *proc) control(id string, raw json.RawMessage) {
 		p.asks[id] = cancel
 		p.mu.Unlock()
 		req := &permit.Request{Session: p.id, Tool: r.Tool, Input: r.Input, Suggestions: r.Suggestions}
+		plan := r.Tool == "ExitPlanMode" && len(r.Suggestions) == 0
+		if plan {
+			req.Suggestions = permit.PlanModes
+		}
 		a := p.broker.Put(ctx, req)
 		p.mu.Lock()
 		delete(p.asks, id)
 		p.mu.Unlock()
 		if a == nil {
 			return // Claude Code withdrew the question, or stopped
+		}
+		// A bare yes to a plan leaves Claude Code asking before edits, which is
+		// said outright so the mode shown follows.
+		if plan && a.Allow && a.Suggestion == nil {
+			asking := 1 // PlanModes' default
+			a.Suggestion = &asking
 		}
 		d := p.broker.Decision(req, a)
 		// Over the channel an allow always says what to run with.

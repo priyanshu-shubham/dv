@@ -20,21 +20,25 @@ import (
 	"sync"
 	"time"
 
+	"dv/internal/codex"
 	"dv/internal/permit"
 	"dv/internal/store"
 )
 
 // Manager is the Agent view's side of the server: the sessions it lists, the
-// ones dv runs, and the transcripts open pages are following.
+// ones dv runs, and the transcripts open pages are following. Codex's sessions
+// are its codex side's; the rest of it is Claude Code's.
 type Manager struct {
 	root   string
 	broker *permit.Broker
 	saved  *store.Sessions // which are open, and rewinds still to be made real
+	codex  *codexSide
 
 	mu      sync.Mutex
 	procs   map[string]*proc
 	follows map[string]*follow
 	rows    map[string]cachedRow // by transcript path
+	agents  map[string]string    // sessions whose agent has been worked out
 	live    map[string]running
 	liveAt  time.Time
 	opts    Options
@@ -57,15 +61,17 @@ type cachedRow struct {
 
 func New(root string, broker *permit.Broker, saved *store.Sessions) *Manager {
 	m := &Manager{
-		root: root, broker: broker, saved: saved,
-		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{},
+		root: root, broker: broker, saved: saved, codex: newCodexSide(root, broker, saved),
+		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{}, agents: map[string]string{},
 	}
 	// A session started here but not yet sent to has no transcript, so all
 	// that says it exists is its place among the open ones.
 	if ids := saved.IDs(); len(ids) > 0 {
 		files := transcriptFiles(root)
 		for _, id := range ids {
-			if _, ok := files[id]; !ok {
+			if saved.Agent(id) == "codex" {
+				m.codex.thread(id)
+			} else if _, ok := files[id]; !ok {
 				m.procs[id] = m.newProc(id, root, false)
 			}
 		}
@@ -81,6 +87,40 @@ func Available() bool {
 	return err == nil
 }
 
+// CodexAvailable reports whether there is a Codex to run.
+func CodexAvailable() bool { return codex.Available() }
+
+// isCodex reports whether a session is Codex's rather than Claude Code's.
+func (m *Manager) isCodex(id string) bool {
+	m.mu.Lock()
+	agent, known := m.agents[id]
+	_, claude := m.procs[id]
+	m.mu.Unlock()
+	if known {
+		return agent == "codex"
+	}
+	switch {
+	case claude:
+		return false
+	case m.saved.Agent(id) != "":
+		agent = m.saved.Agent(id)
+	default:
+		if _, ok := transcriptFiles(m.root)[id]; !ok {
+			mine, sure := m.codex.has(id)
+			if !sure {
+				return mine
+			}
+			if mine {
+				agent = "codex"
+			}
+		}
+	}
+	m.mu.Lock()
+	m.agents[id] = agent
+	m.mu.Unlock()
+	return agent == "codex"
+}
+
 // Visible reports whether a session's permission prompts belong in the page:
 // it is open in the Agent view, or dv runs it.
 func (m *Manager) Visible(session string) bool {
@@ -88,6 +128,9 @@ func (m *Manager) Visible(session string) bool {
 }
 
 func (m *Manager) runs(session string) bool {
+	if m.codex.running(session) {
+		return true
+	}
 	m.mu.Lock()
 	p := m.procs[session]
 	m.mu.Unlock()
@@ -158,6 +201,16 @@ func (m *Manager) Sessions() []Session {
 		row.Status = statusOf(p)
 		out = append(out, row)
 	}
+	for _, row := range m.codex.sessions() {
+		row.Open, row.Temporary = opened[row.ID] > 0, slices.Contains(temporary, row.ID)
+		if row.Temporary && !row.Open && row.Running == "" {
+			continue
+		}
+		m.mu.Lock()
+		m.agents[row.ID] = "codex"
+		m.mu.Unlock()
+		out = append(out, row)
+	}
 	// Open sessions keep the order they were opened in, or two at work would
 	// trade places each time one wrote.
 	slices.SortFunc(out, func(a, b Session) int {
@@ -173,6 +226,7 @@ func (m *Manager) Sessions() []Session {
 // reader wherever in the page, or out of it, they are.
 type Activity struct {
 	ID      string    `json:"id"`
+	Agent   string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
 	Title   string    `json:"title,omitempty"`
 	Running string    `json:"running,omitempty"`
 	Busy    bool      `json:"busy,omitempty"`
@@ -195,14 +249,17 @@ func (m *Manager) Activity() []Activity {
 	}
 	slices.Sort(ids)
 	files := transcriptFiles(m.root)
-	out := make([]Activity, 0, len(ids))
+	out := m.codex.activity(ids)
 	for _, id := range ids {
+		if m.saved.Agent(id) == "codex" {
+			continue
+		}
 		a := Activity{ID: id}
 		a.Running, a.Busy = where(procs[id], live[id])
 		if path := files[id]; path != "" {
 			if row, ok := m.row(path); ok {
 				a.Title, a.Updated = cmp.Or(row.Title, row.Prompt), row.Updated
-				if row.LastBy == "claude" {
+				if row.LastBy != "you" {
 					a.Last = row.Last
 				}
 			}
@@ -221,6 +278,9 @@ func (m *Manager) Activity() []Activity {
 // Title is what the session list calls a session, "" for one nothing has been
 // said in.
 func (m *Manager) Title(id string) string {
+	if m.isCodex(id) {
+		return m.codex.title(id)
+	}
 	path := transcriptFiles(m.root)[id]
 	if path == "" {
 		return ""
@@ -295,12 +355,24 @@ func (m *Manager) running() map[string]running {
 	return m.live
 }
 
-// Create starts a new session in the repository. Nothing runs until the first
-// message is sent.
-func (m *Manager) Create() (string, error) {
-	id := newUUID()
+// Create starts a new session in the repository with agent, "codex" or Claude
+// Code's "". Nothing runs until the first message is sent.
+func (m *Manager) Create(agent string) (string, error) {
+	var id string
+	if agent == "codex" {
+		var err error
+		if id, err = m.codex.create(); err != nil {
+			return "", err
+		}
+	} else {
+		id = newUUID()
+	}
 	m.mu.Lock()
-	m.procs[id] = m.newProc(id, m.root, false)
+	if agent == "codex" {
+		m.agents[id] = "codex"
+	} else {
+		m.procs[id] = m.newProc(id, m.root, false)
+	}
 	m.mu.Unlock()
 	if _, err := m.saved.Set(id, true); err != nil {
 		return "", err
@@ -310,8 +382,14 @@ func (m *Manager) Create() (string, error) {
 }
 
 // SetTemporary marks a session to leave the list once it is closed. Its
-// transcript stays, for the terminal's --resume.
+// transcript stays, for the terminal's --resume. Marking one opens it: a past
+// session, closed already, would leave the list while it is being looked at.
 func (m *Manager) SetTemporary(id string, on bool) error {
+	if on {
+		if _, err := m.saved.Set(id, true); err != nil {
+			return err
+		}
+	}
 	if err := m.saved.SetTemporary(id, on); err != nil {
 		return err
 	}
@@ -325,7 +403,9 @@ func (m *Manager) SetOpen(id string, open bool) error {
 	if _, err := m.saved.Set(id, open); err != nil {
 		return err
 	}
-	if !open {
+	if !open && m.isCodex(id) {
+		m.codex.thread(id).release()
+	} else if !open {
 		m.mu.Lock()
 		p := m.procs[id]
 		delete(m.procs, id)
@@ -411,6 +491,13 @@ func (m *Manager) Send(id, message, text string, images []Image) (string, error)
 	if f := strings.Fields(text); len(f) > 0 && f[0] == "/clear" {
 		return "", errors.New("/clear would move Claude Code to a session dv is not showing. + starts a new one.")
 	}
+	if m.isCodex(id) {
+		if _, err := m.saved.Set(id, true); err != nil {
+			return "", err
+		}
+		m.saved.SetAgent(id, "codex")
+		return m.codex.thread(id).send(cmp.Or(message, newUUID()), text, images)
+	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return "", err
@@ -424,6 +511,9 @@ func (m *Manager) Send(id, message, text string, images []Image) (string, error)
 // Unqueue takes back a message still waiting for the step Claude is on, as Up
 // does in the terminal. It reports false once a turn has taken the message up.
 func (m *Manager) Unqueue(id, message string) (bool, error) {
+	if m.isCodex(id) {
+		return m.codex.thread(id).unqueue(message), nil
+	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -448,6 +538,9 @@ func (m *Manager) Unqueue(id, message string) (bool, error) {
 
 // Interrupt stops what the session is doing, as Esc does in the terminal.
 func (m *Manager) Interrupt(id string) error {
+	if m.isCodex(id) {
+		return m.codex.thread(id).interrupt()
+	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -463,6 +556,9 @@ func (m *Manager) Interrupt(id string) error {
 // Configure sets the model, permission mode or effort, for the process running
 // now and the next one started.
 func (m *Manager) Configure(id string, model, mode, effort *string) error {
+	if m.isCodex(id) {
+		return m.codex.thread(id).configure(model, mode, effort)
+	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return err
@@ -548,6 +644,9 @@ func (m *Manager) Rename(id, title string) error {
 	if title == "" {
 		return errors.New("a session needs a name")
 	}
+	if m.isCodex(id) {
+		return m.codex.thread(id).rename(title)
+	}
 	if _, elsewhere := m.running()[id]; elsewhere {
 		return errors.New("this session is open in a terminal; rename it there with /rename")
 	}
@@ -591,6 +690,17 @@ func (m *Manager) Rename(id, title string) error {
 // the first prompt leaves nothing to keep, so that starts a new session, whose
 // id is returned.
 func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (string, error) {
+	if m.isCodex(id) {
+		switch {
+		case code:
+			return "", errors.New("Codex keeps no copies of the files it changes, so dv cannot restore the code")
+		case !conversation:
+			return id, nil
+		case before == "":
+			return m.Create("codex")
+		}
+		return id, m.codex.thread(id).rewind(prompt)
+	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return "", err
@@ -621,7 +731,7 @@ func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (st
 		return id, nil
 	}
 	if before == "" {
-		return m.Create()
+		return m.Create("")
 	}
 	p.stop()
 	p.mu.Lock()
@@ -653,7 +763,9 @@ func (m *Manager) Prompts(id string) []Item {
 	f := m.follows[id]
 	m.mu.Unlock()
 	var items []Item
-	if f != nil {
+	if m.isCodex(id) {
+		items = m.codex.thread(id).items()
+	} else if f != nil {
 		m.readWhole(f)
 		f.mu.Lock()
 		last := f.t.Last()
@@ -682,12 +794,18 @@ func (m *Manager) Prompts(id string) []Item {
 
 // Edit is the diff a tool call in a session made.
 func (m *Manager) Edit(id, tool string) (*EditDiff, error) {
+	if m.isCodex(id) {
+		return m.codex.edit(id, tool)
+	}
 	line, err := m.resultLine(id, tool)
 	return editOf(line, err, m.root)
 }
 
 // Output is the whole result of one of a session's tool calls.
 func (m *Manager) Output(id, tool string) (*Output, error) {
+	if m.isCodex(id) {
+		return m.codex.output(id, tool)
+	}
 	line, err := m.resultLine(id, tool)
 	if err != nil {
 		return nil, err
@@ -697,6 +815,9 @@ func (m *Manager) Output(id, tool string) (*Output, error) {
 
 // Image is the picture one of a session's Read calls was shown.
 func (m *Manager) Image(id, tool string) (*Image, error) {
+	if m.isCodex(id) {
+		return m.codex.image(id, tool)
+	}
 	line, err := m.resultLine(id, tool)
 	if err != nil {
 		return nil, err
@@ -706,6 +827,9 @@ func (m *Manager) Image(id, tool string) (*Image, error) {
 
 // PromptImage is the nth picture sent with one of a session's messages.
 func (m *Manager) PromptImage(id, message string, n int) (*Image, error) {
+	if m.isCodex(id) {
+		return m.codex.promptImage(id, message, n)
+	}
 	path, err := m.transcript(id)
 	if err != nil {
 		return nil, err
@@ -734,6 +858,9 @@ func (m *Manager) resultLine(id, tool string) ([]byte, error) {
 // TaskOutput is the file a call left running in the background writes its
 // output to, as its result says; Claude Code keeps these under a tasks folder.
 func (m *Manager) TaskOutput(id, tool string) (string, error) {
+	if m.isCodex(id) {
+		return "", errNoTask
+	}
 	line, err := m.resultLine(id, tool)
 	if err != nil {
 		return "", err
@@ -779,6 +906,11 @@ func (m *Manager) Close() {
 			p.stop()
 		}()
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		m.codex.close()
+	}()
 	wg.Wait()
 }
 
@@ -801,11 +933,32 @@ func (m *Manager) reap() {
 		for _, p := range idle {
 			p.stop()
 		}
+		m.codex.reap(idleFor)
 	}
+}
+
+// CodexOptions are what a Codex session starts with and can pick from.
+func (m *Manager) CodexOptions() Options { return m.codex.options() }
+
+// CodexUsage is how much of the Codex account's limits is used.
+func (m *Manager) CodexUsage() *Usage {
+	if !codex.Available() {
+		return nil
+	}
+	return m.codex.usageNow()
+}
+
+// OptionsFor is what the session's own agent offers.
+func (m *Manager) OptionsFor(id string) Options {
+	if m.isCodex(id) {
+		return m.codex.options()
+	}
+	return m.Options()
 }
 
 // Live is what a session is doing, beyond what its transcript says.
 type Live struct {
+	Agent   string `json:"agent,omitempty"`   // "codex"; "" is Claude Code
 	Found   bool   `json:"found"`             // the transcript exists yet
 	Running string `json:"running,omitempty"` // dv | terminal
 	Busy    bool   `json:"busy,omitempty"`
@@ -823,6 +976,11 @@ type Live struct {
 	Error       string   `json:"error,omitempty"`
 	Cost        float64  `json:"cost,omitempty"`
 	Blocks      []Block  `json:"blocks,omitempty"`
+	// Since is when the turn going on began, where that is known.
+	Since string `json:"since,omitempty"`
+	// Pending is a model, mode or effort picked during a turn, which Codex
+	// takes from the next one.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // Update is what a page following a session is sent: the items that are new
@@ -909,6 +1067,10 @@ func (f *follow) transcript(root string) *Transcript {
 // or "" for the latest compaction. What came before a compaction is most of a
 // long session, and what Claude no longer has in front of it.
 func (m *Manager) Follow(id, from string) (*Sub, func()) {
+	if m.isCodex(id) {
+		s := &Sub{Changed: make(chan struct{}, 1), version: -1}
+		return s, m.codex.thread(id).follow(s, from == "all")
+	}
 	// Anywhere but the latest compaction needs what came before it read.
 	s, stop := m.startFollow(id, "", from != "")
 	s.from = from
@@ -917,7 +1079,16 @@ func (m *Manager) Follow(id, from string) (*Sub, func()) {
 
 // FollowAgent follows the transcript of an agent a session started, by the
 // call that started it, for AgentUpdate. It is shown whole.
-func (m *Manager) FollowAgent(id, call string) (*Sub, func()) { return m.startFollow(id, call, true) }
+func (m *Manager) FollowAgent(id, call string) (*Sub, func()) {
+	if m.isCodex(id) {
+		s := &Sub{Changed: make(chan struct{}, 1), version: -1}
+		if t := m.codex.agentThread(id, call); t != nil {
+			return s, t.follow(s, true)
+		}
+		return s, func() {}
+	}
+	return m.startFollow(id, call, true)
+}
 
 func (m *Manager) startFollow(id, call string, whole bool) (*Sub, func()) {
 	s := &Sub{Changed: make(chan struct{}, 1), version: -1}
@@ -1058,6 +1229,12 @@ func (m *Manager) read(f *follow) bool {
 // following it with FollowAgent last asked. Whether the agent is still at work
 // is its call's to say, in the session.
 func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
+	if m.isCodex(id) {
+		if t := m.codex.agentThread(id, call); t != nil {
+			return t.update(s)
+		}
+		return Update{}
+	}
 	m.mu.Lock()
 	f := m.follows[id+" "+call]
 	m.mu.Unlock()
@@ -1079,6 +1256,9 @@ func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
 // Update is what has changed in a session since the page following it last
 // asked.
 func (m *Manager) Update(id string, s *Sub) Update {
+	if m.isCodex(id) {
+		return m.codex.thread(id).update(s)
+	}
 	m.mu.Lock()
 	f := m.follows[id]
 	p := m.procs[id]
@@ -1129,6 +1309,17 @@ func (m *Manager) Update(id string, s *Sub) Update {
 			u.Live.Context = &c
 		}
 		u.Live.Status, u.Live.Error, u.Live.Cost = p.status, p.err, p.cost
+		if p.busy && !p.since.IsZero() {
+			u.Live.Since = p.since.UTC().Format(time.RFC3339Nano)
+		}
+		// Blocks reach the file in order, so one written means those before it
+		// are too, even from before where a long transcript is read from.
+		for i, b := range slices.Backward(p.blocks) {
+			if f.t.Written(b.msg) > b.index {
+				p.blocks = slices.Delete(p.blocks, 0, i+1)
+				break
+			}
+		}
 		for _, b := range p.blocks {
 			if f.t.Written(b.msg) <= b.index {
 				u.Live.Blocks = append(u.Live.Blocks, *b)

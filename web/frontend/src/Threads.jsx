@@ -1,24 +1,25 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
-import { cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss } from "./util.js";
-import { IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
+import { agentName, cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
+import { AgentIcon, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
-export function ThreadList({ threads, onAction, compact }) {
+// onAttach(thread, to), where given, adds a thread to a session's next message.
+export function ThreadList({ threads, onAction, onAttach, compact }) {
   return (
     <div className={cx("threads", compact && "threads-compact")}>
       {threads.map((t) => (
-        <Thread key={t.id} thread={t} onAction={onAction} compact={compact} />
+        <Thread key={t.id} thread={t} onAction={onAction} onAttach={onAttach} compact={compact} />
       ))}
     </div>
   );
 }
 
-function Thread({ thread, onAction, compact }) {
+function Thread({ thread, onAction, onAttach, compact }) {
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(null);
 
@@ -81,10 +82,12 @@ function Thread({ thread, onAction, compact }) {
               >
                 {thread.resolved ? "Reopen" : "Resolve"}
               </button>
-              {thread.resolved && (
+              {thread.resolved ? (
                 <span className="resolved-tag">
                   <IconCheck size={12} /> resolved
                 </span>
+              ) : (
+                onAttach && <AttachButton what="this comment" onClick={(to) => onAttach(thread, to)} />
               )}
             </div>
           )}
@@ -107,22 +110,24 @@ function Thread({ thread, onAction, compact }) {
 }
 
 // AttachTarget is the sessions code can be added to, and the one it goes to:
-// { choices: [{ id, label }], target, onTarget }, target "" being a new session
-// when there is none to choose.
+// { choices: [{ id, label, agent }], target, onTarget, newAgent }, target ""
+// being a new session when there is none to choose, run by newAgent.
 export const AttachTarget = createContext(null);
 
-// AttachButton adds code to what goes with the next message to Claude, in the
+// AttachButton adds code to what goes with a session's next message, in the
 // Agent view. onClick is given the session it goes to, "" for a new one; its
-// menu picks another, which stays picked.
-export function AttachButton({ className, onClick, title = "Add to your next message to Claude (a)" }) {
+// menu picks another, which stays picked. what is what it adds, as "this file";
+// instead, that it is added in place of something else.
+export function AttachButton({ className, onClick, what, instead }) {
   const t = useContext(AttachTarget);
-  const [at, setAt] = useState(null); // where the open menu goes, under the button
+  const [open, setOpen] = useState(false);
   const menu = useRef(null);
-  const ref = useDismiss(!!at, () => setAt(null), menu);
+  const ref = useDismiss(open, () => setOpen(false), menu);
+  const at = useFixedMenu(open, ref, menu);
   // Fixed where it opened, it closes rather than drift from the button.
   useEffect(() => {
-    if (!at) return;
-    const close = () => setAt(null);
+    if (!open) return;
+    const close = () => setOpen(false);
     const onScroll = (e) => menu.current?.contains(e.target) || close();
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
@@ -130,9 +135,11 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [at]);
+  }, [open]);
   const to = t?.choices.find((c) => c.id === t.target);
   const picks = t?.choices.length > 1;
+  const add = `Add ${what ? what + " " : ""}to your next message`;
+  const title = t ? `${add} to ${agentName(to ? to.agent : t.newAgent)}${instead ? " instead" : ""}, in ${to ? to.label : "a new session"}` : add;
   return (
     <span className={cx("attach-split", className)} ref={ref}>
       {/* Add, not send: it waits in that session's message box for you to send. */}
@@ -140,7 +147,7 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
       <button
         className={cx("attach-btn", picks && "attach-picked")}
         onClick={() => onClick(t?.target)}
-        title={t ? `${title}, in ${to ? to.label : "a new session"}` : title}
+        title={title}
       >
         <IconSpark size={12} />
         <span className="btn-label">Add</span>
@@ -148,23 +155,20 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
       {picks && (
         <button
           className="attach-btn attach-to"
-          onClick={() => {
-            const r = ref.current.getBoundingClientRect();
-            setAt(at ? null : { top: r.bottom + 4, right: window.innerWidth - r.right });
-          }}
+          onClick={() => setOpen((o) => !o)}
           title="Pick the session to add to"
-          aria-expanded={!!at}
+          aria-expanded={open}
         >
           <IconChevronDown size={10} />
         </button>
       )}
       {to && (
-        <button className="attach-btn attach-new" onClick={() => onClick("")} title="Add to a new session, and go to it">
+        <button className="attach-btn attach-new" onClick={() => onClick("")} title={`Add to a new ${agentName(t.newAgent)} session, and go to it`}>
           <IconNewSession size={13} />
         </button>
       )}
       {/* In the page's top layer: a file card clips what overflows it. */}
-      {at &&
+      {open &&
         createPortal(
         <div className="model-list attach-menu" ref={menu} style={at}>
           <div className="menu-label">Add to</div>
@@ -173,12 +177,15 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
               key={c.id}
               className={cx(c.id === t.target && "on")}
               onClick={() => {
-                setAt(null);
+                setOpen(false);
                 t.onTarget(c.id);
                 onClick(c.id);
               }}
             >
-              <span className="model-name">{c.label}</span>
+              <span className="model-name agent-label">
+                <AgentIcon agent={c.agent} size={12} />
+                {c.label}
+              </span>
             </button>
           ))}
         </div>,
@@ -189,7 +196,8 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
 }
 
 // Composer is the single text box used for new threads, replies and edits.
-// Cmd/Ctrl+Enter submits. Escape cancels only when that loses nothing typed;
+// aside is drawn beside its buttons, or drawn from what is typed when a
+// function. Cmd/Ctrl+Enter submits. Escape cancels only when that loses nothing typed;
 // a draft is let go of with Cancel. `selected` is the code whose selection
 // opened it: opening the composer took that selection away, so the search keys
 // look for it here.
@@ -274,7 +282,7 @@ export function Composer({
       {error && <div className="composer-error">{error}</div>}
       <div className="composer-actions">
         <span className="dim hint">{modKey}+Enter to save</span>
-        {aside}
+        {typeof aside === "function" ? aside(body.trim()) : aside}
         <span className="spacer" />
         {onCancel && (
           <button className="ghost" onClick={onCancel}>

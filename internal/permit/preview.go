@@ -1,6 +1,7 @@
 package permit
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,17 @@ type Preview struct {
 	Problem string `json:"problem,omitempty"`
 }
 
+func previews(root, tool string, raw json.RawMessage) []*Preview {
+	if p := preview(root, tool, raw); p != nil {
+		return []*Preview{p}
+	}
+	return nil
+}
+
 func preview(root, tool string, raw json.RawMessage) *Preview {
+	if tool == "ExitPlanMode" {
+		return planPreview(raw)
+	}
 	if tool != "Edit" && tool != "Write" {
 		return nil
 	}
@@ -63,6 +74,27 @@ func preview(root, tool string, raw json.RawMessage) *Preview {
 	}
 	p.Diff = gitx.DiffContent(entry, cur, next)
 	return p
+}
+
+// planPreview shows a plan as a new file, so its lines take comments. Codex's
+// plans are kept in no file.
+func planPreview(raw json.RawMessage) *Preview {
+	var in struct {
+		Plan string `json:"plan"`
+		Path string `json:"planFilePath"`
+	}
+	if json.Unmarshal(raw, &in) != nil || in.Plan == "" {
+		return nil
+	}
+	path := cmp.Or(in.Path, "plan.md")
+	return &Preview{Path: path, Diff: gitx.DiffContent(gitx.FileEntry{Path: path, Status: "A"}, nil, []byte(in.Plan))}
+}
+
+// PlanModes are the ways on from an approved plan the terminal offers: edits
+// made without asking, or asked about.
+var PlanModes = []json.RawMessage{
+	json.RawMessage(`{"type":"setMode","mode":"acceptEdits","destination":"session"}`),
+	json.RawMessage(`{"type":"setMode","mode":"default","destination":"session"}`),
 }
 
 // applyEdit makes an Edit the way Claude Code does, or says why it would not.

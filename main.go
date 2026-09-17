@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"dv/internal/codex"
 	"dv/internal/gitx"
 	"dv/internal/hub"
 	"dv/internal/permit"
@@ -54,6 +55,7 @@ func run() error {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	codex.ClientVersion = version
 
 	if *showVersion {
 		fmt.Println("dv " + version)
