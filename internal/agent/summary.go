@@ -171,6 +171,9 @@ func promptOf(r *rawEntry) string {
 	if slices.ContainsFunc(blocks, func(b block) bool { return b.Type == "tool_result" }) {
 		return ""
 	}
+	if strings.HasPrefix(text, "<bash-input>") {
+		return "!" + strings.TrimSpace(firstGroup(bashInput, text))
+	}
 	if strings.HasPrefix(text, "<") || strings.HasPrefix(text, "[Request interrupted") {
 		return ""
 	}

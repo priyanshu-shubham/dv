@@ -74,6 +74,40 @@ func TestCodexItems(t *testing.T) {
 	}
 }
 
+func TestAReviewShowsOnlyItsFindings(t *testing.T) {
+	kinds := func(turns []codex.Turn) string {
+		var got []string
+		for _, it := range codexItems("/repo", turns, nil, nil) {
+			got = append(got, it.Kind+":"+it.Key)
+		}
+		return strings.Join(got, " ")
+	}
+	// As it arrives, the reviewer's work comes inside the review's turn.
+	live := codexTurn(t, `{"id":"01a0-2","status":"completed","items":[
+		{"type":"enteredReviewMode","id":"e1","review":"current changes"},
+		{"type":"userMessage","id":"m1","content":[{"type":"text","text":"Review the current code changes"}]},
+		{"type":"commandExecution","id":"x1","command":"git diff","aggregatedOutput":"","exitCode":0,"status":"completed"},
+		{"type":"agentMessage","id":"j1","text":"{\"findings\": []}"},
+		{"type":"exitedReviewMode","id":"r1","review":"Looks correct."},
+		{"type":"agentMessage","id":"a1","text":"Looks correct.\n"}]}`)
+	if got, want := kinds([]codex.Turn{live}), "note:e1 tool:x1 text:r1"; got != want {
+		t.Errorf("live:\n got %s\nwant %s", got, want)
+	}
+
+	// Read back, it is a turn of its own, before the review but made after it.
+	before := codexTurn(t, `{"id":"01a0-1","status":"completed","items":[{"type":"agentMessage","id":"a0","text":"Hi."}]}`)
+	reviewer := codexTurn(t, `{"id":"01a0-3","status":"interrupted","items":[
+		{"type":"userMessage","id":"m1","content":[{"type":"text","text":"Review the current code changes"}]},
+		{"type":"commandExecution","id":"x1","command":"git diff","aggregatedOutput":"","exitCode":0,"status":"completed"}]}`)
+	review := codexTurn(t, `{"id":"01a0-2","status":"completed","items":[
+		{"type":"enteredReviewMode","id":"e1","review":"current changes"},
+		{"type":"exitedReviewMode","id":"r1","review":"Looks correct."},
+		{"type":"agentMessage","id":"a1","text":"Looks correct."}]}`)
+	if got, want := kinds(foldReviewers([]codex.Turn{before, reviewer, review})), "text:a0 note:e1 tool:x1 text:r1"; got != want {
+		t.Errorf("read back:\n got %s\nwant %s", got, want)
+	}
+}
+
 func TestCodexEdit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "poem.txt")

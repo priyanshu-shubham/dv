@@ -184,8 +184,12 @@ func (c *codexSide) fill(row *Session, t *codexThread) {
 	}
 }
 
-// cleanPrompt is a message without what dv sent along with it.
+// cleanPrompt is a message without what dv sent along with it, and a command
+// run with ! as it was typed.
 func cleanPrompt(s string) string {
+	if strings.HasPrefix(s, "<bash-input>") {
+		return "!" + strings.TrimSpace(firstGroup(bashInput, s))
+	}
 	s, _, _ = strings.Cut(s, "<dv-context>")
 	return strings.TrimSpace(s)
 }
@@ -357,7 +361,10 @@ func (c *codexSide) probe() {
 		others = append(others, Model{ID: m.ID, Model: m.Model, Label: m.DisplayName, Description: m.Description, Efforts: efforts, Effort: m.Default})
 	}
 	o.Models = append([]Model{mine}, others...)
-	o.Commands = []Command{{Name: "compact", Description: "Summarise the conversation so far to free up context"}}
+	o.Commands = []Command{
+		{Name: "compact", Description: "Summarise the conversation so far to free up context"},
+		{Name: "review", Description: "Review the uncommitted changes, or what you describe after it", Hint: "[what to review]"},
+	}
 	c.skillList = nil
 	for _, d := range skills.Data {
 		for _, s := range d.Skills {

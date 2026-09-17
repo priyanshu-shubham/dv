@@ -3,7 +3,9 @@
 package agent
 
 import (
+	"cmp"
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -21,6 +23,11 @@ func alive(pid int) bool {
 // terminal, so hooks that ring the session's terminal don't ring dv's.
 func ownGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
+
+// shellCmd runs a line as the reader's own shell would.
+func shellCmd(line string) *exec.Cmd {
+	return exec.Command(cmp.Or(os.Getenv("SHELL"), "/bin/sh"), "-c", line)
 }
 
 func killGroup(cmd *exec.Cmd) {

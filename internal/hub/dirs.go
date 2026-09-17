@@ -1,6 +1,9 @@
 package hub
 
 import (
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -67,6 +70,38 @@ func (h *Hub) handleDirs(w http.ResponseWriter, r *http.Request) {
 		"dirs":        dirs[:len(dirs)-more],
 		"more":        more,
 	})
+}
+
+// handleMakeDir makes a folder from the picker: { in, name }. One already
+// there is not an error, as the listing can leave it out: hidden, past
+// maxDirs, or named in another case on a filesystem that ignores case.
+func (h *Hub) handleMakeDir(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		In   string `json:"in"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	in, err := expand(body.In)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if err := plainName(name); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	path := filepath.Join(in, name)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		if fi, serr := os.Stat(path); !errors.Is(err, fs.ErrExist) || serr != nil || !fi.IsDir() {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": path, "place": server.HomeRelative(path)})
 }
 
 func isRepo(dir string) bool {

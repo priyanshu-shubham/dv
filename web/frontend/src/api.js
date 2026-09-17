@@ -168,6 +168,8 @@ export const api = {
   // known by, in the transcript and in the session's queue.
   agentSend: (id, text, uuid, images) =>
     req(`/api/agent/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text, uuid, images }) }),
+  // agentShell runs a command typed after !, whose output goes to the agent as the message uuid.
+  agentShell: (id, command, uuid) => req(`/api/agent/sessions/${id}/shell`, { method: "POST", body: JSON.stringify({ command, uuid }) }),
   // agentPrompts is every message and command in a session, back to its start: { prompts: [item] }.
   agentPrompts: (id) => req(`/api/agent/sessions/${id}/prompts`),
   agentUnqueue: (id, message) => req(`/api/agent/sessions/${id}/messages/${message}/unqueue`, { method: "POST", body: "{}" }),
@@ -221,6 +223,8 @@ export const api = {
     req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
   // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
   hubDirs: (path) => req(`/api/hub/dirs?${new URLSearchParams({ path })}`),
+  // hubMakeDir: { path, place }; a folder already there is taken as made.
+  hubMakeDir: (into, name) => req("/api/hub/dirs", { method: "POST", body: JSON.stringify({ in: into, name }) }),
   hubClone: (source, into, name) => req("/api/hub/clones", { method: "POST", body: JSON.stringify({ source, into, name }) }),
   hubDismissJob: (id) => req(`/api/hub/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

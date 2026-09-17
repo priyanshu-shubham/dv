@@ -20,6 +20,10 @@ func alive(pid int) bool {
 
 func ownGroup(cmd *exec.Cmd) {}
 
+func shellCmd(line string) *exec.Cmd {
+	return exec.Command("cmd", "/C", line)
+}
+
 func killGroup(cmd *exec.Cmd) {
 	if cmd.Process != nil {
 		cmd.Process.Kill()

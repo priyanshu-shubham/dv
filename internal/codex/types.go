@@ -64,6 +64,7 @@ type Item struct {
 	AggregatedOutput *string         `json:"aggregatedOutput"`
 	ExitCode         *int            `json:"exitCode"`
 	DurationMs       *int64          `json:"durationMs"`
+	Source           string          `json:"source"` // "userShell" for one run with !
 	Status           string          `json:"status"`
 
 	// fileChange

@@ -987,14 +987,17 @@ function WorktreeHooks({ folder: f, onClose, onSaved }) {
 // the ones in it up to its last slash, narrowed by what follows, and picking one
 // goes into it. Enter goes into the one picked - typing picks the best match,
 // the arrows any - and with none picked (or with Ctrl/Cmd) takes the folder the
-// box names.
+// box names. A name typed that is not there offers to make it.
 function FolderPicker({ start, error, action, onSubmit, note }) {
   const [text, setText] = useState(() => withSlash(start));
   const cut = text.lastIndexOf("/") + 1;
   const dir = text.slice(0, cut);
-  const tail = text.slice(cut).toLowerCase();
+  const typed = text.slice(cut).trim();
+  const tail = typed.toLowerCase();
   const [listing, setListing] = useState(null); // { dir, res } or { dir, error }
   const [sel, setSel] = useState(0);
+  const [making, setMaking] = useState(false);
+  const [makeError, setMakeError] = useState("");
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -1020,15 +1023,29 @@ function FolderPicker({ start, error, action, onSubmit, note }) {
     const dirs = tail ? res.dirs.filter((d) => d.name.toLowerCase().includes(tail)) : res.dirs;
     // Names that start with what was typed come first, as a shell completes.
     const sorted = tail ? [...dirs].sort((a, b) => b.name.toLowerCase().startsWith(tail) - a.name.toLowerCase().startsWith(tail)) : dirs;
-    return [...(!tail && res.parent ? [{ name: "..", up: true }] : []), ...sorted];
-  }, [res, tail]);
+    // Not for what is on its way to a path: ~, . and .. before their slash.
+    const makeable = typed && !/^(~|\.\.?)$/.test(typed) && !typed.startsWith("-") && !res.dirs.some((d) => d.name === typed);
+    const make = makeable ? [{ name: typed, make: true }] : [];
+    return [...(!tail && res.parent ? [{ name: "..", up: true }] : []), ...sorted, ...make];
+  }, [res, tail, typed]);
   useEffect(() => setSel(tail ? 0 : -1), [dir, tail]);
   useEffect(() => {
     listRef.current?.querySelector(".on")?.scrollIntoView({ block: "nearest" });
   }, [sel]);
 
   const chosen = tail ? text : dir.replace(/(.)\/$/, "$1");
-  const enter = (row) => {
+  const enter = async (row) => {
+    if (row.make) {
+      if (making) return;
+      setMaking(true);
+      try {
+        await api.hubMakeDir(dir, row.name);
+      } catch (e) {
+        return setMakeError(e.message);
+      } finally {
+        setMaking(false);
+      }
+    }
     setText(row.up ? withSlash(res.parentPlace) : dir + row.name + "/");
     inputRef.current?.focus();
   };
@@ -1061,34 +1078,44 @@ function FolderPicker({ start, error, action, onSubmit, note }) {
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setMakeError("");
+          }}
           onKeyDown={onKey}
         />
       </div>
       <div className="palette-list hub-dirs" ref={listRef}>
         {rows.map((row, i) => (
-          <button key={row.name} className={cx("palette-row", i === sel && "on")} onMouseEnter={() => setSel(i)} onClick={() => enter(row)}>
-            <span className="hub-dir-name">{row.name}</span>
+          <button
+            key={row.make ? "\0make" : row.name}
+            className={cx("palette-row", i === sel && "on")}
+            disabled={row.make && making}
+            onMouseEnter={() => setSel(i)}
+            onClick={() => enter(row)}
+          >
+            {row.make && <IconPlus size={12} className="dim" />}
+            <span className="hub-dir-name">{row.make ? <>New folder {row.name}</> : row.name}</span>
             {row.git && (
               <span className="dim hub-dir-git" title="A git repository">
                 <IconBranch size={12} />
               </span>
             )}
             <span className="spacer" />
-            {!row.up && <IconChevron size={12} className="dim" />}
+            {!row.up && !row.make && <IconChevron size={12} className="dim" />}
           </button>
         ))}
         {failed && <div className="empty error">{listing.error}</div>}
-        {res && !failed && !rows.length && <div className="empty">{tail ? "No folders match." : "No folders in here."}</div>}
+        {res && !failed && !rows.length && <div className="empty">{tail ? "No folders match." : "No folders in here. Type a name to make one."}</div>}
         {res?.more > 0 && !tail && <div className="empty">{res.more.toLocaleString()} more: type to narrow them down</div>}
       </div>
-      {error && <div className="hub-picker-error">{error}</div>}
+      {(makeError || error) && <div className="hub-picker-error">{makeError || error}</div>}
       <div className="hub-picker-foot">
         <span className="hub-picker-note">{note(chosen)}</span>
         {action(chosen)}
       </div>
       <div className="palette-foot dim hub-keys">
-        Type or ↑↓ to pick a folder and Enter to go into it; Enter with none picked, or {isMac ? "⌘" : "Ctrl"}+Enter, takes this one
+        Type or ↑↓ to pick a folder and Enter to go into it, or type a new name to make one; Enter with none picked, or {isMac ? "⌘" : "Ctrl"}+Enter, takes this one
       </div>
     </>
   );

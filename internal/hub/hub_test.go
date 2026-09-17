@@ -342,6 +342,20 @@ func TestHub(t *testing.T) {
 	if dirs.Place != "~/code" || len(dirs.Dirs) != 3 || !dirs.Dirs[0].Git {
 		t.Fatalf("dirs: %+v", dirs)
 	}
+	var made struct{ Place string }
+	if r := c.do("POST", "/api/hub/dirs", `{"in": "~/code", "name": "fresh"}`, &made); r.StatusCode != 200 || made.Place != "~/code/fresh" {
+		t.Fatalf("new folder: %d %+v", r.StatusCode, made)
+	}
+	if r := c.do("POST", "/api/hub/dirs", `{"in": "~/code", "name": "fresh"}`, nil); r.StatusCode != 200 {
+		t.Fatalf("making a folder that is there: %d", r.StatusCode)
+	}
+	os.WriteFile(filepath.Join(home, "code", "note"), nil, 0o644)
+	if r := c.do("POST", "/api/hub/dirs", `{"in": "~/code", "name": "note"}`, nil); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a folder named as a file: %d", r.StatusCode)
+	}
+	if r := c.do("POST", "/api/hub/dirs", `{"in": "~/code", "name": "../out"}`, nil); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a name reaching outside: %d", r.StatusCode)
+	}
 
 	// Removing closes the review, and takes down what it announced.
 	c.do("DELETE", "/api/hub/folders/alpha", "", nil)

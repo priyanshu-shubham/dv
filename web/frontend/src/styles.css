@@ -3623,6 +3623,17 @@ button.ghost.agent-context {
   font: var(--fs-sm) var(--font-mono);
 }
 
+/* A command run with !, and under it what it printed. */
+.shell-bang {
+  color: var(--accent);
+}
+
+.agent-prompt.shell .agent-result {
+  margin: 4px -12px -8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
 .agent-prompt.pending .agent-prompt-text,
 .agent-prompt.pending .agent-prompt-images {
   opacity: 0.6;

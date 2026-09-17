@@ -39,6 +39,7 @@ type Manager struct {
 	follows map[string]*follow
 	rows    map[string]cachedRow // by transcript path
 	agents  map[string]string    // sessions whose agent has been worked out
+	shells  map[string]*shellRun // commands run with !, by session
 	live    map[string]running
 	liveAt  time.Time
 	opts    Options
@@ -63,6 +64,7 @@ func New(root string, broker *permit.Broker, saved *store.Sessions) *Manager {
 	m := &Manager{
 		root: root, broker: broker, saved: saved, codex: newCodexSide(root, broker, saved),
 		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{}, agents: map[string]string{},
+		shells: map[string]*shellRun{},
 	}
 	// A session started here but not yet sent to has no transcript, so all
 	// that says it exists is its place among the open ones.
@@ -487,6 +489,11 @@ func (m *Manager) procFor(id string) (*proc, error) {
 // Send gives a session a message, starting it if it is not running, and
 // returns the uuid the message is written under: message, or a new one.
 func (m *Manager) Send(id, message, text string, images []Image) (string, error) {
+	m.awaitShell(id)
+	return m.send(id, message, text, images)
+}
+
+func (m *Manager) send(id, message, text string, images []Image) (string, error) {
 	// Claude Code would go on in a new session, and nothing more would come to this one.
 	if f := strings.Fields(text); len(f) > 0 && f[0] == "/clear" {
 		return "", errors.New("/clear would move Claude Code to a session dv is not showing. + starts a new one.")
@@ -538,6 +545,10 @@ func (m *Manager) Unqueue(id, message string) (bool, error) {
 
 // Interrupt stops what the session is doing, as Esc does in the terminal.
 func (m *Manager) Interrupt(id string) error {
+	// Esc first stops a command run with !, which the agent has not been sent.
+	if m.stopShell(id) {
+		return nil
+	}
 	if m.isCodex(id) {
 		return m.codex.thread(id).interrupt()
 	}
@@ -978,6 +989,7 @@ type Live struct {
 	Blocks      []Block  `json:"blocks,omitempty"`
 	// Since is when the turn going on began, where that is known.
 	Since string `json:"since,omitempty"`
+	Shell *Shell `json:"shell,omitempty"` // a command run with ! that has not reached the agent
 	// Pending is a model, mode or effort picked during a turn, which Codex
 	// takes from the next one.
 	Pending bool `json:"pending,omitempty"`
@@ -1256,6 +1268,12 @@ func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
 // Update is what has changed in a session since the page following it last
 // asked.
 func (m *Manager) Update(id string, s *Sub) Update {
+	u := m.update(id, s)
+	u.Live.Shell = m.shellOf(id)
+	return u
+}
+
+func (m *Manager) update(id string, s *Sub) Update {
 	if m.isCodex(id) {
 		return m.codex.thread(id).update(s)
 	}

@@ -77,6 +77,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("POST /api/hub/folders/{slug}/setup", server.Guarded(h.handleSetup))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/delete", server.Guarded(h.handleDeleteWorktree))
 	mux.HandleFunc("GET /api/hub/dirs", server.Guarded(h.handleDirs))
+	mux.HandleFunc("POST /api/hub/dirs", server.Guarded(h.handleMakeDir))
 	mux.HandleFunc("POST /api/hub/clones", server.Guarded(h.handleClone))
 	mux.HandleFunc("DELETE /api/hub/jobs/{id}", server.Guarded(h.handleDismissJob))
 	mux.HandleFunc("GET /{slug}", func(w http.ResponseWriter, r *http.Request) {

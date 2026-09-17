@@ -10,7 +10,8 @@ browser - a phone's too.
 - **Agent** - Claude Code's and Codex's sessions beside the code: their edits
   show as diffs you can comment on, the comments go with your next message, and
   their permission prompts are answered in the page. A plan comes up for
-  approval with its lines open to comments.
+  approval with its lines open to comments. A message starting with `!` runs
+  in your shell, as in the terminal, and the agent is sent what it printed.
 
 Run `dv` in a git repository and it prints a URL. Comments are kept in a file
 inside the repository that git never sees. Outside git, the same page opens on
@@ -194,7 +195,8 @@ edits** keeps the sandbox read-only and asks for anything but a safe command,
 **Plan** is Codex's plan mode, and **Auto** has Codex's reviewer answer
 instead of you. A mode or model picked while Codex works takes effect from its
 next turn. A message sent while it works waits two seconds, when Esc takes it
-back, and then joins the turn. Rewinding restores the conversation only: Codex
+back, and then joins the turn. `/review` has Codex review what is uncommitted,
+or what you describe after it. Rewinding restores the conversation only: Codex
 keeps no copies of the files it changes.
 
 ## License

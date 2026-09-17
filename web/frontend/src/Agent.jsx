@@ -193,6 +193,9 @@ function composeMessage(text, attached, threads) {
   return parts.length ? `${body}\n\n<dv-context>\n${parts.join("\n")}\n</dv-context>` : body;
 }
 
+// saidAs is a message as it was typed: a command run with ! keeps its !.
+const saidAs = (it) => (it.kind === "shell" ? "!" + it.text : splitContext(it.text).text);
+
 function splitContext(text) {
   const m = CONTEXT.exec(text || "");
   if (!m) return { text: text || "", refs: [] };
@@ -588,7 +591,9 @@ export default function AgentView({
   const running = live?.running || session?.running || "";
   const readOnly = running === "terminal";
   // Not known while dv is out of reach; the rest of live is only what it was.
-  const busy = !!live?.busy && !lost;
+  // A command run with ! holds the session as a turn does.
+  const shellRunning = !!live?.shell && !live.shell.error && !live.shell.stopped;
+  const busy = (!!live?.busy || shellRunning) && !lost;
   // Code added from a conversation goes with that conversation's next message,
   // whichever session Diff and Files are adding to.
   const attachTarget = useMemo(
@@ -601,7 +606,7 @@ export default function AgentView({
     return m;
   }, [threads, id]);
   // What can be rewound to: a command too, whose output - or a skill's turn - goes with it.
-  const prompts = useMemo(() => items.filter((it) => (it.kind === "prompt" || it.kind === "command") && it.uuid), [items]);
+  const prompts = useMemo(() => items.filter((it) => (it.kind === "prompt" || it.kind === "command" || it.kind === "shell") && it.uuid), [items]);
 
   // Before anything is drawn for the new session, or its first update would
   // be followed to the end.
@@ -621,7 +626,10 @@ export default function AgentView({
 
   const said = useMemo(() => {
     const n = new Map();
-    for (const it of items) if (it.kind === "prompt" || it.kind === "command") n.set(it.text, (n.get(it.text) || 0) + 1);
+    for (const it of items) {
+      const key = it.kind === "shell" ? "!" + it.text : it.kind === "prompt" || it.kind === "command" ? it.text : null;
+      if (key !== null) n.set(key, (n.get(key) || 0) + 1);
+    }
     return n;
   }, [items]);
   useEffect(() => {
@@ -639,7 +647,7 @@ export default function AgentView({
   // Nothing said yet: the page's blank session, or one made and not written to.
   const blank = !items.length && !incoming.length && (!id || (live && !live.found));
   // Up goes back through what was said here, as in the terminal.
-  const history = useMemo(() => prompts.map((p) => splitContext(p.text).text).filter((t) => t.trim()), [prompts]);
+  const history = useMemo(() => prompts.map(saidAs).filter((t) => t.trim()), [prompts]);
   const runs = useMemo(() => runsOf(items, !!live?.busy, running), [items, live?.busy, running]);
   // What Claude left at work - agents, and commands in the background - over
   // the message box, each opening on what it is doing; peek is the call open.
@@ -855,6 +863,7 @@ export default function AgentView({
   // The message shows at once, and from the blank session is carried into the
   // one made for it.
   const send = async () => {
+    if (draft.startsWith("!")) return runShell(draft.slice(1).trim());
     // A command goes alone; what was added and the pictures wait in the box for the next message.
     const command = commandOf(draft, commands);
     if (command?.name === "clear") {
@@ -902,6 +911,38 @@ export default function AgentView({
       setError(e.message);
     }
   };
+  // runShell is the terminal's !: dv runs the command, and the agent is sent it
+  // with what it printed. What was added and the pictures wait for the next message.
+  const runShell = async (command) => {
+    if (!command || readOnly) return;
+    setError("");
+    const uuid = newUUID();
+    const entry = { text: "!" + command, uuid, shell: command, seen: said.get("!" + command) || 0 };
+    sent.current.set(uuid, { draft, attached: [], images: NO_IMAGES });
+    carry.current = id ? null : entry;
+    setPending((p) => [...p, entry]);
+    setDraft("");
+    browse.current = null;
+    Object.assign(follow.current, { stick: true, anchor: null, opened: null, back: null });
+    let to = id;
+    try {
+      to ||= await onNew();
+      await api.agentShell(to, command, uuid);
+      onChanged();
+    } catch (e) {
+      carry.current = null;
+      putBack([entry], to || "");
+      setError(e.message);
+    }
+  };
+  // A command stopped, or that could not reach the agent, comes back to the box.
+  useEffect(() => {
+    const s = live?.shell;
+    const entry = (s?.error || s?.stopped) && pending.find((w) => w.uuid === s.uuid);
+    if (!entry) return;
+    putBack([entry], id);
+    if (s.error) setError(s.error);
+  }, [live?.shell?.error, live?.shell?.stopped]);
   // compactNow is the terminal's /compact, sent without touching the box.
   const compactNow = async () => {
     const entry = { text: "/compact", uuid: newUUID(), seen: said.get("/compact") || 0, command: true };
@@ -1074,7 +1115,7 @@ export default function AgentView({
     const s = lastSent.current;
     if (queued.length) takeBackQueued();
     else if (s?.session === id && !s.queued && now - s.at < TAKE_BACK_MS && running === "dv") takeBack(s);
-    else if (busy && running === "dv") return interrupt();
+    else if (busy && (running === "dv" || shellRunning)) return interrupt();
     else return;
     lastEsc.current = 0;
   };
@@ -1248,6 +1289,7 @@ export default function AgentView({
   const fileRef = useRef(null);
   const canSend = !!(draft.trim() || images.length || attached.length);
   const command = useMemo(() => commandOf(draft, commands), [draft, commands]);
+  const shell = draft.startsWith("!");
   const menuRef = useRef(null);
   useEffect(() => {
     menuRef.current?.children[pick]?.scrollIntoView({ block: "nearest" });
@@ -1259,7 +1301,7 @@ export default function AgentView({
   const box = (
     <div className="agent-composer">
       <div
-        className={cx("composer-card", dropping && "dropping", command && "command")}
+        className={cx("composer-card", dropping && "dropping", (command || shell) && "command")}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
@@ -1293,7 +1335,7 @@ export default function AgentView({
           </div>
         )}
         {(attached.length > 0 || images.length > 0) && (
-          <div className={cx("agent-attached", command && "held")}>
+          <div className={cx("agent-attached", (command || shell) && "held")}>
             {images.map((img) => (
               <span className="agent-image-chip" key={img.key} title={img.name || "Image"}>
                 <img src={dataURL(img)} alt="" />
@@ -1321,7 +1363,7 @@ export default function AgentView({
                 Clear
               </button>
             )}
-            {command && <span className="agent-attached-held">Kept for your next message</span>}
+            {(command || shell) && <span className="agent-attached-held">Kept for your next message</span>}
           </div>
         )}
         <textarea
@@ -1381,6 +1423,12 @@ export default function AgentView({
             <span className="composer-command-note">{command.description || `A ${agentKind === "codex" ? "Codex" : "Claude Code"} command`}</span>
           </div>
         )}
+        {shell && (
+          <div className="composer-command">
+            <span className="composer-command-name">!</span>
+            <span className="composer-command-note">Runs in your shell, and {name} is sent what it prints</span>
+          </div>
+        )}
         <div className="composer-bar">
           <AddImages
             onFiles={() => fileRef.current.click()}
@@ -1436,8 +1484,8 @@ export default function AgentView({
             </button>
           )}
           <span className="spacer" />
-          {busy && running === "dv" && !canSend ? (
-            <button className="composer-send stop" onClick={interrupt} title={`Stop what ${name} is doing (Esc)`}>
+          {busy && (running === "dv" || shellRunning) && !canSend ? (
+            <button className="composer-send stop" onClick={interrupt} title={shellRunning ? "Stop the command (Esc)" : `Stop what ${name} is doing (Esc)`}>
               <IconStop size={12} />
             </button>
           ) : (
@@ -1459,7 +1507,7 @@ export default function AgentView({
   const bubble = (w) => (
     <Prompt
       key={w.uuid}
-      item={{ kind: w.command || commandOf(w.text, commands) ? "command" : "prompt", text: w.text, images: w.images }}
+      item={w.shell ? { kind: "shell", text: w.shell } : { kind: w.command || commandOf(w.text, commands) ? "command" : "prompt", text: w.text, images: w.images }}
       pictures={w.pictures || sent.current.get(w.uuid)?.images}
       pending
       queued={w.queued}
@@ -1604,7 +1652,7 @@ export default function AgentView({
           {/* What Claude is doing is under what it was asked; what waits for it, under that. */}
           {incoming.filter((w) => !w.queued).map(bubble)}
           {/* A terminal's turn is only known to have started by its last message. */}
-          {busy && !ask && <Activity live={live} items={items} root={root} since={live?.since || items.findLast((it) => it.turn)?.at} />}
+          {busy && !ask && <Activity live={live} items={items} root={root} since={live?.shell?.since || live?.since || items.findLast((it) => it.turn)?.at} />}
           {incoming.filter((w) => w.queued).map(bubble)}
           {ask && (
             <div className="agent-ask prompt">
@@ -2006,6 +2054,7 @@ const Item = memo(function Item(props) {
       return <div className="agent-worked">Worked for {duration(Math.max(item.took, 1000), true)}</div>;
     case "prompt":
     case "command":
+    case "shell":
       return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} />;
     case "text":
       return <div className="markdown agent-text" dangerouslySetInnerHTML={{ __html: md.render(item.text) }} />;
@@ -2042,7 +2091,7 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
   const n = item.images || 0;
   const srcs = pictures ? pictures.map(dataURL) : pending ? [] : Array.from({ length: n }, (_, i) => api.agentPromptImageURL(session, item.uuid, i));
   return (
-    <div className={cx("agent-prompt", item.kind === "command" && "command", pending && "pending")}>
+    <div className={cx("agent-prompt", (item.kind === "command" || item.kind === "shell") && "command", item.kind === "shell" && "shell", pending && "pending")}>
       {srcs.length > 0 && (
         <div className="agent-prompt-images">
           {srcs.map((src, i) => (
@@ -2051,7 +2100,17 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
         </div>
       )}
       {!srcs.length && n > 0 && <div className="agent-prompt-text dim">{n === 1 ? "An image" : `${n} images`}</div>}
-      {text && <div className="agent-prompt-text">{text}</div>}
+      {item.kind === "shell" ? (
+        <>
+          <div className="agent-prompt-text">
+            <span className="shell-bang">!</span> {item.text}
+          </div>
+          {item.result &&
+            (item.result.text ? <Lines className="agent-result" text={item.result.text} /> : <div className="agent-prompt-foot">No output</div>)}
+        </>
+      ) : (
+        text && <div className="agent-prompt-text">{text}</div>
+      )}
       {refs.length > 0 && (
         <div className="agent-chips">
           {refs.map((r, i) => (
@@ -2213,6 +2272,7 @@ const TOOL_ORBS = {
 // activityOf is the orb for what Claude is doing and the words beside it,
 // which name the call.
 function activityOf(live, items, root) {
+  if (live?.shell && !live.shell.error && !live.shell.stopped) return ["working", "Running your command"];
   if (live?.status === "compacting") return ["weaving", "Compacting the conversation"];
   const block = live?.blocks?.at(-1);
   if (block?.kind === "thinking") return ["solving", "Thinking"];
@@ -3077,7 +3137,7 @@ function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewi
           <IconX size={13} />
         </button>
       </div>
-      {prompt && <div className="palette-note rewind-quote">{splitContext(prompt.text).text || (prompt.images ? "(images)" : "(context only)")}</div>}
+      {prompt && <div className="palette-note rewind-quote">{saidAs(prompt) || (prompt.images ? "(images)" : "(context only)")}</div>}
       {prompt?.compacted && (
         <div className="palette-note">
           From before the conversation was compacted: it comes back as it was then, whole, and Claude Code compacts it again when it no longer fits.
@@ -3098,7 +3158,7 @@ function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewi
               </>
             ) : (
               <>
-                <span className="rewind-text">{splitContext(r.text).text.split("\n")[0] || (r.images ? "(images)" : "(context only)")}</span>
+                <span className="rewind-text">{saidAs(r).split("\n")[0] || (r.images ? "(images)" : "(context only)")}</span>
                 <span className="why">{r.compacted ? `before compacting · ${relTime(r.at)}` : relTime(r.at)}</span>
               </>
             )}

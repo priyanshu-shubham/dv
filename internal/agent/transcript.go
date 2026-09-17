@@ -672,6 +672,18 @@ func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note 
 		e.items = append(e.items, Item{Key: r.UUID, Kind: "command", At: r.Timestamp, Text: name, UUID: r.UUID, Turn: turn})
 	case strings.HasPrefix(text, "<local-command-std"):
 		output(e, r, text)
+	// A command run with !. The terminal writes what it printed on a line of its
+	// own after it; dv sends the two as one message.
+	case strings.HasPrefix(text, "<bash-input>"):
+		it := Item{Key: r.UUID, Kind: "shell", At: r.Timestamp, Text: strings.TrimSpace(firstGroup(bashInput, text)), UUID: r.UUID, Turn: turn}
+		if bashStdout.MatchString(text) || bashStderr.MatchString(text) {
+			it.Result = shellOutput(text)
+		}
+		e.items = append(e.items, it)
+	case strings.HasPrefix(text, "<bash-stdout>") || strings.HasPrefix(text, "<bash-stderr>"):
+		if p := t.entries[r.Parent]; p != nil && len(p.items) > 0 && p.items[len(p.items)-1].Kind == "shell" {
+			p.items[len(p.items)-1].Result = shellOutput(text)
+		}
 	case r.Origin.Kind == "task-notification" || strings.HasPrefix(text, "<task-notification>"):
 		note(strings.TrimSpace(firstGroup(taskSummary, text)), false)
 		e.items[len(e.items)-1].Turn = turn

@@ -36,6 +36,7 @@ type codexThread struct {
 	whole    bool         // back to the thread's start
 	turns    []codex.Turn
 	active   string // the turn running now
+	inReview bool   // a /review runs; a turn started meanwhile is its reviewer's, never reported completed
 	settings *codex.Settings
 	asked    askedSettings
 	pending  bool // asked changed during a turn, to apply once it ends
@@ -46,7 +47,7 @@ type codexThread struct {
 	blocks   map[string]*Block // replies streaming in, by item
 	order    []string
 	todos    map[string]*todoList
-	commands map[string][]Item // /compact sent from dv, by the turn it came after
+	commands map[string][]Item // /compact and /review sent from dv, by the turn they came after
 	plans    map[string]bool   // turns run in plan mode
 	asks     map[string]context.CancelFunc
 	planAsk  context.CancelFunc
@@ -190,7 +191,7 @@ func (t *codexThread) readHistory(all bool) {
 	if metaErr == nil {
 		t.meta = meta.Thread
 	}
-	t.turns = mergeTurns(turns, t.turns, t.active)
+	t.turns = mergeTurns(foldReviewers(turns), t.turns, t.active)
 	t.history, t.whole = true, whole
 	t.mark = rolloutMark(t.meta.Path)
 	t.version++
@@ -208,7 +209,7 @@ func (t *codexThread) refreshTail() {
 	}
 	slices.Reverse(page.Data)
 	t.mu.Lock()
-	t.turns = mergeTurns(page.Data, t.turns, t.active)
+	t.turns = mergeTurns(foldReviewers(page.Data), t.turns, t.active)
 	t.version++
 	t.mu.Unlock()
 	t.signal()
@@ -467,7 +468,7 @@ func (t *codexThread) Notify(method string, params json.RawMessage) {
 	var after func()
 	switch method {
 	case "turn/started":
-		if p.Turn != nil {
+		if p.Turn != nil && !t.inReview {
 			t.active, t.err = p.Turn.ID, ""
 			t.turnLocked(p.Turn.ID).Status = "inProgress"
 			wrote = true
@@ -479,6 +480,7 @@ func (t *codexThread) Notify(method string, params json.RawMessage) {
 			if t.active == p.Turn.ID {
 				t.active = ""
 			}
+			t.inReview = false
 			t.blocks, t.order, t.status = map[string]*Block{}, nil, ""
 			id := p.Turn.ID
 			after = func() { t.turnEnded(id) }
@@ -497,7 +499,10 @@ func (t *codexThread) Notify(method string, params json.RawMessage) {
 		}
 		wrote = true
 	case "item/agentMessage/delta", "item/plan/delta":
-		t.streamLocked(p.ItemID, "text", p.Delta)
+		// A reviewer writes its findings as JSON, and they are sent again as a whole.
+		if !t.inReview {
+			t.streamLocked(p.ItemID, "text", p.Delta)
+		}
 	case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
 		t.streamLocked(p.ItemID, "thinking", p.Delta)
 	case "item/reasoning/summaryPartAdded":
@@ -565,7 +570,7 @@ func (t *codexThread) Exited() {
 	for _, cancel := range t.asks {
 		cancel()
 	}
-	t.loaded, t.active, t.pending = false, "", t.asked != askedSettings{}
+	t.loaded, t.active, t.pending, t.inReview = false, "", t.asked != askedSettings{}, false
 	t.blocks, t.order, t.status = map[string]*Block{}, nil, ""
 	t.version++
 	t.mu.Unlock()
@@ -712,6 +717,9 @@ func (t *codexThread) send(uuid, text string, images []Image) (string, error) {
 		t.signal()
 		return uuid, nil
 	}
+	if name, rest, _ := strings.Cut(strings.TrimSpace(text), " "); name == "/review" {
+		return uuid, t.review(uuid, strings.TrimSpace(rest))
+	}
 	input := t.input(text, images)
 	t.mu.Lock()
 	if t.active != "" {
@@ -724,6 +732,45 @@ func (t *codexThread) send(uuid, text string, images []Image) (string, error) {
 	}
 	t.mu.Unlock()
 	return uuid, t.start(uuid, input)
+}
+
+// review is Codex's /review: of what is uncommitted, or of what the words
+// after it ask for. It runs as a turn of its own.
+func (t *codexThread) review(uuid, instructions string) error {
+	t.mu.Lock()
+	busy := t.active != ""
+	after := ""
+	if n := len(t.turns); n > 0 {
+		after = t.turns[n-1].ID
+	}
+	t.inReview = !busy
+	t.mu.Unlock()
+	if busy {
+		return errors.New("Codex is working; send /review once it is done")
+	}
+	target := map[string]any{"type": "uncommittedChanges"}
+	if instructions != "" {
+		target = map[string]any{"type": "custom", "instructions": instructions}
+	}
+	// The review's own turn is only told of here, never as started.
+	var r struct {
+		Turn codex.Turn `json:"turn"`
+	}
+	if err := t.call("review/start", map[string]any{"threadId": t.id, "target": target}, &r); err != nil {
+		t.mu.Lock()
+		t.inReview = false
+		t.mu.Unlock()
+		return err
+	}
+	t.mu.Lock()
+	if t.turnLocked(r.Turn.ID).Status == "inProgress" {
+		t.active, t.err = r.Turn.ID, ""
+	}
+	t.commands[after] = append(t.commands[after], Item{Key: uuid, Kind: "command", Text: strings.TrimSpace("/review " + instructions), UUID: uuid})
+	t.version++
+	t.mu.Unlock()
+	t.signal()
+	return nil
 }
 
 // input is a message as Codex takes it: a skill it names, its text, its pictures.

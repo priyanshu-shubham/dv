@@ -306,6 +306,32 @@ func (s *Server) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "uuid": uuid})
 }
 
+// handleAgentShell runs a command typed after !, whose output then goes to the
+// agent as the message uuid.
+func (s *Server) handleAgentShell(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Command string `json:"command"`
+		UUID    string `json:"uuid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.UUID != "" && !sessionID.MatchString(req.UUID) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a uuid", req.UUID))
+		return
+	}
+	if err := s.agent.Shell(id, req.UUID, req.Command); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // handleAgentUnqueue takes back a message sent while Claude works that it has
 // not taken up yet.
 func (s *Server) handleAgentUnqueue(w http.ResponseWriter, r *http.Request) {

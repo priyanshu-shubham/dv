@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,10 +29,10 @@ type todoList struct {
 }
 
 // codexItems is a thread's turns as the conversation is drawn. commands are
-// the /compact messages sent from dv, which leave nothing in the thread, by the
-// turn they came after.
+// the /compact and /review messages sent from dv, which leave no message in the
+// thread, by the turn they came after.
 func codexItems(root string, turns []codex.Turn, todos map[string]*todoList, commands map[string][]Item) []Item {
-	items := []Item{}
+	items := append([]Item{}, commands[""]...)
 	before := ""
 	for _, turn := range turns {
 		at := ""
@@ -50,7 +51,20 @@ func codexItems(root string, turns []codex.Turn, todos map[string]*todoList, com
 		if list != nil && list.after == "" {
 			place()
 		}
+		// A /review turn's messages are its reviewer's: the prompt Codex wrote
+		// it, its findings as JSON, then those findings again as the reply kept.
+		review := slices.ContainsFunc(turn.Items, func(it codex.Item) bool { return it.Type == "enteredReviewMode" })
+		reviewing, found := false, ""
 		for _, it := range turn.Items {
+			switch it.Type {
+			case "enteredReviewMode":
+				reviewing = true
+			case "exitedReviewMode":
+				reviewing, found = false, strings.TrimSpace(it.Review)
+			}
+			if review && (it.Type == "userMessage" || it.Type == "agentMessage" && (reviewing || strings.TrimSpace(it.Text) == found)) {
+				continue
+			}
 			items = append(items, codexItem(root, it, at, &prompted, before)...)
 			if list != nil && it.ID == list.after {
 				place()
@@ -73,7 +87,24 @@ func codexItems(root string, turns []codex.Turn, todos map[string]*todoList, com
 		items = append(items, commands[turn.ID]...)
 		before = turn.ID
 	}
-	return append(items, commands[""]...)
+	return items
+}
+
+// foldReviewers puts the turn a /review's reviewer ran, as turns are read, back
+// inside the review. A thread read back keeps it as a turn of its own, left
+// interrupted, just before the review: the one turn out of order, as Codex's
+// ids begin with the time they were made.
+func foldReviewers(turns []codex.Turn) []codex.Turn {
+	for i := 0; i+1 < len(turns); i++ {
+		reviewer, review := turns[i], turns[i+1]
+		at := slices.IndexFunc(review.Items, func(it codex.Item) bool { return it.Type == "enteredReviewMode" })
+		if reviewer.ID <= review.ID || at < 0 {
+			continue
+		}
+		turns[i+1].Items = slices.Concat(review.Items[:at+1], reviewer.Items, review.Items[at+1:])
+		turns = slices.Delete(turns, i, i+1)
+	}
+	return turns
 }
 
 func todoItem(turn string, list *todoList) Item {
@@ -97,8 +128,11 @@ func codexItem(root string, it codex.Item, at string, prompted *bool, before str
 	case "userMessage":
 		text, images, skill := codexInputs(it.Inputs())
 		p := Item{Key: it.ID, Kind: "prompt", At: at, Text: text, Images: images}
-		if skill != "" {
+		switch {
+		case skill != "":
 			p.Kind, p.Text = "command", strings.TrimSpace("/"+skill+" "+text)
+		case strings.HasPrefix(text, "<bash-input>"):
+			p.Kind, p.Text, p.Result = "shell", strings.TrimSpace(firstGroup(bashInput, text)), shellOutput(text)
 		}
 		if !*prompted {
 			p.UUID, p.Before = cmp.Or(it.ClientID, it.ID), before
@@ -128,6 +162,14 @@ func codexItem(root string, it codex.Item, at string, prompted *bool, before str
 		return []Item{row}
 
 	case "commandExecution":
+		// Run with ! in Codex's own terminal, it is the reader's, as dv's are.
+		if it.Source == "userShell" {
+			s := Item{Key: it.ID, Kind: "shell", At: at, Text: commandText(it)}
+			if done && it.AggregatedOutput != nil {
+				s.Result = &Result{Text: cut(strings.TrimRight(*it.AggregatedOutput, "\n"), 4*maxResult)}
+			}
+			return []Item{s}
+		}
 		row := tool("Bash", map[string]string{"command": commandText(it)})
 		if done {
 			out := ""
