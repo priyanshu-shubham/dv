@@ -14,10 +14,12 @@ import (
 // none of them has changes, so the rest of dv needs no second code path.
 
 // folderSkip is what a folder's listing leaves out: version control's
-// directories, dv's own, and the dependency and cache trees a .gitignore would
-// have kept out of a repository's.
-var folderSkip = map[string]bool{
-	".git": true, ".hg": true, ".svn": true, ".dv": true,
+// directories and dv's own, and folderIgnored, the dependency and cache trees
+// a .gitignore would have kept out of a repository's. Those are still shown,
+// as ignored.
+var folderSkip = map[string]bool{".git": true, ".hg": true, ".svn": true, ".dv": true}
+
+var folderIgnored = map[string]bool{
 	"node_modules": true, "__pycache__": true, ".venv": true, ".cache": true, ".next": true, ".tox": true,
 }
 
@@ -35,8 +37,9 @@ func folderScope() *Scope {
 	}
 }
 
-// walkFolder calls fn for each file, by slash-separated path, in lexical order.
-func (r *Repo) walkFolder(fn func(path string, d fs.DirEntry)) error {
+// walkFolder calls fn for each file, by slash-separated path, in lexical order,
+// and ignored, if given, for each folder in folderIgnored it does not go into.
+func (r *Repo) walkFolder(fn func(path string, d fs.DirEntry), ignored func(dir string)) error {
 	n := 0
 	return filepath.WalkDir(r.Root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -46,7 +49,15 @@ func (r *Repo) walkFolder(fn func(path string, d fs.DirEntry)) error {
 			return nil // an unreadable directory is left out
 		}
 		if d.IsDir() {
-			if p != r.Root && folderSkip[d.Name()] {
+			if p == r.Root {
+				return nil
+			}
+			if folderIgnored[d.Name()] && ignored != nil {
+				if rel, err := filepath.Rel(r.Root, p); err == nil {
+					ignored(filepath.ToSlash(rel))
+				}
+			}
+			if folderSkip[d.Name()] || folderIgnored[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -73,7 +84,7 @@ func (r *Repo) walkFolder(fn func(path string, d fs.DirEntry)) error {
 
 func (r *Repo) folderFiles() ([]string, error) {
 	var files []string
-	err := r.walkFolder(func(path string, _ fs.DirEntry) { files = append(files, path) })
+	err := r.walkFolder(func(path string, _ fs.DirEntry) { files = append(files, path) }, nil)
 	return files, err
 }
 
@@ -86,7 +97,7 @@ func (r *Repo) folderVersion() (string, error) {
 		if fi, err := d.Info(); err == nil {
 			fmt.Fprintf(h, "%d.%d\x00", fi.Size(), fi.ModTime().UnixNano())
 		}
-	})
+	}, nil)
 	if err != nil {
 		return "", err
 	}

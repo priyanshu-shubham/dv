@@ -23,6 +23,9 @@ import (
 type Repo struct {
 	Root   string // absolute path to the working tree root
 	GitDir string // absolute path to .git (or the real dir for worktrees); empty for a plain folder
+	// CommonDir is what a linked worktree shares with its main checkout, such
+	// as info/exclude; the same as GitDir elsewhere.
+	CommonDir string
 }
 
 // Open finds the repository containing dir and returns a handle to it. Outside
@@ -46,11 +49,25 @@ func Open(dir string) (*Repo, error) {
 		}
 		return nil, err
 	}
-	gitDir, err := gitOutput(abs, "rev-parse", "--absolute-git-dir")
+	dirs, err := gitOutput(abs, "rev-parse", "--absolute-git-dir", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
-	return &Repo{Root: strings.TrimSpace(root), GitDir: strings.TrimSpace(gitDir)}, nil
+	gitDir, common, _ := strings.Cut(strings.TrimSpace(dirs), "\n")
+	// Relative to where git ran, when it is not absolute.
+	if common = strings.TrimSpace(common); !filepath.IsAbs(common) {
+		common = filepath.Join(abs, common)
+	}
+	return &Repo{Root: strings.TrimSpace(root), GitDir: gitDir, CommonDir: filepath.Clean(common)}, nil
+}
+
+// MainRoot is the main checkout of the repository a linked worktree belongs
+// to, and "" for anything else.
+func (r *Repo) MainRoot() string {
+	if r.CommonDir == "" || r.CommonDir == r.GitDir || filepath.Base(r.CommonDir) != ".git" {
+		return ""
+	}
+	return filepath.Dir(r.CommonDir)
 }
 
 // IsGit is false for a plain folder.

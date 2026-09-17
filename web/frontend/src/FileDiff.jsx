@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
@@ -278,7 +279,7 @@ function chunk(blocks, split) {
 export function DiffBody({
   fd, view, oneNumber, side, contextLines, expanded, onExpand, threads, selection, setSelection,
   composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, wrap,
-  reveal, hit = 0, drawAll = false, unknown = false, onBody, found, foundAt,
+  reveal, hit = 0, drawAll = false, unknown = false, onBody, found, foundAt, barsIn,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
@@ -604,6 +605,30 @@ export function DiffBody({
     };
   }, [overflows, split]);
 
+  const bars = overflows && (
+    <div className={cx("hbars", !split && "single")} aria-hidden="true">
+      <div
+        className="hbar"
+        ref={barOld}
+        onScroll={(e) => {
+          shift("old", e.currentTarget.scrollLeft);
+          // Unified interleaves both sides in one column, so one bar moves both.
+          if (!split) shift("new", e.currentTarget.scrollLeft);
+        }}
+      >
+        {/* The bar spans a whole half, gutter included, so the spacer has
+            to as well - otherwise its scroll range is short by the gutter
+            and the end of the longest line stays out of reach. */}
+        <div style={{ width: split ? need.old : need.both }} />
+      </div>
+      {split && (
+        <div className="hbar" ref={barNew} onScroll={(e) => shift("new", e.currentTarget.scrollLeft)}>
+          <div style={{ width: need.new }} />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       // hscroll gates the per-line transform. Files that fit - nearly all of
@@ -632,29 +657,9 @@ export function DiffBody({
         ),
       )}
 
-      {overflows && (
-        <div className="hbars" aria-hidden="true">
-          <div
-            className="hbar"
-            ref={barOld}
-            onScroll={(e) => {
-              shift("old", e.currentTarget.scrollLeft);
-              // Unified interleaves both sides in one column, so one bar moves both.
-              if (!split) shift("new", e.currentTarget.scrollLeft);
-            }}
-          >
-            {/* The bar spans a whole half, gutter included, so the spacer has
-                to as well - otherwise its scroll range is short by the gutter
-                and the end of the longest line stays out of reach. */}
-            <div style={{ width: split ? need.old : need.both }} />
-          </div>
-          {split && (
-            <div className="hbar" ref={barNew} onScroll={(e) => shift("new", e.currentTarget.scrollLeft)}>
-              <div style={{ width: need.new }} />
-            </div>
-          )}
-        </div>
-      )}
+      {/* A view of one file can hold the bars under its scrolling, barsIn,
+          where they cover no code; a stream of files keeps them stuck here. */}
+      {bars && (barsIn ? createPortal(bars, barsIn) : bars)}
     </div>
   );
 }

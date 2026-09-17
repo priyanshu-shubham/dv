@@ -76,6 +76,7 @@ type proc struct {
 	lastUsed    time.Time
 	nextReq     int
 	planCall    string // an EnterPlanMode call not yet answered
+	apiErr      string // the API error Claude Code last said, which its transcript holds
 
 	wmu sync.Mutex // one write to stdin at a time
 }
@@ -376,6 +377,7 @@ type message struct {
 	Status    string          `json:"status"`
 	State     string          `json:"state"`
 	IsError   bool            `json:"is_error"`
+	APIError  bool            `json:"is_api_error_message"`
 	Result    string          `json:"result"`
 	Errors    []string        `json:"errors"`
 	Cost      float64         `json:"total_cost_usd"`
@@ -449,6 +451,9 @@ func (p *proc) handle(line []byte) {
 		p.stream(&m)
 
 	case "assistant", "user":
+		if m.APIError {
+			p.apiErr = textOf(m.Message.Content)
+		}
 		p.planning(&m)
 		p.wrote()
 
@@ -462,9 +467,12 @@ func (p *proc) handle(line []byte) {
 		if m.Subtype == "error_during_execution" {
 			// Interrupted: what streamed is not coming to the transcript.
 			p.blocks = nil
-		} else if m.IsError {
+		} else if m.IsError && (len(m.Errors) > 0 || m.Result != p.apiErr) {
+			// An API error, as "Not logged in" is, is in the transcript already;
+			// anything else stays the session's error until the next message.
 			p.err = strings.Join(append(m.Errors, m.Result), "\n")
 		}
+		p.apiErr = ""
 		over := !p.states
 		p.mu.Unlock()
 		p.wrote()
@@ -588,6 +596,18 @@ func (p *proc) control(id string, raw json.RawMessage) {
 
 // planning notes Claude putting itself in plan mode, which the stream says
 // nothing else of until the next turn starts.
+func textOf(content json.RawMessage) string {
+	var blocks []block
+	json.Unmarshal(content, &blocks)
+	var text []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			text = append(text, b.Text)
+		}
+	}
+	return strings.Join(text, "\n")
+}
+
 func (p *proc) planning(m *message) {
 	var blocks []block
 	if json.Unmarshal(m.Message.Content, &blocks) != nil {

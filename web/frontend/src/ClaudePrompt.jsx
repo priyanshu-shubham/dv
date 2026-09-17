@@ -5,6 +5,7 @@ import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { cx, isTyping, LRM, splitPath, usePersisted } from "./util.js";
+import { usePref } from "./prefs.js";
 import { IconFile, IconSpark, IconX } from "./icons.jsx";
 
 const NO_COMMENTS = [];
@@ -365,7 +366,8 @@ export function Request({
 // Where a request's questions stand before any is answered: the tab and row on
 // screen, and by question the labels picked, what was written in (and, where
 // several are taken, whether it is ticked) and the note for Claude.
-const NO_PROGRESS = { tab: 0, cursors: {}, picked: {}, other: {}, otherOn: {}, notes: {} };
+const NO_PLACE = { tab: 0, cursors: {} };
+const NO_ANSWERS = { picked: {}, other: {}, otherOn: {}, notes: {} };
 
 // Questions takes AskUserQuestion's answers as the terminal does: a question at
 // a time under a tab for each, and a last tab summing up what was chosen, whose
@@ -373,16 +375,21 @@ const NO_PROGRESS = { tab: 0, cursors: {}, picked: {}, other: {}, otherOn: {}, n
 // takes several moves on with its Submit row, → or Next. Under each question's
 // options come something else, written in - where several are taken, writing
 // there ticks it and Enter ticks it on and off like the rest - and a note on
-// the answer, which Tab goes to and back from. Progress
-// is kept for the tab by request id, so putting the request away, reopening it
-// elsewhere in the page or reloading loses nothing. rootRef is what takes the
+// the answer, which Tab goes to and back from. Progress is kept by request id,
+// so putting the request away, reopening it elsewhere in the page, reloading or
+// picking it up on another device loses nothing. rootRef is what takes the
 // focus; keysRef is handed the key handler Request calls while it has the
 // keys, which says whether it took the key.
 function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
-  const [progress, setProgress] = usePersisted("ask:" + id, NO_PROGRESS, { session: true });
-  const { tab, cursors, picked, other, otherOn, notes } = { ...NO_PROGRESS, ...progress };
-  const field = (key) => (v) => setProgress((s) => ({ ...NO_PROGRESS, ...s, [key]: typeof v === "function" ? v({ ...NO_PROGRESS, ...s }[key]) : v }));
-  const [setTab, setCursors, setPicked, setOther, setOtherOn, setNotes] = ["tab", "cursors", "picked", "other", "otherOn", "notes"].map(field);
+  // The answers so far follow the request to another device; where this one is
+  // among the tabs and rows stays with the browser tab.
+  const [place, setPlace] = usePersisted("ask:" + id, NO_PLACE, { session: true, folder: true });
+  const [answers, setAnswers] = usePref("repo", "ask:" + id, NO_ANSWERS);
+  const { tab, cursors } = { ...NO_PLACE, ...place };
+  const { picked, other, otherOn, notes } = { ...NO_ANSWERS, ...answers };
+  const field = (set, none, key) => (v) => set((s) => ({ ...none, ...s, [key]: typeof v === "function" ? v({ ...none, ...s }[key]) : v }));
+  const [setTab, setCursors] = ["tab", "cursors"].map((k) => field(setPlace, NO_PLACE, k));
+  const [setPicked, setOther, setOtherOn, setNotes] = ["picked", "other", "otherOn", "notes"].map((k) => field(setAnswers, NO_ANSWERS, k));
   const otherRef = useRef(null);
   const noteRef = useRef(null);
   const n = questions.length;

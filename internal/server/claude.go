@@ -171,11 +171,11 @@ func setHooks(on bool) error {
 	return err
 }
 
-// guarded keeps other web pages away from what can let Claude run a command.
+// Guarded keeps other web pages away from what can let Claude run a command.
 // A cross-origin POST can only carry JSON after a preflight, which dv never
 // grants, and a DNS rebinding attack arrives under a host name rather than
 // the address dv is reached at.
-func guarded(h http.HandlerFunc) http.HandlerFunc {
+func Guarded(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {

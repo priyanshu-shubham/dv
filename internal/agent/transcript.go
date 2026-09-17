@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"dv/internal/store"
 )
 
 // Item is one thing in a conversation as the page draws it.
@@ -290,22 +292,28 @@ func (t *Transcript) boundaries(chain []*entry, i int) []*entry {
 }
 
 // Items is the conversation ending at leaf, or at the last entry when leaf is
-// not one of them.
-func (t *Transcript) Items(leaf string) []Item {
+// not one of them, with the changes of mode made in dv where they were made.
+func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 	chain := t.chain(leaf)
 	items := []Item{}
 	before := ""
-	mode := ""
+	// recorded is the mode the transcript last wrote, which its entries go on
+	// carrying past a switch; shown is the one the page last said.
+	recorded, shown := "", ""
+	after := map[string][]store.Switch{}
+	for _, sw := range switches {
+		after[sw.After] = append(after[sw.After], sw)
+	}
 	drawn := map[string]bool{} // messages
 	for i := len(chain) - 1; i >= 0; i-- {
 		e := chain[i]
 		// Where the conversation first shows a new mode; the first it shows is
 		// the one it began in.
-		if e.mode != "" && e.mode != mode {
-			if mode != "" {
-				items = append(items, Item{Key: "mode:" + e.uuid, Kind: "mode", Text: e.mode, From: mode})
+		if e.mode != "" && e.mode != recorded {
+			if recorded != "" && e.mode != shown {
+				items = append(items, Item{Key: "mode:" + e.uuid, Kind: "mode", Text: e.mode, From: shown})
 			}
-			mode = e.mode
+			recorded, shown = e.mode, e.mode
 		}
 		group := []*entry{e}
 		if e.msg != "" {
@@ -331,11 +339,36 @@ func (t *Transcript) Items(leaf string) []Item {
 		for _, b := range slices.Backward(t.boundaries(chain, i)) {
 			items = append(items, b.items[0])
 		}
+		for n, sw := range after[e.uuid] {
+			if sw.To != shown {
+				items = append(items, Item{Key: "switch:" + e.uuid + ":" + strconv.Itoa(n), Kind: "mode", Text: sw.To, From: shown})
+				shown = sw.To
+			}
+		}
 		if e.assistant {
 			before = e.uuid
 		}
 	}
 	return compactedBy(items)
+}
+
+// Mode is the mode the conversation ending at leaf is left in: the last the
+// transcript recorded, or a switch made in dv since.
+func (t *Transcript) Mode(leaf string, switches []store.Switch) string {
+	after := map[string]string{}
+	for _, sw := range switches {
+		after[sw.After] = sw.To
+	}
+	recorded, mode := "", t.mode
+	for _, e := range slices.Backward(t.chain(leaf)) {
+		if e.mode != "" && e.mode != recorded {
+			recorded, mode = e.mode, e.mode
+		}
+		if to, ok := after[e.uuid]; ok {
+			mode = to
+		}
+	}
+	return mode
 }
 
 // compactedBy puts a /compact before the compaction it made, which Claude Code

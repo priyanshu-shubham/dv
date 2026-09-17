@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
+import { boot } from "./boot.js";
 import { commentsOn, NO_EXPAND, noop } from "./CodeView.jsx";
 import { CONTEXT_LINES } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
+import { blockAt } from "./markdown.js";
 import { cx, LRM, modKey, statusLabel, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml } from "./highlight.js";
-import { Media } from "./Preview.jsx";
+import { MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
@@ -18,7 +20,8 @@ export function Modal({ onClose, onBack, className, children, wide, centred }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
-        if (e.target.closest?.(".composer")) return; // the comment box's own Esc
+        // The comment box's own Esc, and an open list's.
+        if (e.target.closest?.('.composer, [aria-expanded="true"]')) return;
         e.stopPropagation();
         (e.shiftKey || !onBack ? onClose : onBack)();
       } else if (onBack && ((e.altKey && e.key === "ArrowLeft") || ((e.metaKey || e.ctrlKey) && e.key === "["))) {
@@ -435,7 +438,7 @@ function markSpans(text, spans) {
 // draws through Code mode's rows, so its code is commented on, and added to a
 // session, as there; `changes` is the file's diff, for where comments hang.
 export function FileViewer({
-  file, line, side, scope, scroll = 0, threads, changes, wrap, onClose, onBack, backTo, onSymbol, onComment, onThreadAction, onAttach, onSearch,
+  file, line, side, scope, scroll = 0, threads, changes, wrap, preview, onPreview, onOpenFile, onClose, onBack, backTo, onSymbol, onComment, onThreadAction, onAttach, onSearch,
 }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -444,6 +447,8 @@ export function FileViewer({
   const [selection, setSelection] = useState(null);
   const [composing, setComposing] = useState(null);
   const at = side === "old" ? "old" : "new";
+  const kind = data && !data.media ? previewKind(file) : "";
+  const rendered = !!kind && preview;
 
   useEffect(() => {
     setData(null);
@@ -467,9 +472,42 @@ export function FileViewer({
       bodyRef.current.scrollTop = scroll;
       return;
     }
-    const el = bodyRef.current?.querySelector(`[data-line="${line}"][data-side]`);
+    const body = bodyRef.current;
+    const el = body && (body.querySelector(`[data-line="${line}"][data-side]`) || blockAt(body, line));
     el?.scrollIntoView({ block: "center" });
   }, [data, line, scroll]);
+
+  // Rendered or as source, the line at the top stays there: noted as Preview
+  // is toggled, and put back once the other is drawn.
+  const [kept, setKept] = useState(0);
+  const togglePreview = (on) => {
+    const body = bodyRef.current;
+    // Past the 6px a block is put back at, so rounding cannot leave it under.
+    const y = body.getBoundingClientRect().top + 8;
+    const els = [...body.querySelectorAll("[data-line][data-side], .md-preview [data-src]")];
+    // Blocks nest, a list around its items: the innermost across the top edge.
+    const across = els.filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.top <= y && r.bottom > y;
+    });
+    const at = across.pop() || els.find((el) => el.getBoundingClientRect().top > y);
+    setKept(Number(at?.dataset.line || at?.dataset.src || 0));
+    onPreview(on);
+  };
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!kept || !body) return;
+    const el = rendered ? blockAt(body, kept) : body.querySelector(`[data-line="${kept}"][data-side]`);
+    if (el) body.scrollTop += el.getBoundingClientRect().top - body.getBoundingClientRect().top - 6;
+  }, [rendered, kept]);
+
+  // The horizontal bars go under the code rather than over its last rows, as
+  // wide as the code is beside the vertical scrollbar.
+  const [barsIn, setBarsIn] = useState(null);
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (barsIn && body) barsIn.style.paddingRight = `${body.offsetWidth - body.clientWidth}px`;
+  });
 
   const fd = useMemo(() => data?.lines && plainDiff({ ...data, path: file }, at), [data, file, at]);
   const shown = useMemo(() => commentsOn(threads, at, changes), [threads, at, changes]);
@@ -496,6 +534,7 @@ export function FileViewer({
           </span>
         )}
         <span className="spacer" />
+        {kind && fd && <PreviewToggle kind={kind} on={preview} onChange={togglePreview} />}
         <button className="ghost" onClick={onClose}>
           <IconX size={13} />
         </button>
@@ -504,7 +543,16 @@ export function FileViewer({
         {error && <div className="empty error">{error}</div>}
         {!data && !error && <div className="empty">Loading...</div>}
         {data?.media && <Media type={data.media} src={api.mediaURL(file, scope, side, data.stamp)} />}
-        {fd && (
+        {fd && rendered && (
+          <div className="file-body">
+            {kind === "markdown" ? (
+              <MarkdownPreview lines={at === "old" ? fd.oldLines : fd.newLines} path={file} side={at} scope={scope} onOpenFile={onOpenFile} />
+            ) : (
+              <SvgPreview newLines={at === "old" ? fd.oldLines : fd.newLines} />
+            )}
+          </div>
+        )}
+        {fd && !rendered && (
           <div className={cx("file-body", wrap && "wrap")}>
             <DiffBody
               view="code"
@@ -526,12 +574,14 @@ export function FileViewer({
               onSearch={onSearch}
               path={file}
               wrap={wrap}
-              reveal={line}
+              reveal={kept || line}
               hit={line}
+              barsIn={barsIn}
             />
           </div>
         )}
       </div>
+      <div className="viewer-bars" ref={setBarsIn} />
     </Modal>
   );
 }
@@ -545,8 +595,10 @@ const OFF_ON = [
 // as the header also sets them, and `settings`, which only this sets through
 // onChange's patches. A phone always shows the diff unified, so it has no
 // layout to pick.
+// SettingsOverlay is `,` in a folder's page, and in the hub's, which has no
+// keys to toggle the diff with (keys false).
 export function SettingsOverlay({
-  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose,
+  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
 }) {
   return (
     <Modal onClose={onClose} centred className="settings">
@@ -567,10 +619,17 @@ export function SettingsOverlay({
           onPick={(v) => onChange({ codeColors: v })}
           choices={[["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]]}
         />
+        <Setting
+          label="Sidebar"
+          note="On the right, the comments open over it."
+          value={settings.sidebar || "left"}
+          onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
+          choices={[["left", "Left"], ["right", "Right"]]}
+        />
         <div className="menu-label">Diff</div>
-        {!phone && <Setting label="Layout" note="u toggles it" value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
+        {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
         <Setting label="Context around each change" value={contextLines} onPick={onContext} choices={CONTEXT_LINES.map((n) => [n, n ? String(n) : "None"])} />
-        <Setting label="Wrap long lines" note={phone ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
+        <Setting label="Wrap long lines" note={phone || !keys ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
         <div className="menu-label">Agent</div>
         <Setting
           label="Desktop notifications"
@@ -640,6 +699,12 @@ export function HelpOverlay({ onClose }) {
     ["w", "Toggle line wrapping"],
     ["r", "Reload the diff"],
     [",", "Settings"],
+    ...(boot.base
+      ? [
+          ["h", "Back to the hub"],
+          ["Ctrl+Shift+↑ / ↓", "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone)"],
+        ]
+      : []),
     ["double-click", "Jump to a symbol's definition, or search its uses"],
     ["Alt+Left", "Back to the previous definition, or file in Files"],
     ["Alt+Right", "Forward again, in Files"],
@@ -650,6 +715,7 @@ export function HelpOverlay({ onClose }) {
     ["Esc Esc", "In the Agent view, rewind the session to before one of your messages"],
     ["Esc", "In the Agent view, take back a queued message, or one sent a moment ago; otherwise stop Claude"],
     ["[ / ]", "In the Agent view, your previous / next message"],
+    [`${modKey}+↓`, "In the Agent view, the end of the conversation (from the message box too)"],
     ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],
     ["Shift+Tab", "In the Agent view's message box, change the permission mode"],
     ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty)"],

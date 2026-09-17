@@ -389,10 +389,14 @@ func (m *Manager) procFor(id string) (*proc, error) {
 		// Resumed where it was started: Claude Code finds a transcript by the
 		// working directory's folder.
 		p = m.newProc(id, row.Cwd, true)
-		// In the mode the page shows it in, which the transcript last recorded.
+		// In the mode the page shows it in: the transcript's last, or a switch since.
 		if f := m.follows[id]; f != nil {
 			f.mu.Lock()
-			p.mode = f.t.mode
+			last := f.t.Last()
+			f.mu.Unlock()
+			leaf, switches := m.leaf(id, last), m.saved.Switches(id)
+			f.mu.Lock()
+			p.mode = f.t.Mode(leaf, switches)
 			f.mu.Unlock()
 		}
 		m.procs[id] = p
@@ -472,6 +476,7 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 			p.effort = ""
 		}
 	}
+	switched := mode != nil && *mode != p.mode
 	if mode != nil {
 		p.mode = *mode
 	}
@@ -480,6 +485,9 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	}
 	live := p.cmd != nil
 	p.mu.Unlock()
+	if switched {
+		m.markSwitch(id, *mode)
+	}
 	if live {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -506,6 +514,31 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	}
 	p.changed()
 	return nil
+}
+
+// markSwitch keeps where in the conversation the mode was changed, which the
+// transcript says nothing of until the next message. Before the first there is
+// nowhere to mark: the session starts in the mode.
+func (m *Manager) markSwitch(id, to string) {
+	m.mu.Lock()
+	f := m.follows[id]
+	m.mu.Unlock()
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	last := f.t.Last()
+	f.mu.Unlock()
+	if last == "" {
+		return
+	}
+	at := cmp.Or(m.leaf(id, last), last)
+	if m.saved.AddSwitch(id, store.Switch{After: at, To: to}) != nil {
+		return
+	}
+	f.mu.Lock()
+	f.version++
+	f.mu.Unlock()
 }
 
 // Rename titles a session, as /rename does in the terminal. A terminal that
@@ -1058,6 +1091,7 @@ func (m *Manager) Update(id string, s *Sub) Update {
 	last := f.t.Last()
 	f.mu.Unlock()
 	leaf := m.leaf(id, last)
+	switches := m.saved.Switches(id)
 	// Rewound to before where the file was read from.
 	f.mu.Lock()
 	before := leaf != "" && f.t.Start > 0 && !f.t.Has(leaf)
@@ -1072,7 +1106,7 @@ func (m *Manager) Update(id string, s *Sub) Update {
 	u.Live.Found = f.path != ""
 	if s.version != f.version {
 		s.version = f.version
-		u.Reset, u.Items = s.diff(s.shown(f.t.Items(leaf), f.t.Start > 0))
+		u.Reset, u.Items = s.diff(s.shown(f.t.Items(leaf, switches...), f.t.Start > 0))
 	}
 	u.Earlier = s.earlier
 	used, model := f.t.Context(leaf)
@@ -1102,8 +1136,11 @@ func (m *Manager) Update(id string, s *Sub) Update {
 		}
 		p.mu.Unlock()
 	}
-	// Until Claude Code runs it and says, the mode the transcript last recorded.
-	u.Live.Mode = cmp.Or(u.Live.Mode, f.t.mode)
+	// Until Claude Code runs it and says, the mode the transcript last recorded,
+	// or one switched to since.
+	if u.Live.Mode == "" {
+		u.Live.Mode = f.t.Mode(leaf, switches)
+	}
 	f.mu.Unlock()
 	u.Live.Running, u.Live.Busy = where(p, r)
 	return u

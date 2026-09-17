@@ -34,11 +34,13 @@ function compareParts(x, y) {
 // buildTree nests files, already in compareTreePaths order, under their
 // folders; that order is what lets children be appended as they are met. Each
 // folder keeps the paths beneath it so a collapsed row can still speak for them.
+// A path ending in "/" is an ignored folder not yet listed: the folder alone.
 export function buildTree(files) {
   const root = { children: [] };
   const dirs = new Map();
   for (const f of files) {
     const parts = f.path.split("/");
+    if (f.path.endsWith("/")) parts.pop();
     let parent = root;
     let path = "";
     for (let i = 0; i < parts.length - 1; i++) {
@@ -52,7 +54,18 @@ export function buildTree(files) {
       dir.paths.push(f.path);
       parent = dir;
     }
-    parent.children.push({ name: parts[parts.length - 1], path: f.path, file: f });
+    if (!f.path.endsWith("/")) {
+      parent.children.push({ name: parts[parts.length - 1], path: f.path, file: f });
+      continue;
+    }
+    const at = parts.join("/");
+    let dir = dirs.get(at);
+    if (!dir) {
+      dir = { dir: true, name: parts[parts.length - 1], path: at, children: [], paths: [] };
+      dirs.set(at, dir);
+      parent.children.push(dir);
+    }
+    dir.ignored = true;
   }
   compact(root);
   return root.children;
@@ -92,6 +105,15 @@ export function dirPaths(nodes, out = []) {
     if (!n.dir) continue;
     out.push(n.path);
     dirPaths(n.children, out);
+  }
+  return out;
+}
+
+export function ignoredDirs(nodes, out = new Set()) {
+  for (const n of nodes) {
+    if (!n.dir) continue;
+    if (n.ignored) out.add(n.path);
+    ignoredDirs(n.children, out);
   }
   return out;
 }

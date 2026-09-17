@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
+import { boot } from "./boot.js";
 import { cx, modKey } from "./util.js";
 import {
-  IconBell, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconMenu, IconPin, IconSearch, IconSettings, IconUndo,
+  IconBack, IconBell, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconMenu, IconPin, IconSearch, IconSettings, IconUndo,
 } from "./icons.jsx";
 
 // AUTO is the scope dv starts on: whichever comparison has something in it,
@@ -25,7 +26,14 @@ export default function Header({
         <button className={cx("icon", "menu-toggle", sideOn && "on")} aria-pressed={sideOn} onClick={onSide} title="Files and sessions">
           <IconMenu size={15} />
         </button>
-        <span className="logo">dv</span>
+        {boot.base ? (
+          <a className="logo to-hub" href="/" title="Back to the hub (h)">
+            <IconBack size={13} />
+            dv
+          </a>
+        ) : (
+          <span className="logo">dv</span>
+        )}
       </div>
 
       <div className="topbar-title">

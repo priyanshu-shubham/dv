@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"dv/internal/gitx"
+	"dv/internal/hub"
 	"dv/internal/permit"
 	"dv/internal/server"
 	"dv/internal/store"
-	"dv/internal/symindex"
 )
 
 func main() {
@@ -46,9 +46,10 @@ func run() error {
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n\n"+
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv hub [-port n] [-host addr] [-no-open]\n       dv reset [-y]\n\n"+
 			"Review the current repository's diff in a browser (outside git, read the\n"+
-			"folder's files). reset deletes the\n"+
+			"folder's files). hub serves many folders from one port, with a page to\n"+
+			"add, clone and open them. reset deletes the\n"+
 			"review's comments and viewed marks, to start it over.\n\nflags:\n")
 		flag.PrintDefaults()
 	}
@@ -60,6 +61,8 @@ func run() error {
 	}
 	switch cmd := flag.Arg(0); cmd {
 	case "":
+	case "hub":
+		return runHub(flag.Args()[1:])
 	case "reset":
 		return reset(*dir, flag.Args()[1:])
 	case "claude":
@@ -68,35 +71,32 @@ func run() error {
 		return fmt.Errorf("unknown command %q (dv -h lists them)", cmd)
 	}
 
+	if !server.AssetsBuilt() {
+		return errNoBundle
+	}
 	repo, err := gitx.Open(*dir)
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(repo.Root, repo.Name())
+	// Open in another dv, a hub's included, it is opened there rather than
+	// twice: each would take Claude Code's prompts to be its own.
+	if s, ok := store.Announced(repo.Root); ok && server.Answers(s.URL, repo.Root) {
+		fmt.Printf("\n  \033[1m%s\033[0m is already open in dv\n  \033[1;32m%s\033[0m\n\n", repo.Name(), s.URL)
+		if !*noOpen {
+			openBrowser(s.URL)
+		}
+		return nil
+	}
+	user, err := store.OpenUserPrefs()
 	if err != nil {
 		return err
-	}
-	vw, err := store.OpenViewed(repo.Root)
-	if err != nil {
-		return err
-	}
-	sessions, err := store.OpenSessions(repo.Root)
-	if err != nil {
-		return err
-	}
-	if repo.IsGit() {
-		excludeNotes(repo)
 	}
 	healHooks()
 
-	ix := symindex.New(repo.Root, repo)
-	ix.BuildAsync()
-
-	if !server.AssetsBuilt() {
-		return fmt.Errorf("this binary has no UI bundle in it - run `make build` (needs Node) and try again")
+	srv, err := server.Open(repo.Root, user)
+	if err != nil {
+		return err
 	}
-
-	srv := server.New(repo, st, vw, sessions, ix)
 	defer srv.Close()
 	ln, err := listen(*host, *port, repo.Root)
 	if err != nil {
@@ -110,7 +110,7 @@ func run() error {
 	}
 	fmt.Printf("\n  \033[1m%s\033[0m — %s %s\n", repo.Name(), doing, repo.Root)
 	fmt.Printf("  \033[1;32m%s\033[0m\n", url)
-	fmt.Printf("  comments → %s\n\n  ctrl-c to stop\n\n", st.Path())
+	fmt.Printf("  comments → %s\n\n  ctrl-c to stop\n\n", srv.CommentsPath())
 
 	if !*noOpen {
 		openBrowser(url)
@@ -121,17 +121,79 @@ func run() error {
 	} else {
 		defer unannounce()
 	}
+	return serve(ln, srv.Handler(""))
+}
 
+// hubPort is the hub's address, just under the ports lone dvs take.
+const hubPort = 41000
+
+// runHub serves the folders on the user's hub list from one port.
+func runHub(args []string) error {
+	fl := flag.NewFlagSet("dv hub", flag.ExitOnError)
+	port := fl.Int("port", hubPort, "port to listen on")
+	host := fl.String("host", "127.0.0.1", "address to bind (0.0.0.0 to reach it from other devices)")
+	noOpen := fl.Bool("no-open", false, "do not open a browser")
+	fl.Parse(args)
+
+	if !server.AssetsBuilt() {
+		return errNoBundle
+	}
+	user, err := store.OpenUserPrefs()
+	if err != nil {
+		return err
+	}
+	folders, err := store.OpenFolders()
+	if err != nil {
+		return err
+	}
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if url := "http://" + addr; hubAnswers(url) {
+			fmt.Printf("\n  dv hub is already running\n  \033[1;32m%s\033[0m\n\n", url)
+			if !*noOpen {
+				openBrowser(url)
+			}
+			return nil
+		}
+		return fmt.Errorf("%w (-port picks another)", err)
+	}
+	url := "http://" + ln.Addr().String()
+	healHooks()
+
+	h := hub.New(url, user, folders)
+	defer h.Close()
+	fmt.Printf("\n  \033[1mdv hub\033[0m — %s\n", count(len(folders.List()), "folder"))
+	fmt.Printf("  \033[1;32m%s\033[0m\n\n  ctrl-c to stop\n\n", url)
+	if !*noOpen {
+		openBrowser(url)
+	}
+	return serve(ln, h.Handler())
+}
+
+func hubAnswers(url string) bool {
+	c := http.Client{Timeout: time.Second}
+	resp, err := c.Get(url + "/api/hub/folders")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+var errNoBundle = errors.New("this binary has no UI bundle in it - run `make build` (needs Node) and try again")
+
+// serve runs until interrupted. Stopping has to return through the caller's
+// deferred unannounce, or the next hook goes looking for a dv that is not there.
+func serve(ln net.Listener, handler http.Handler) error {
 	httpSrv := &http.Server{
-		Handler: srv.Handler(),
+		Handler: handler,
 		// No write timeout: a session's events stream for as long as the page is
 		// open, and a permission prompt waits on the reader. Read timeouts still
 		// bound a stuck client.
 		ReadHeaderTimeout: 15 * time.Second,
 		ReadTimeout:       60 * time.Second,
 	}
-	// Stopping has to return through the deferred unannounce, or the next hook
-	// goes looking for a dv that is not there.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -146,14 +208,6 @@ func run() error {
 
 // version is stamped in by release builds (see .goreleaser.yaml).
 var version = "dev"
-
-func excludeNotes(repo *gitx.Repo) {
-	if added, err := store.EnsureExcluded(repo.GitDir); err != nil {
-		fmt.Fprintln(os.Stderr, "dv: warning: could not update .git/info/exclude:", err)
-	} else if added {
-		fmt.Println("dv: added /.dv/ to .git/info/exclude so review notes stay out of git")
-	}
-}
 
 // reset deletes the review's comments and viewed marks. A dv already running
 // on the repository picks it up without a restart, and so do its open pages.

@@ -109,9 +109,11 @@ func (s *Store) sync() error {
 func (s *Store) Path() string { return s.file.path }
 
 // EnsureExcluded adds the store directory to .git/info/exclude when it is not
-// already ignored. Returns whether the line was added.
-func EnsureExcluded(gitDir string) (bool, error) {
-	excl := filepath.Join(gitDir, "info", "exclude")
+// already ignored. Returns whether the line was added. commonDir is the one a
+// linked worktree shares with its main checkout: git reads info/exclude only
+// from there, not from the worktree's own git dir.
+func EnsureExcluded(commonDir string) (bool, error) {
+	excl := filepath.Join(commonDir, "info", "exclude")
 	if err := os.MkdirAll(filepath.Dir(excl), 0o755); err != nil {
 		return false, err
 	}

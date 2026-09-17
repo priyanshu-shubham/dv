@@ -1,14 +1,21 @@
 // Package server exposes the review UI and its JSON API. Everything is local:
 // the listener binds to loopback, there is no auth layer, and all state lives in
-// the repository being reviewed.
+// the repository being reviewed, but for the settings that follow the user
+// from one repository to the next.
 package server
 
 import (
+	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
+	"time"
 
 	"dv/internal/agent"
 	"dv/internal/gitx"
@@ -44,23 +51,95 @@ type Server struct {
 	repo   *gitx.Repo
 	store  *store.Store
 	viewed *store.Viewed
+	prefs  *store.Prefs // the repository's
+	user   *store.Prefs // shared by every Server in the process
 	index  *symindex.Index
 	permit *permit.Broker
 	agent  *agent.Manager
 }
 
-func New(repo *gitx.Repo, st *store.Store, vw *store.Viewed, sessions *store.Sessions, ix *symindex.Index) *Server {
+// Open readies a review of the repository or folder holding dir, and starts
+// indexing its symbols.
+func Open(dir string, user *store.Prefs) (*Server, error) {
+	repo, err := gitx.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	st, err := store.Open(repo.Root, repo.Name())
+	if err != nil {
+		return nil, err
+	}
+	vw, err := store.OpenViewed(repo.Root)
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := store.OpenSessions(repo.Root)
+	if err != nil {
+		return nil, err
+	}
+	prefs, err := store.OpenRepoPrefs(repo.Root)
+	if err != nil {
+		return nil, err
+	}
+	if repo.IsGit() {
+		excludeNotes(repo)
+	}
+	ix := symindex.New(repo.Root, repo)
+	ix.BuildAsync()
 	broker := permit.New(repo.Root)
-	return &Server{repo: repo, store: st, viewed: vw, index: ix, permit: broker, agent: agent.New(repo.Root, broker, sessions)}
+	return &Server{
+		repo: repo, store: st, viewed: vw, prefs: prefs, user: user, index: ix,
+		permit: broker, agent: agent.New(repo.Root, broker, sessions),
+	}, nil
 }
+
+func excludeNotes(repo *gitx.Repo) {
+	if added, err := store.EnsureExcluded(repo.CommonDir); err != nil {
+		fmt.Fprintln(os.Stderr, "dv: warning: could not update .git/info/exclude:", err)
+	} else if added {
+		fmt.Println("dv: added /.dv/ to .git/info/exclude so review notes stay out of git")
+	}
+}
+
+func (s *Server) Repo() *gitx.Repo { return s.repo }
+
+// CommentsPath is the file the review's comments are written to.
+func (s *Server) CommentsPath() string { return s.store.Path() }
 
 // Close stops the Claude Code sessions dv is running.
 func (s *Server) Close() { s.agent.Close() }
 
-// Handler builds the route table.
-func (s *Server) Handler() http.Handler {
+// Status is what a hub shows of a review it serves.
+type Status struct {
+	Sessions int `json:"sessions"` // run by dv
+	Working  int `json:"working"`
+	Waiting  int `json:"waiting"` // prompts on the reader
+}
+
+func (s *Server) Status() Status {
+	var st Status
+	for _, a := range s.agent.Activity() {
+		if a.Running == "dv" {
+			st.Sessions++
+		}
+		if a.Busy {
+			st.Working++
+		}
+	}
+	for _, r := range s.permit.Waiting() {
+		if s.agent.Visible(r.Session) {
+			st.Waiting++
+		}
+	}
+	return st
+}
+
+// Handler builds the route table. base is where the page is served: "" on its
+// own, /<slug> in a hub, which takes it off the path before this sees it.
+func (s *Server) Handler(base string) http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/ping", s.handlePing)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/diff", s.handleDiffList)
 	mux.HandleFunc("GET /api/diff/file", s.handleDiffFile)
@@ -83,39 +162,41 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/viewed", s.handleMarkViewed)
 	mux.HandleFunc("POST /api/reset", s.handleReset)
 
+	mux.HandleFunc("GET /api/prefs", Guarded(s.handlePrefs))
+	mux.HandleFunc("PATCH /api/prefs", Guarded(s.handleSetPref))
+
 	mux.HandleFunc("GET /api/symbols", s.handleSymbols)
 	mux.HandleFunc("GET /api/symbols/status", s.handleSymbolStatus)
 	mux.HandleFunc("POST /api/symbols/refresh", s.handleSymbolRefresh)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 
-	mux.HandleFunc("POST /api/claude/hook", guarded(s.handleClaudeHook))
-	mux.HandleFunc("GET /api/claude/requests", guarded(s.handleClaudeRequests))
-	mux.HandleFunc("POST /api/claude/requests/{id}", guarded(s.handleClaudeAnswer))
-	mux.HandleFunc("GET /api/claude/hooks", guarded(s.handleClaudeHooks))
-	mux.HandleFunc("POST /api/claude/hooks", guarded(s.handleClaudeSetHooks))
+	mux.HandleFunc("POST /api/claude/hook", Guarded(s.handleClaudeHook))
+	mux.HandleFunc("GET /api/claude/requests", Guarded(s.handleClaudeRequests))
+	mux.HandleFunc("POST /api/claude/requests/{id}", Guarded(s.handleClaudeAnswer))
+	mux.HandleFunc("GET /api/claude/hooks", Guarded(s.handleClaudeHooks))
+	mux.HandleFunc("POST /api/claude/hooks", Guarded(s.handleClaudeSetHooks))
 
-	mux.HandleFunc("GET /api/agent/sessions", guarded(s.handleAgentSessions))
-	mux.HandleFunc("POST /api/agent/sessions", guarded(s.handleAgentCreate))
-	mux.HandleFunc("GET /api/agent/commands", guarded(s.handleAgentCommands))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/open", guarded(s.handleAgentOpen))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/temporary", guarded(s.handleAgentTemporary))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/events", guarded(s.handleAgentEvents))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/messages", guarded(s.handleAgentSend))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/messages/{message}/unqueue", guarded(s.handleAgentUnqueue))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/messages/{message}/images/{n}", guarded(s.handleAgentImage))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/interrupt", guarded(s.handleAgentInterrupt))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/settings", guarded(s.handleAgentSettings))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/rewind", guarded(s.handleAgentRewind))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/prompts", guarded(s.handleAgentPrompts))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/edits/{tool}", guarded(s.handleAgentEdit))
-	mux.HandleFunc("POST /api/agent/sessions/{id}/title", guarded(s.handleAgentRename))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}", guarded(s.handleAgentOutput))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/image", guarded(s.handleAgentImage))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/live", guarded(s.handleAgentTaskOutput))
-	mux.HandleFunc("GET /api/agent/sessions/{id}/agents/{tool}/events", guarded(s.handleAgentSubagentEvents))
+	mux.HandleFunc("GET /api/agent/sessions", Guarded(s.handleAgentSessions))
+	mux.HandleFunc("POST /api/agent/sessions", Guarded(s.handleAgentCreate))
+	mux.HandleFunc("GET /api/agent/commands", Guarded(s.handleAgentCommands))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/open", Guarded(s.handleAgentOpen))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/temporary", Guarded(s.handleAgentTemporary))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/events", Guarded(s.handleAgentEvents))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/messages", Guarded(s.handleAgentSend))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/messages/{message}/unqueue", Guarded(s.handleAgentUnqueue))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/messages/{message}/images/{n}", Guarded(s.handleAgentImage))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/interrupt", Guarded(s.handleAgentInterrupt))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/settings", Guarded(s.handleAgentSettings))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/rewind", Guarded(s.handleAgentRewind))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/prompts", Guarded(s.handleAgentPrompts))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/edits/{tool}", Guarded(s.handleAgentEdit))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/title", Guarded(s.handleAgentRename))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}", Guarded(s.handleAgentOutput))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/image", Guarded(s.handleAgentImage))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/live", Guarded(s.handleAgentTaskOutput))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/agents/{tool}/events", Guarded(s.handleAgentSubagentEvents))
 
-	sub, _ := fs.Sub(staticFS, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheHeaders(http.FileServer(http.FS(sub)))))
+	mux.Handle("GET /static/", Static())
 
 	// Every other path renders the SPA shell; the client owns routing.
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -123,11 +204,77 @@ func (s *Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Write(indexHTML)
+		WritePage(w, Boot{Base: base, Prefs: s.allPrefs(), PrefsVersion: s.prefsVersion()})
 	})
 	return mux
+}
+
+// Static serves the UI bundle.
+func Static() http.Handler {
+	sub, _ := fs.Sub(staticFS, "static")
+	return http.StripPrefix("/static/", cacheHeaders(http.FileServer(http.FS(sub))))
+}
+
+// Boot is what the page needs before its first request: where its API is, and
+// the settings to draw with, so it does not flash the defaults first.
+type Boot struct {
+	Page         string                                `json:"page,omitempty"` // "hub" for the hub's own
+	Base         string                                `json:"base"`
+	Prefs        map[string]map[string]json.RawMessage `json:"prefs"`
+	PrefsVersion string                                `json:"prefsVersion,omitempty"`
+}
+
+// WritePage sends the SPA shell with boot in it.
+func WritePage(w http.ResponseWriter, boot Boot) {
+	// Marshal escapes <, > and &, so nothing in a value can close the script.
+	b, err := json.Marshal(boot)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	const root = `<div id="root"></div>`
+	script := `<script id="dv-boot" type="application/json">` + string(b) + "</script>\n"
+	page := bytes.Replace(indexHTML, []byte(root), []byte(script+root), 1)
+	// The theme is on <html> from the first frame, before any script has run.
+	var theme string
+	var settings struct {
+		CodeColors string `json:"codeColors"`
+	}
+	json.Unmarshal(boot.Prefs["user"]["theme"], &theme)
+	json.Unmarshal(boot.Prefs["user"]["settings"], &settings)
+	attrs := ""
+	if word.MatchString(theme) {
+		attrs += ` data-theme="` + theme + `"`
+	}
+	if word.MatchString(settings.CodeColors) {
+		attrs += ` data-code="` + settings.CodeColors + `"`
+	}
+	page = bytes.Replace(page, []byte(`<html lang="en">`), []byte(`<html lang="en"`+attrs+`>`), 1)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(page)
+}
+
+var word = regexp.MustCompile(`^[a-z]+$`)
+
+// Answers reports whether a dv reviewing root answers at url, as one
+// announced there may have stopped without taking its record down.
+func Answers(url, root string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+"/api/ping", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Root string `json:"root"`
+	}
+	return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&got) == nil && got.Root == root
 }
 
 // cacheHeaders lets the browser keep chunk-*.js forever (esbuild content-hashes

@@ -30,6 +30,12 @@ func Announce(root, url string) (func(), error) {
 	}, nil
 }
 
+// Announced is the dv last announced for root itself, which may since have
+// stopped without taking the record down.
+func Announced(root string) (Server, bool) {
+	return readServer(filepath.Join(root, dirName, serverName))
+}
+
 // FindServer returns the dv announced for the repository or folder holding
 // dir. The walk stops at the first directory with a .git in it, so a nested
 // repository never reaches its parent's dv.

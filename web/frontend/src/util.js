@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { slug } from "./boot.js";
 
 export const cx = (...parts) => parts.filter(Boolean).join(" ");
 
 // usePersisted keeps a small preference in localStorage so the viewer opens the
-// way you left it; `session` keeps it for the tab only. Storage failures
-// (private windows) degrade to in-memory.
-export function usePersisted(key, initial, { session = false } = {}) {
+// way you left it; `session` keeps it for the tab only. It is for what suits
+// one screen: what should follow the reader to another device is in prefs.js.
+// `folder` keeps it apart from the other folders a hub serves on the same
+// origin. Storage failures (private windows) degrade to in-memory.
+export function usePersisted(key, initial, { session = false, folder = false } = {}) {
   const store = () => (session ? sessionStorage : localStorage);
+  const prefix = folder && slug ? `dv:${slug}:` : "dv:";
   const read = () => {
     try {
-      const raw = store().getItem("dv:" + key);
+      const raw = store().getItem(prefix + key);
       return raw === null ? initial : JSON.parse(raw);
     } catch {
       return initial;
@@ -30,7 +34,7 @@ export function usePersisted(key, initial, { session = false } = {}) {
     setValue((prev) => {
       const next = typeof v === "function" ? v(prev) : v;
       try {
-        store().setItem("dv:" + keyRef.current, JSON.stringify(next));
+        store().setItem(prefix + keyRef.current, JSON.stringify(next));
       } catch {}
       return next;
     });
@@ -130,6 +134,22 @@ export function visualLength(line) {
     else n++;
   }
   return n;
+}
+
+// copyText puts text on the clipboard. The Clipboard API is only offered over
+// https or on localhost, and a phone reaches dv over plain http, so without it
+// the text is selected and copied the old way.
+export async function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "");
+  el.style.cssText = "position: fixed; opacity: 0";
+  document.body.appendChild(el);
+  el.select();
+  const ok = document.execCommand("copy");
+  el.remove();
+  if (!ok) throw new Error("The browser would not copy it.");
 }
 
 export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);

@@ -6,6 +6,7 @@ import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay } from "./Overlays.jsx";
+import FolderSwitcher from "./FolderSwitcher.jsx";
 import AgentView from "./Agent.jsx";
 import ClaudePrompt, { useClaudeEvents } from "./ClaudePrompt.jsx";
 import { Notices, say, useNotices } from "./Notices.jsx";
@@ -18,10 +19,14 @@ import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
 import { cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
+import { followPrefs, usePref } from "./prefs.js";
+import { boot } from "./boot.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
 const NO_ATTACHED = [];
+const NO_ATTACHED_BY = {};
+const NO_SETTINGS = {};
 const MODES = ["diff", "code", "agent"];
 const FOLDER_MODES = ["code", "agent"];
 const NO_FILTER = { include: "", exclude: "" };
@@ -29,7 +34,7 @@ const NO_FILTER = { include: "", exclude: "" };
 export default function App() {
   const [meta, setMeta] = useState(null);
   // A picked scope is a pin for this tab; a new session follows the work again.
-  const [scope, setScope] = usePersisted("scope", AUTO, { session: true });
+  const [scope, setScope] = usePersisted("scope", AUTO, { session: true, folder: true });
   const [diff, setDiff] = useState(null);
   const [threads, setThreads] = useState([]);
   const [error, setError] = useState("");
@@ -40,13 +45,13 @@ export default function App() {
   const [panel, setPanel] = useState(null);
   const [viewPicked, setView] = usePersisted("view", "split");
   const view = phone ? "unified" : viewPicked;
-  const [contextLines, setContextLines] = usePersisted("context", 3);
+  const [contextLines, setContextLines] = usePref("user", "context", 3);
   const [wrapWide, setWrapWide] = usePersisted("wrap", false);
   const [wrapPhone, setWrapPhone] = usePersisted("wrapPhone", true);
   const [wrap, setWrap] = phone ? [wrapPhone, setWrapPhone] : [wrapWide, setWrapWide];
-  const [theme, setTheme] = usePersisted("theme", "dark");
-  const [hideGenerated, setHideGenerated] = usePersisted("hideGenerated", false);
-  const [pathFilter, setPathFilter] = usePersisted("pathFilter", NO_FILTER);
+  const [theme, setTheme] = usePref("user", "theme", "dark");
+  const [hideGenerated, setHideGenerated] = usePref("repo", "hideGenerated", false);
+  const [pathFilter, setPathFilter] = usePref("repo", "pathFilter", NO_FILTER);
   // Show all pauses the filters rather than clearing them, so they come back
   // as they were. Editing one, or a new page, turns them back on.
   const [filtersPaused, setFiltersPaused] = useState(false);
@@ -74,15 +79,16 @@ export default function App() {
   const behind = stack[stack.length - 2] || null;
   // Agent mode: the session on screen, the sessions to list, and what goes
   // with the next message - code, files and comments added from anywhere.
-  const [agentId, setAgentId] = usePersisted("agentSession", "");
+  const [agentId, setAgentId] = usePersisted("agentSession", "", { folder: true });
   const [agent, setAgent] = useState({ available: true, sessions: [], models: [], modes: [] });
   // By session, "" being the one the next new session starts as.
-  const [attachedBy, setAttachedBy] = usePersisted("agentAttachedBy", {});
-  const [attachPick, setAttachPick] = usePersisted("agentAttachTo", null);
+  const [attachedBy, setAttachedBy] = usePref("repo", "agentAttachedBy", NO_ATTACHED_BY);
+  const [attachPick, setAttachPick] = usePref("repo", "agentAttachTo", null);
   const [temporaryNew, setTemporaryNew] = useState(false); // the blank session's Temporary toggle
-  const [settings, setSettings] = usePersisted("settings", {});
+  const [settings, setSettings] = usePref("user", "settings", NO_SETTINGS);
+  const sideRight = settings.sidebar === "right";
   const [agentReveal, setAgentReveal] = useState(null);
-  const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false);
+  const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false, { folder: true });
   const showComments = phone ? panel === "comments" : commentsOpen;
   const [commentsWidth, setCommentsWidth] = usePersisted("commentsWidth", 0); // 0: the stylesheet's default
 
@@ -96,7 +102,7 @@ export default function App() {
   // A folder outside git has nothing to diff, so it opens on its files.
   const folder = meta?.git === false;
   const modes = folder ? FOLDER_MODES : MODES;
-  const [modePicked, setMode] = usePersisted("mode", "diff");
+  const [modePicked, setMode] = usePersisted("mode", "diff", { folder: true });
   const mode = folder && modePicked === "diff" ? "code" : modePicked;
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -105,12 +111,18 @@ export default function App() {
   const [agentVisited, setAgentVisited] = useState(mode === "agent");
   if (mode === "agent" && !agentVisited) setAgentVisited(true);
   const codeRef = useRef(null);
-  const [lastCode, setLastCode] = usePersisted("codePath", "");
+  const [lastCode, setLastCode] = usePersisted("codePath", "", { folder: true });
   const [codeNav, setCodeNav] = useState(() => ({ stack: lastCode ? [{ path: lastCode }] : [], at: lastCode ? 0 : -1 }));
   const codeAt = codeNav.stack[codeNav.at] || null;
   const codePath = codeAt?.path || "";
   const [plain, setPlain] = useState(null); // { path, fd } or { path, error }: a file outside the diff
-  const [repoFiles, setRepoFiles] = useState(null);
+  const [repoFiles, setRepoFiles] = useState(null); // { files, ignored }
+  // The ignored folders opened in the explorer, which lists them a level at a time.
+  const [openIgnored, setOpenIgnored] = useState(() => new Set());
+  const listIgnored = useCallback(
+    (dirs) => setOpenIgnored((s) => (dirs.every((d) => s.has(d)) ? s : new Set([...s, ...dirs]))),
+    [],
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -208,6 +220,7 @@ export default function App() {
         viewedAt.current = v.viewed;
         loadViewed();
       }
+      followPrefs(v.prefs);
     },
     [loadThreads, loadViewed],
   );
@@ -518,7 +531,7 @@ export default function App() {
   useEffect(() => setLastCode(codePath), [codePath, setLastCode]);
 
   // Rendered or as source, the line at the top stays where it was.
-  const [preview, setPreview] = usePersisted("preview", false);
+  const [preview, setPreview] = usePref("user", "preview", false);
   const togglePreview = useCallback(
     (on) => {
       const a = captureAnchor(codeRef.current);
@@ -550,17 +563,30 @@ export default function App() {
   useEffect(() => {
     if (mode !== "code") return;
     let live = true;
-    api.tree(scope).then((r) => live && setRepoFiles(r.files)).catch(() => {});
+    api.tree(scope, [...openIgnored]).then((r) => live && setRepoFiles(r)).catch(() => {});
     return () => {
       live = false;
     };
-  }, [mode, scope, diff, repoAt]);
+  }, [mode, scope, diff, repoAt, openIgnored]);
+  // A file read inside an ignored folder, as when the page is opened again,
+  // needs the folders down to it listed before the tree can show it.
+  useEffect(() => {
+    const top = codePath && repoFiles?.ignored.find((p) => p.endsWith("/") && codePath.startsWith(p));
+    if (!top) return;
+    const parts = codePath.split("/");
+    const dirs = [];
+    for (let i = top.split("/").length - 1; i < parts.length; i++) dirs.push(parts.slice(0, i).join("/"));
+    listIgnored(dirs);
+  }, [repoFiles, codePath, listIgnored]);
+  // Ignored entries go under the rest, so a file force-added in an ignored
+  // folder is not dimmed. A folder not yet listed ends in "/".
   const explorer = useMemo(() => {
     if (!repoFiles) return [];
-    const changed = new Map((diff?.files || []).map((f) => [f.path, f]));
-    const paths = new Set(repoFiles);
-    for (const p of changed.keys()) paths.add(p);
-    return sortTreePaths([...paths]).map((p) => changed.get(p) || { path: p });
+    const entries = new Map();
+    for (const p of repoFiles.ignored) entries.set(p, { path: p, ignored: true });
+    for (const p of repoFiles.files) entries.set(p, { path: p });
+    for (const f of diff?.files || []) entries.set(f.path, f);
+    return sortTreePaths([...entries.keys()]).map((p) => entries.get(p));
   }, [repoFiles, diff]);
 
   // A changed file comes from the diff, which knows what changed in it; any
@@ -1263,7 +1289,7 @@ export default function App() {
       }
       if (mod || e.altKey) return;
       // The Agent view has keys of its own; these few mean the same there.
-      if (mode === "agent" && !["?", "u", "w"].includes(e.key)) return;
+      if (mode === "agent" && !["?", "u", "w", "h"].includes(e.key)) return;
 
       // A step between files goes through the changed ones. In Code mode it
       // starts from the open file, which need not be one of them.
@@ -1294,6 +1320,10 @@ export default function App() {
           break;
         case ",":
           openOverlay({ type: "settings" });
+          break;
+        case "h":
+          // Where ← dv at the top left goes, when a hub serves this folder.
+          if (boot.base) location.href = "/";
           break;
         case "[":
         case "]":
@@ -1394,16 +1424,18 @@ export default function App() {
       />
 
       <div
-        className={cx("main", showComments && "with-comments", phone && panel === "side" && "side-open")}
+        className={cx("main", sideRight && "side-right", showComments && "with-comments", phone && panel === "side" && "side-open")}
         style={{ ...(sideWidth && { "--side-w": sideWidth + "px" }), ...(commentsWidth && { "--comments-w": commentsWidth + "px" }) }}
       >
         {phone && <div className={cx("panel-backdrop", panel && "on")} onClick={() => setPanel(null)} />}
         <Sidebar
+          right={sideRight}
           mode={mode}
           modes={modes}
           onMode={switchMode}
           attached={attachedCount}
           files={mode === "code" ? explorer : files}
+          onOpenIgnored={listIgnored}
           threads={threads}
           activePath={mode === "code" ? codePath : activePath}
           viewed={viewed}
@@ -1593,7 +1625,9 @@ export default function App() {
               onThreadAction({ type: "jump", thread });
             }}
             onThreadAction={onThreadAction}
-            onWidth={setCommentsWidth}
+            // Over the sidebar on the right, the two are one column, one width.
+            widthVar={sideRight ? "--side-w" : "--comments-w"}
+            onWidth={sideRight ? setSideWidth : setCommentsWidth}
           />
         )}
       </div>
@@ -1617,6 +1651,7 @@ export default function App() {
         />
       )}
 
+      {boot.base && <FolderSwitcher mode={mode} />}
       {overlay?.type === "files" && (
         <FilePalette
           initialQuery={overlay.query || ""}
@@ -1658,6 +1693,9 @@ export default function App() {
           threads={threadsByFile.get(overlay.file) || NO_THREADS}
           changes={fileData[overlay.file]?.fd}
           wrap={wrap}
+          preview={preview}
+          onPreview={setPreview}
+          onOpenFile={goTo}
           onComment={createComment}
           onThreadAction={onThreadAction}
           onAttach={attach}

@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cx, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
-import { ancestorsOf, buildTree, dirPaths, visibleRows } from "./tree.js";
+import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tree.js";
 import { ThreadList } from "./Threads.jsx";
 import { SessionList } from "./Agent.jsx";
 import { ModeSwitch } from "./Header.jsx";
@@ -18,7 +18,7 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 // as they are in the diff. In Agent mode the tree's place is taken by the
 // sessions.
 export default function Sidebar({
-  mode, files, threads, activePath, viewed, onSelect,
+  right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
   filtersPaused, onPauseFilters, onReset, agent, onWidth, modes, onMode, attached,
 }) {
@@ -30,7 +30,8 @@ export default function Sidebar({
   // Each tree keeps the folders flipped from where it starts. The diff's starts
   // open, since it holds only what changed; Code mode's is the whole
   // repository, so it starts folded. A filter starts with every match showing
-  // and keeps its own throwaway folds, so clearing it brings the tree back.
+  // and keeps its own throwaway folds, so clearing it brings the tree back. An
+  // ignored folder starts folded in any of them: it is listed once opened.
   const [flips, setFlips] = useState(() => ({ diff: new Set(), code: new Set(), filter: new Set() }));
 
   const openByFile = useMemo(() => {
@@ -48,33 +49,39 @@ export default function Sidebar({
   }, [files, q]);
   const tree = useMemo(() => buildTree(shown), [shown]);
   const treeKind = q ? "filter" : code ? "code" : "diff";
-  const startsOpen = treeKind !== "code";
+  const ignored = useMemo(() => ignoredDirs(tree), [tree]);
+  const startsOpen = useCallback((path) => treeKind !== "code" && !ignored.has(path), [treeKind, ignored]);
   const flipped = flips[treeKind];
-  const isOpen = useCallback((path) => startsOpen !== flipped.has(path), [startsOpen, flipped]);
+  const isOpen = useCallback((path) => startsOpen(path) !== flipped.has(path), [startsOpen, flipped]);
   const setOpen = (paths, open) =>
     setFlips((f) => {
       const next = new Set(f[treeKind]);
-      for (const p of paths) open === startsOpen ? next.delete(p) : next.add(p);
+      for (const p of paths) open === startsOpen(p) ? next.delete(p) : next.add(p);
       return { ...f, [treeKind]: next };
     });
   const rows = useMemo(() => visibleRows(tree, isOpen), [tree, isOpen]);
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
   const allFolded = allDirs.length > 0 && !allDirs.some(isOpen);
 
+  useEffect(() => {
+    for (const { node } of rows) if (node.ignored && isOpen(node.path)) onOpenIgnored?.([node.path]);
+  }, [rows]);
+
   // Keep the file being read in sight, as VS Code's explorer does: open the
   // folders it sits in, then scroll the tree to it. Only a change of file (or
   // of mode) does this, so folding or browsing the tree by hand is never undone
-  // from under you. Code mode's tree arrives after its file does, so the tree
-  // turning up counts as a change too.
+  // from under you. Code mode's tree arrives after its file does, and a file in
+  // an ignored folder after that folder is listed, so the file turning up
+  // counts as a change too.
   const listRef = useRef(null);
   const revealing = useRef(null);
-  const treeReady = tree.length > 0;
+  const activeIn = useMemo(() => !!activePath && files.some((f) => f.path === activePath), [files, activePath]);
   useEffect(() => {
     if (!activePath) return;
     const shut = ancestorsOf(tree, activePath).filter((p) => !isOpen(p));
     if (shut.length) setOpen(shut, true);
     revealing.current = activePath;
-  }, [activePath, mode, treeReady]);
+  }, [activePath, mode, activeIn]);
 
   // The list draws only the rows in view, plus a margin: a filter opens every
   // folder, and a button apiece for a folder of 40,000 files took seconds to
@@ -120,7 +127,9 @@ export default function Sidebar({
   });
 
   const toggleDir = (path) => setOpen([path], !isOpen(path));
-  const setAllOpen = (open) => setFlips((f) => ({ ...f, [treeKind]: new Set(open === startsOpen ? [] : allDirs) }));
+  // Expanding all leaves ignored folders folded, or node_modules would be listed.
+  const setAllOpen = (open) =>
+    setFlips((f) => ({ ...f, [treeKind]: new Set(allDirs.filter((p) => (open && !ignored.has(p)) !== startsOpen(p))) }));
 
   const totals = useMemo(
     () =>
@@ -143,7 +152,7 @@ export default function Sidebar({
   const onResizeMove = (e) => {
     const d = drag.current;
     if (!d) return;
-    d.to = clampWidth(d.w + (e.clientX - d.x));
+    d.to = clampWidth(d.w + (right ? d.x - e.clientX : e.clientX - d.x));
     rootRef.current.parentElement.style.setProperty("--side-w", d.to + "px");
   };
   const onResizeUp = () => {
@@ -155,6 +164,7 @@ export default function Sidebar({
   };
   // Code mode's decorations: what changed, by path.
   const statusOf = useMemo(() => new Map(files.filter((f) => f.status).map((f) => [f.path, f])), [files]);
+  const ignoredCount = useMemo(() => files.reduce((n, f) => n + (f.ignored ? 1 : 0), 0), [files]);
 
   return (
     // Slid off a phone's screen it is out of reach already. It is not made inert:
@@ -270,6 +280,7 @@ export default function Sidebar({
                     key={"d:" + node.path}
                     className={cx(
                       "file-row", "dir-row",
+                      node.ignored && "ignored",
                       holdsActive && "holds-active",
                       changed && "st-" + changed,
                       !code && node.paths.every((p) => viewed.has(p)) && "seen",
@@ -277,7 +288,7 @@ export default function Sidebar({
                     style={{ "--depth": depth }}
                     onClick={() => toggleDir(node.path)}
                     aria-expanded={expanded}
-                    title={node.path + "/"}
+                    title={node.path + "/" + (node.ignored ? " - ignored" : "")}
                   >
                     <IconChevron size={12} className={cx("twisty", expanded && "open")} />
                     <span className="name">
@@ -297,10 +308,13 @@ export default function Sidebar({
               return (
                 <button
                   key={f.path}
-                  className={cx("file-row", activePath === f.path && "on", letter && "st-" + letter, seen && "seen")}
+                  className={cx("file-row", activePath === f.path && "on", letter && "st-" + letter, seen && "seen", f.ignored && "ignored")}
                   style={{ "--depth": depth }}
                   onClick={() => onSelect(f.path)}
-                  title={f.path + (!letter ? "" : code ? ` - ${what} in this diff` : ` - ${what}${f.generated ? " (generated)" : ""}`)}
+                  title={
+                    f.path +
+                    (f.ignored ? " - ignored" : !letter ? "" : code ? ` - ${what} in this diff` : ` - ${what}${f.generated ? " (generated)" : ""}`)
+                  }
                 >
                   <span className="slot" />
                   <span className="name">
@@ -327,7 +341,7 @@ export default function Sidebar({
             {code ? (
               <span className="dim">
                 {modes.includes("diff") && `${statusOf.size} changed of `}
-                {files.length.toLocaleString()} files
+                {(files.length - ignoredCount).toLocaleString()} files
               </span>
             ) : (
               <>
@@ -350,7 +364,7 @@ export default function Sidebar({
 // CommentsPanel is every comment in the review, at the page's right in any
 // mode, opened and closed from the header, which counts them. Its width is
 // dragged from its left edge.
-export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, onWidth }) {
+export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, widthVar, onWidth }) {
   const rootRef = useRef(null);
   const drag = useRef(null);
   const onResizeDown = (e) => {
@@ -363,7 +377,7 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
     const d = drag.current;
     if (!d) return;
     d.to = Math.round(Math.max(MIN_WIDTH + 60, Math.min(d.w - (e.clientX - d.x), window.innerWidth / 2)));
-    rootRef.current.parentElement.style.setProperty("--comments-w", d.to + "px");
+    rootRef.current.parentElement.style.setProperty(widthVar, d.to + "px");
   };
   const onResizeUp = () => {
     const d = drag.current;
@@ -382,7 +396,7 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
         onPointerUp={onResizeUp}
         onPointerCancel={onResizeUp}
         onDoubleClick={() => {
-          rootRef.current.parentElement.style.removeProperty("--comments-w");
+          rootRef.current.parentElement.style.removeProperty(widthVar);
           onWidth(0);
         }}
       />

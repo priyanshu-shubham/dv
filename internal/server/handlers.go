@@ -29,12 +29,18 @@ func (s *Server) scopeFromRequest(w http.ResponseWriter, r *http.Request) (*gitx
 	return sc, true
 }
 
+// handlePing is how another dv, or a hub, tells a live one from a record left
+// by one that stopped.
+func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"root": s.repo.Root})
+}
+
 func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repo":          s.repo.Name(),
 		"git":           s.repo.IsGit(),
 		"root":          s.repo.Root,
-		"place":         homeRelative(s.repo.Root),
+		"place":         HomeRelative(s.repo.Root),
 		"head":          s.repo.Head(),
 		"defaultBranch": s.repo.DefaultBranch(),
 		"branches":      s.repo.Branches(),
@@ -44,9 +50,9 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// homeRelative writes a path under the home directory as ~/..., as a shell
+// HomeRelative writes a path under the home directory as ~/..., as a shell
 // prompt would.
-func homeRelative(path string) string {
+func HomeRelative(path string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return path
@@ -97,6 +103,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"version":  v,
 		"comments": s.store.Version(),
 		"viewed":   s.viewed.Version(),
+		"prefs":    s.prefsVersion(),
 	})
 }
 
@@ -269,7 +276,9 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", modified, f)
 }
 
-// handleTree lists the whole repository as the scope's new side has it.
+// handleTree lists the whole repository as the scope's new side has it, and
+// apart from that what git ignores, with the contents of each ignored folder
+// named in open.
 func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	sc, ok := s.scopeFromRequest(w, r)
 	if !ok {
@@ -280,10 +289,18 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	ignored, err := s.repo.Ignored(sc, r.URL.Query()["open"])
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 	if files == nil {
 		files = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+	if ignored == nil {
+		ignored = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "ignored": ignored})
 }
 
 // handleFiles is quick open: every file in the repository, ranked against q.

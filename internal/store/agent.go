@@ -20,11 +20,22 @@ type Sessions struct {
 }
 
 type sessionsDoc struct {
-	Format    int               `json:"format"`
-	Open      []string          `json:"open"`                // most recently opened first
-	Temporary []string          `json:"temporary,omitempty"` // left out of the list once closed
-	Rewinds   map[string]Rewind `json:"rewinds,omitempty"`
+	Format    int                 `json:"format"`
+	Open      []string            `json:"open"`                // most recently opened first
+	Temporary []string            `json:"temporary,omitempty"` // left out of the list once closed
+	Rewinds   map[string]Rewind   `json:"rewinds,omitempty"`
+	Switches  map[string][]Switch `json:"switches,omitempty"`
 }
+
+// Switch is a change of permission mode made in dv. Claude Code records a mode
+// only with the next message, so dv keeps where in the conversation it was.
+type Switch struct {
+	After string `json:"after"` // the transcript's last entry then
+	To    string `json:"to"`
+}
+
+// maxSwitches is how many a session keeps, the latest.
+const maxSwitches = 100
 
 // Rewind is a session taken back to an earlier message.
 type Rewind struct {
@@ -124,6 +135,32 @@ func (s *Sessions) SetRewound(id string, r *Rewind) error {
 		}
 		s.doc.Rewinds[id] = *r
 	}
+	return s.file.save(s.doc)
+}
+
+// Switches lists a session's changes of mode, oldest first.
+func (s *Sessions) Switches(id string) []Switch {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return slices.Clone(s.doc.Switches[id])
+}
+
+// AddSwitch records a change of mode.
+func (s *Sessions) AddSwitch(id string, sw Switch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	list := append(s.doc.Switches[id], sw)
+	if len(list) > maxSwitches {
+		list = list[len(list)-maxSwitches:]
+	}
+	if s.doc.Switches == nil {
+		s.doc.Switches = map[string][]Switch{}
+	}
+	s.doc.Switches[id] = list
 	return s.file.save(s.doc)
 }
 

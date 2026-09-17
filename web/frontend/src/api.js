@@ -1,7 +1,12 @@
+import { boot } from "./boot.js";
+
+const base = boot.base;
+
 // Thin wrapper over the Go API. Every call throws on a non-2xx response with
-// the server's error message, which the UI surfaces directly.
-async function req(path, opts = {}) {
-  const res = await fetch(path, {
+// the server's error message, which the UI surfaces directly. The hub's own
+// calls go to its root, as a folder's page makes them too.
+async function req(path, opts = {}, at = base) {
+  const res = await fetch(at + path, {
     ...opts,
     headers: opts.body ? { "content-type": "application/json" } : undefined,
   });
@@ -14,7 +19,7 @@ async function req(path, opts = {}) {
 // follow reads a stream of JSON events until the returned func is called. It
 // reconnects on its own after a drop, and the first event after is a reset.
 function follow(path, onEvent, onDrop) {
-  const es = new EventSource(path);
+  const es = new EventSource(base + path);
   es.onmessage = (e) => onEvent(JSON.parse(e.data));
   es.onerror = () => onDrop?.();
   return () => es.close();
@@ -60,13 +65,17 @@ export const api = {
     p.set("path", path);
     if (side === "old") p.set("side", "old");
     if (stamp) p.set("v", stamp);
-    return `/api/media?${p}`;
+    return `${base}/api/media?${p}`;
   },
 
   files: (q, limit = 60) => req(`/api/files?${new URLSearchParams({ q, limit: String(limit) })}`),
 
   // tree lists every file on the scope's new side, for Code mode's explorer.
-  tree: (scope) => req(`/api/tree?${scopeQuery(scope)}`),
+  tree: (scope, open = []) => {
+    const p = scopeQuery(scope);
+    for (const dir of open) p.append("open", dir);
+    return req(`/api/tree?${p}`);
+  },
 
   threads: () => req("/api/threads"),
 
@@ -110,7 +119,7 @@ export const api = {
   // the open sessions are doing: { requests } or { sessions }, each whole, as a
   // stream rather than a poll so they still arrive while the tab is hidden.
   claudeEvents: (on) => {
-    const es = new EventSource("/api/claude/requests");
+    const es = new EventSource(base + "/api/claude/requests");
     es.onmessage = (e) => on(JSON.parse(e.data));
     // It reconnects on its own and is sent both afresh; until then nothing
     // shown could be answered.
@@ -161,7 +170,7 @@ export const api = {
   // agentPrompts is every message and command in a session, back to its start: { prompts: [item] }.
   agentPrompts: (id) => req(`/api/agent/sessions/${id}/prompts`),
   agentUnqueue: (id, message) => req(`/api/agent/sessions/${id}/messages/${message}/unqueue`, { method: "POST", body: "{}" }),
-  agentPromptImageURL: (id, message, n) => `/api/agent/sessions/${id}/messages/${message}/images/${n}`,
+  agentPromptImageURL: (id, message, n) => `${base}/api/agent/sessions/${id}/messages/${message}/images/${n}`,
 
   agentInterrupt: (id) => req(`/api/agent/sessions/${id}/interrupt`, { method: "POST", body: "{}" }),
 
@@ -175,7 +184,7 @@ export const api = {
 
   agentEdit: (id, tool) => req(`/api/agent/sessions/${id}/edits/${encodeURIComponent(tool)}`),
   agentOutput: (id, tool) => req(`/api/agent/sessions/${id}/tools/${encodeURIComponent(tool)}`),
-  agentImageURL: (id, tool) => `/api/agent/sessions/${id}/tools/${encodeURIComponent(tool)}/image`,
+  agentImageURL: (id, tool) => `${base}/api/agent/sessions/${id}/tools/${encodeURIComponent(tool)}/image`,
 
   search: (opts) => {
     const p = new URLSearchParams({ q: opts.query });
@@ -185,4 +194,32 @@ export const api = {
     if (opts.glob) p.set("glob", opts.glob);
     return req(`/api/search?${p}`);
   },
+
+  // prefs is the settings kept on disk: { user, repo }, each by key.
+  prefs: () => req("/api/prefs"),
+  // setPref stores one, or deletes it given null. keepalive lets it finish as
+  // the page goes away.
+  setPref: (where, key, value, keepalive) =>
+    req("/api/prefs", { method: "PATCH", body: JSON.stringify({ where, key, value }), keepalive }),
+
+  // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
+  // user's settings' version; with details, each git folder has its remote and
+  // branch too.
+  hubFolders: (details) => req(`/api/hub/folders${details ? "?details=1" : ""}`, {}, ""),
+  hubAdd: (path) => req("/api/hub/folders", { method: "POST", body: JSON.stringify({ path }) }),
+  // patch: { name, setup, teardown }, any of them.
+  hubUpdate: (slug, patch) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  hubRemove: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "DELETE" }),
+  hubClose: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/close`, { method: "POST", body: "{}" }),
+  // hubBranches: { branches, base, repo, into }, what a new worktree is made with.
+  hubBranches: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/branches`),
+  hubWorktree: (slug, wt) => req(`/api/hub/folders/${encodeURIComponent(slug)}/worktrees`, { method: "POST", body: JSON.stringify(wt) }),
+  hubSetup: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/setup`, { method: "POST", body: "{}" }),
+  // how: { skipTeardown, force }, force deleting it with uncommitted changes.
+  hubDeleteWorktree: (slug, how = {}) =>
+    req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
+  // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
+  hubDirs: (path) => req(`/api/hub/dirs?${new URLSearchParams({ path })}`),
+  hubClone: (source, into, name) => req("/api/hub/clones", { method: "POST", body: JSON.stringify({ source, into, name }) }),
+  hubDismissJob: (id) => req(`/api/hub/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

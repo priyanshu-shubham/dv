@@ -825,6 +825,22 @@ func TestBusyUntilClaudeCodeSaysIdle(t *testing.T) {
 	}
 }
 
+// An API error comes as a message, which the transcript keeps, and again as
+// the turn's result; it is shown once. Any other failed turn is the session's.
+func TestAnAPIErrorIsNotSaidTwice(t *testing.T) {
+	noop := func() {}
+	p := &proc{changed: noop, wrote: noop, ended: noop, busy: true}
+	p.handle([]byte(`{"type":"assistant","is_api_error_message":true,"error":"authentication_failed","message":{"content":[{"type":"text","text":"Not logged in · Please run /login"}]}}`))
+	p.handle([]byte(`{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}`))
+	if p.err != "" {
+		t.Fatalf("error %q, which the transcript shows already", p.err)
+	}
+	p.handle([]byte(`{"type":"result","subtype":"error_max_turns","is_error":true,"errors":["Reached the maximum number of turns"]}`))
+	if p.err == "" {
+		t.Fatal("a failed turn left no error")
+	}
+}
+
 // Compacting makes a request of its own, which must not read as the turn going
 // on; what ends it is Claude Code saying so, or the compaction landing.
 func TestCompactingUntilItIsDone(t *testing.T) {
@@ -885,6 +901,30 @@ func TestAModeChangeIsMarkedWhereItShows(t *testing.T) {
 	}
 	if items[2].From != "default" || items[5].From != "plan" {
 		t.Fatalf("changed from %q, then %q", items[2].From, items[5].From)
+	}
+}
+
+// A mode switched to in dv is marked where it was made, mid-turn, and not again
+// when the next message records it; the entries between go on carrying the old one.
+func TestASwitchIsMarkedWhereItWasMade(t *testing.T) {
+	auto := user("u2", "a2", "go on")
+	auto["permissionMode"] = "auto"
+	first := user("u1", "", "look around")
+	first["permissionMode"] = "default"
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, first) + line(t, assistant("a1", "u1", "msg_1", text("Looking.")))))
+	switches := []store.Switch{{After: "a1", To: "auto"}}
+	if got := tr.Mode("", switches); got != "auto" {
+		t.Fatalf("mode %q before the next message; want auto", got)
+	}
+	tr.Feed([]byte(line(t, assistant("a2", "a1", "msg_2", text("Looked."))) + line(t, auto)))
+	items := tr.Items("", switches...)
+	want := []string{"prompt:look around", "text:Looking.", "mode:auto", "text:Looked.", "prompt:go on"}
+	if got := kinds(items); !slices.Equal(got, want) {
+		t.Fatalf("items\n got %q\nwant %q", got, want)
+	}
+	if items[2].From != "default" {
+		t.Fatalf("switched from %q", items[2].From)
 	}
 }
 

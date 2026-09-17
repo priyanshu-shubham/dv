@@ -9,7 +9,8 @@ import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Previ
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { AttachTarget } from "./Threads.jsx";
-import { cx, isTyping, LRM, relTime, splitPath, useDismiss, usePersisted } from "./util.js";
+import { cx, isTyping, LRM, modKey, relTime, splitPath, useDismiss } from "./util.js";
+import { readPref, setPref, usePref } from "./prefs.js";
 import {
   IconArrowUp, IconBack, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary, IconUndo,
   IconX,
@@ -465,7 +466,7 @@ export default function AgentView({
   const activeRef = useRef(active);
   activeRef.current = active;
   const lost = offline || dropped;
-  const [draft, setDraft] = usePersisted("draft:" + (id || "new"), "");
+  const [draft, setDraft] = usePref("repo", "draft:" + (id || "new"), "");
   // The slash commands Claude Code takes, asked for on coming to the view and
   // again on starting to type one, which is when a new skill would be wanted.
   const [commands, setCommands] = useState(NO_COMMANDS);
@@ -774,6 +775,24 @@ export default function AgentView({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // Ctrl/Cmd+Down goes to the end of the conversation, from the message box
+  // too, which is why it is taken on the way down. At the end already, the box
+  // keeps the key.
+  const latest = useRef();
+  latest.current = toLatest;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!activeRef.current || e.key !== "ArrowDown" || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const el = scrollRef.current;
+      if (!el || el.scrollHeight - el.scrollTop - el.clientHeight < 8) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      latest.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // A comment's way back to the edit it was left on.
   useEffect(() => {
@@ -889,10 +908,8 @@ export default function AgentView({
     // since this was called.
     if (to === (shownId.current || "")) setDraft(put);
     else {
-      const key = "dv:draft:" + (to || "new");
-      try {
-        localStorage.setItem(key, JSON.stringify(put(JSON.parse(localStorage.getItem(key) || '""'))));
-      } catch {}
+      const key = "draft:" + (to || "new");
+      setPref("repo", key, put(readPref("repo", key, "")), "");
     }
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -1050,10 +1067,34 @@ export default function AgentView({
 
   // Until a session starts, it is in whatever the user's settings start it in.
   const asked = id ? live : picks;
-  const mode = asked?.mode || defaultMode || "default";
+  // Shift+Tab steps the picker at once, and only the mode it stops on goes to
+  // Claude Code: stepping through plan mode mid-turn would put Claude in it.
+  const [stepping, setStepping] = useState(null); // { id, mode, sent }
+  const stepTimer = useRef(null);
+  const mode = (stepping?.id === id && stepping.mode) || asked?.mode || defaultMode || "default";
+  useEffect(() => {
+    if (stepping?.sent && (stepping.id !== id || asked?.mode === stepping.mode)) setStepping(null);
+  }, [stepping, id, asked?.mode]);
   const cycleMode = () => {
     const i = modes.findIndex((m) => m.id === mode);
-    settings({ mode: modes[(i + 1) % modes.length].id });
+    const next = modes[(i + 1) % modes.length].id;
+    if (!id) return settings({ mode: next });
+    setStepping({ id, mode: next });
+    clearTimeout(stepTimer.current);
+    stepTimer.current = setTimeout(() => {
+      api.agentSettings(id, { mode: next }).then(
+        () => setStepping((s) => (s?.mode === next ? { ...s, sent: true } : s)),
+        (e) => {
+          setError(e.message);
+          setStepping(null);
+        },
+      );
+    }, MODE_SETTLE_MS);
+  };
+  const pickMode = (m) => {
+    clearTimeout(stepTimer.current);
+    setStepping(null);
+    settings({ mode: m });
   };
   const modelChoices = useMemo(
     // "" is the model the user's settings start on; Claude Code's "default" is the one it recommends.
@@ -1084,6 +1125,17 @@ export default function AgentView({
     const a = document.activeElement;
     if (activeRef.current && !ask && !readOnly && (!a || a === document.body)) inputRef.current?.focus({ preventScroll: true });
   }, [ask?.id]);
+  // Coming back to the window lands in the message box too, unless a field or
+  // a window has the focus. Not on a touch screen, where it brings up the keyboard.
+  useEffect(() => {
+    if (ask || readOnly || matchMedia("(pointer: coarse)").matches) return;
+    const onFocus = () => {
+      if (!activeRef.current || isTyping(document.activeElement) || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      inputRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [ask?.id, readOnly]);
 
   // c and a act on the edit line under the pointer, as they do in Diff.
   useEffect(() => {
@@ -1277,7 +1329,7 @@ export default function AgentView({
             title="Permission mode (Shift+Tab)"
             choices={modes}
             value={mode}
-            onPick={(m) => settings({ mode: m })}
+            onPick={pickMode}
           />
           {!readOnly && (
             <button
@@ -1495,7 +1547,7 @@ export default function AgentView({
         )}
         {away && (
           <div className="agent-jump">
-            <button onClick={toLatest} title="Scroll to the end of the conversation">
+            <button onClick={toLatest} title={`Scroll to the end of the conversation (${modKey}+↓)`}>
               <IconChevronDown size={12} /> Latest
             </button>
           </div>
@@ -1895,6 +1947,9 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
 
 // Kept as written, line breaks and all, less the blank lines around it.
 const Thinking = ({ text }) => <div className="agent-thinking">{text.trim()}</div>;
+
+// How long Shift+Tab waits for another press before the mode it is on is sent.
+const MODE_SETTLE_MS = 1000;
 
 // Permission modes as the mode picker names them.
 const MODE_NAMES = {
