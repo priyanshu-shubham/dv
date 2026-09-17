@@ -9,7 +9,7 @@ import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Prev
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { AttachTarget } from "./Threads.jsx";
-import { agentName, cx, duration, isTyping, LRM, menuRoom, modKey, relTime, splitPath, useCopy, useDismiss } from "./util.js";
+import { agentName, cx, duration, isTyping, LRM, menuRoom, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import {
   AgentIcon, IconArrowUp, IconBack, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary, IconUndo,
@@ -1902,6 +1902,9 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
       window.removeEventListener("resize", onMove);
     };
   }, [active, within]);
+  // Beside the selection with a pointer; under a finger the browser's own copy
+  // menu sits right there, so it goes along the foot of the window instead.
+  const touch = useMedia(TOUCH);
   if (!at) return null;
   const take = (to) => {
     window.getSelection()?.removeAllRanges();
@@ -1909,7 +1912,12 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
     to(at.text, at.code);
   };
   return createPortal(
-    <div ref={bar} className="selection-ask" style={{ top: at.top, left: at.left }} onMouseDown={(e) => e.preventDefault()}>
+    <div
+      ref={bar}
+      className={cx("selection-ask", touch && "at-foot")}
+      style={touch ? undefined : { top: at.top, left: at.left }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
       {onReply && (
         <button className="attach-btn" onClick={() => take(onReply)} title="Quote this in your reply, in this session">
           <IconReply size={13} />

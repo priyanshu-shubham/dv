@@ -3167,6 +3167,13 @@ body.resizing * {
   box-shadow: var(--shadow-pop);
 }
 
+/* Clear of the browser's own copy menu, which hovers over the selection. */
+.selection-ask.at-foot {
+  top: auto;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+}
+
 .selection-ask .attach-btn {
   color: var(--fg);
 }
@@ -4558,11 +4565,30 @@ button.ghost.agent-context {
   line-height: 1.5;
 }
 
+/* The row under the box: with the agent to pick as well, a narrow pane runs
+   out of room, so the controls give way - their labels first, then the line. */
 .composer-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin: 8px 0 0 -6px;
+}
+
+.composer-bar .model-menu {
+  min-width: 0;
+}
+
+.composer-bar .model-menu > button.mini {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Last on the line whatever wraps before it. */
+.composer-bar .spacer {
+  flex: 1 0 auto;
 }
 
 button.ghost.composer-add {
@@ -5617,9 +5643,18 @@ button.ghost.back {
     overflow-y: auto;
   }
 
+  /* One column, the panels over it - the sidebar on the right included, whose
+     own rule is the more particular one and would otherwise keep its column. */
   .main,
-  .main.with-comments {
+  .main.with-comments,
+  .main.side-right,
+  .main.side-right.with-comments {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main.side-right > .sidebar,
+  .main.side-right > .comments-panel {
+    grid-column: 1;
   }
 
   .main > .sidebar,

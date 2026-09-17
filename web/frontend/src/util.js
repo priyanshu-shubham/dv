@@ -96,6 +96,8 @@ export function useFixedMenu(open, ref, menu) {
 
 // PHONE is the width dv lays itself out for a phone under, as styles.css has it.
 export const PHONE = "(max-width: 760px)";
+// A finger rather than a pointer: the browser has selection keys of its own there.
+export const TOUCH = "(pointer: coarse)";
 
 // useMedia is whether a media query matches, as the window changes.
 export function useMedia(query) {
