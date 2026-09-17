@@ -19,7 +19,9 @@ $ dv
 
 **Diff viewer.** Split or unified, syntax highlighted, with word-level
 highlighting inside changed lines and expandable context up to the whole file.
-An added or deleted file has only one side, so it takes the full width either way.
+A changed line is told by its shade and its line numbers, without a `+` or `-`.
+An added or deleted file has only one side, so it takes the full width either
+way, with its code lined up with the other files'.
 Collapsed context is a bar you can click anywhere on to reveal 20 more lines, with
 expand/`all` controls pinned to both edges of the view. Drag the file list's
 edge to make it wider or narrower; a double-click puts it back.
@@ -29,8 +31,9 @@ something in it — your uncommitted work, else everything on the current branch
 since it left the default one, else the last commit — and follows as the work
 moves. So a dirty tree opens on your changes; commit them and the view follows
 you to that commit; and on the trunk with a clean tree — where there is no
-branch to compare against — you land on the last commit. The button names what
-it picked. Picking one yourself (uncommitted, staged, last
+branch to compare against — you land on the last commit. The button at the right
+of the header names what it picked, and its menu shows the last commit's message.
+Picking one yourself (uncommitted, staged, last
 commit, this branch, or a revspec you type: `main...HEAD`, `HEAD~3..`, `abc123`)
 pins it for that tab, marked with a pin; *Back to automatic* at the top of the
 menu says what following would show now, and a new session starts automatic.
@@ -49,8 +52,9 @@ those lines — or drag down the line-number gutter, or hover a line and click `
 In split view the composer and the thread appear in the column you selected, so a
 comment on the new side shows up on the right. Threads render inline in the diff —
 a line that carries one is never folded away, whatever the context setting — and
-support markdown, replies and resolve, and are listed together in the sidebar's
-Comments tab. Everything lands
+support markdown, replies and resolve. The comment button in the header, which
+counts the open ones, lists them all in a panel on the right, in any mode; drag
+its edge to size it. Everything lands
 in `.dv/comments.json` at the repo root. On first run dv adds `/.dv/` to
 `.git/info/exclude`, so the notes never show up in `git status` and cannot be
 committed by accident — and your `.gitignore` stays untouched.
@@ -61,8 +65,8 @@ comparison it was made in, since having read a file in one diff says nothing
 about another. Marks are kept in `.dv/viewed.json`, beside the comments, so they
 hold across reloads, tabs and restarts. The page follows both files as they
 change, whoever changes them: another tab, an agent, or a reset. *Reset* at the
-foot of the file list or the Comments tab — or `dv reset` in a terminal —
-deletes every comment and viewed mark to start the review over.
+foot of the file list — or `dv reset` in a terminal — deletes every comment and
+viewed mark to start the review over.
 
 **Generated files are skipped.** A regenerated lock file or protobuf stub
 between two real changes is noise that hides them, so dv lists those files but
@@ -125,10 +129,10 @@ Java, Kotlin, Scala, C#, C, C++, Objective-C, PHP, shell, SQL, Protocol Buffers
 (messages, enums and their values, services, rpcs), Terraform and HCL, CSS,
 Elixir, Lua and Swift, plus Makefile targets and Markdown headings.
 
-**Code mode.** *Diff | Code* in the header (or `m`) switches to reading the
+**Code mode.** *Code*, at the top of the sidebar (or `Shift+→`), switches to reading the
 repository rather than the change. The tree becomes every file, marked the way
-the diff's list is and VS Code's explorer does it — a changed file's name in its
-status colour with `M`, `A`, `U`, `D` or `R` at the end of the row — plus a dot
+the diff's list is — `M`, `A`, `U`, `D` or `R` in its colour at the end of a
+changed file's row — plus a dot
 on folders holding changes. The pane shows one file at a time, whole and
 read-only, with a bar beside added and modified lines and a notch where lines
 were deleted. The picker in the header now chooses what you read: the working
@@ -148,33 +152,138 @@ a fuzzy match on its path, favouring matches in the file name (`srvhand` finds
 `server/handlers.go`; spaces separate terms that must all match). Before you
 type, it lists the files in the diff.
 
-**Ask Claude.** Press `a`, or hit *Ask* on any file or line selection, and dv
-sends that slice of the diff to the local `claude` CLI and streams the answer
-beside the code. Sonnet 5 by default; the picker offers Opus 5, Haiku 4.5 and
-Fable 5. The answer can be saved into the review as a comment. This needs the
-`claude` CLI on your PATH; without it the panel just says so. Drag the panel's
-edge to resize it; in a window too narrow to share, it slides over the diff
-instead of squeezing it.
+**Agent.** *Agent* at the top of the sidebar (or `Shift+→`), lists the repository's Claude
+Code sessions and lets you work in them next to the diff: start one, pick up an
+old one, send messages, stop it, change its model or permission mode
+(`Shift+Tab`, as in the terminal). dv runs these through the `claude` CLI, which
+has to be on your PATH. The conversation reads like the terminal's, except that
+an edit Claude made is a diff card, highlighted and split or unified like the
+rest. You can comment on those cards as on any diff. The comment goes into the
+review and onto your next message, so Claude sees what you said about its edit.
+To give Claude something to look at, press `a` on a line, or use *Add to …* on a
+file or selection, in Diff or Code; the button names the session it adds to. It
+turns into a chip on that session's message box, to go with the next message you
+send: the first open session's, or the one picked in the menu beside the button,
+which stays picked. The session's card says how much is waiting there, and the
+header counts it all. dv keeps a list of the sessions you have
+open in `.dv/agent.json`.
 
-**Claude Code's prompts.** When Claude Code stops to ask permission — to edit
-a file, run a command, fetch a page, use an MCP tool — the question pops up in
-dv too. An edit shows as the diff it would make to the file as it stands:
-highlighted, split or unified like the rest, with context to expand, and
+With no session picked, or after `+`, the view asks what you want to do, with a
+few places to start. No session exists until you send the first message. The
+message box is a card: `+` adds images (so does pasting or dropping them in),
+then the model with its effort in one menu, the permission mode, and the send
+button, which stops Claude while it works and the box is empty. These start at
+what your Claude Code settings say. Your messages sit to the right, with any
+images you sent.
+
+A `/` at the start of the box suggests the slash commands Claude Code takes
+there - its own that work outside the terminal, and your commands and skills -
+with what each does; `↑` / `↓` pick one and `Tab` or `Enter` fills it in. Once
+the box holds a command, it is written in the code font with the command named
+under it. A command is sent on its own: images and anything added stay in the
+box for the message after it. What it prints shows under it in a card - where
+the terminal would open a panel, such as `/context` or `/autocompact`, Claude
+Code prints the same as text. `/clear` starts a new session, as `+` does; a few
+commands that mean nothing outside a terminal (`/color`, `/fast`) are left out.
+
+A message sent while Claude is working shows as queued until Claude takes it
+in; `Esc`, or `↑` in the empty box, takes it back to edit. For five seconds
+after you send, `Esc` takes that message back as well: Claude stops, the
+conversation (and any file it got as far as changing) goes back to before it,
+and the message returns to the box. Otherwise `↑` and `↓` in the empty box step
+through what you said, as in the terminal. `Esc Esc` is the terminal's rewind:
+pick one of your messages or commands, then restore the conversation, the code, or both.
+The list goes back to the session's start, past compactions the page is not
+showing: rewound to before one, the conversation comes back as it was then.
+The message comes back into the box with its images and chips.
+
+The other tool calls are one line each, saying what they found: the lines a Read
+got, a search's matches, a command's exit. Click one for the rest: the lines
+read, highlighted, with their numbers opening the file; a search's matches,
+grouped by file; a command's output; a fetched page or a web search's links; an
+image Claude looked at. Calls made one after another fold, once done, into one
+line saying what they did together — *Read 3 files, ran 2 commands* — which
+opens on each; edits stay diff cards. A command or agent sent to the background
+stays running until Claude Code reports it finished, failed or stopped. While
+Claude works,
+an orb under the conversation moves with the kind of work, beside what it is
+doing. The view follows the conversation as it grows; scrolled up, it keeps
+your place while diffs load above you, and *Latest* takes you back down. Once
+your message is scrolled out of sight, the header names it, and `[` / `]` step
+between your messages. Each session keeps its place as you switch between them
+(`Shift+↑` / `Shift+↓` for the open ones). If dv stops, the view says it lost
+the connection and picks up again when dv is back.
+
+Each session in the list is a small card: its name, where it runs, the last
+thing said in it, the start of its ID (click it to copy the whole ID, for
+`claude --resume`), and how full its context is. The filter above the list
+matches names and IDs. Double-click the name to rename it (the terminal's
+`/rename`). Open sessions keep the order you opened them in, so two at work do
+not trade places. Closing a session, with `×` on its card or in its
+header, stops the Claude Code dv runs for it and moves it to Recent, from where
+it carries on when you next send to it. For a session running in a terminal,
+closing only stops following it: the terminal carries on, and goes back to being
+the only place it asks for permission.
+
+The session's header has how full its context is, with a tick where Claude Code
+compacts it; near there it says how close. Click it to compact now (the
+terminal's `/compact`). A change to the compaction window in
+your settings shows within seconds. While Claude Code compacts, the orb says so
+and the session's card reads *compacting*; a terminal does not tell dv, so there
+it says so once the context is past the compaction point. A compaction is a rule across the
+conversation, with the tokens before and after, and clicking it shows the
+summary Claude carries on from. A session opens at its latest compaction -
+what Claude still has in front of it - and *Show the conversation before this*
+steps back a compaction at a time, keeping your place. A long session's file is
+only read from there until you do, so it opens in a fraction of the time.
+A change of permission mode is a rule too ("Entered plan mode", "Switched to
+Auto"); Claude Code
+records it a little after the change, so the rule can come a step or two late.
+On a Claude plan, the foot of the session list shows how much of the five-hour
+and weekly limits you have used.
+
+What Claude has left at work - agents it started, and commands it sent to the
+background - is pinned over the message box while it runs. Click one to see it
+in place of the conversation: an agent's own conversation, followed as it goes,
+or a command's output as it comes. `Esc` or the arrow in the header goes back to
+the conversation. An agent's call also opens on its conversation from its line
+(*Conversation*, on pointing at it), after it has finished too.
+
+**Notices.** A session not on screen that asks permission, or finishes its
+turn, says so in a notice at the top right, wherever in dv you are: *Review*
+opens the request, *Open session* goes to it. With the bell by the session
+filter on, the same come as desktop notifications while dv's tab is in the
+background, and the tab's title says when Claude has finished.
+
+A session that is open in a terminal can be read in dv but not written to,
+because two writers would fork its transcript and the terminal never reloads it.
+dv follows it as it grows and shows its permission prompts.
+
+**Claude Code's prompts.** When a session open in the Agent view stops to ask
+permission — to edit a file, run a command, fetch a page, use an MCP tool — the
+question comes up in dv: in the conversation when that session is on screen, and
+otherwise as a notice whose *Review* opens it in a window over the page.
+Sessions you have not opened in dv stay the
+terminal's business. An edit shows as the diff it would make to the file as it
+stands: highlighted, split or unified like the rest, with context to expand, and
 double-clicking an identifier opens its definition over the request, with `Esc`
-to come back, so you can read around a change before deciding. A command shows
-as the command, a plan as the plan. The answers are the terminal's, in its
-order — Yes, its "don't ask again" choices, No — and so are the keys: `↑` `↓`
-and `Enter`, or the number; `Tab` to add a note, which goes with the answer you
-pick (with Yes it reaches Claude beside the result; with No it is the reason,
-and Claude carries on with it, where a bare No stops Claude); `Shift+Tab` to
-allow all edits for the session. `Esc` puts the request away under the bell in
-the header, which counts what is waiting and brings it back; turn off *Pop up
-when Claude asks* and that is all a request does. The terminal asks at the same
-time, and whichever you answer first wins; the other one goes away. dv only
-sees what the terminal would ask about, so in accept-edits mode edits go
-straight through, as they would anyway.
+to come back, so you can read around a change before deciding. Comment on its
+lines as on any diff, and the comments go with your answer: with No they are the
+reason, and Claude revises the edit; with Yes they reach Claude as a note. A
+command shows as the command, a plan as the plan. The answers are the
+terminal's, in its order — Yes, its "don't ask again" choices, No — and so are
+the keys: `↑` `↓` and `Enter`, or the number; `Tab` to add a note, which goes
+with the answer you pick (with Yes it reaches Claude beside the result; with No
+it is the reason, and Claude carries on with it, where a bare No stops Claude);
+`Shift+Tab` to allow all edits for the session. `Esc` puts the request away
+under the bell in the header, which counts what is waiting and brings it back. For a
+terminal session, the terminal asks at the same time, and whichever you answer
+first wins; the other one goes away. When Claude asks you a question, you answer
+it in dv too. dv only sees what the terminal would ask about, so in accept-edits
+mode edits go straight through, as they would anyway.
 
-It works through Claude Code's hooks, which one command puts in place:
+For terminal sessions this works through Claude Code's hooks, which one command
+puts in place:
 
 ```
 dv claude install
@@ -242,6 +351,22 @@ Code's prompts* above. `dv claude hook` is what those hooks run.
 `-y` skips the question, and is needed when stdin is not a terminal. A dv
 already running on the repository picks the change up, and so do its pages.
 
+## On a phone
+
+Under 760px wide, dv is one column. The menu button at the top left slides the
+sidebar in over the page, and the comments button does the same for the
+comments from the right; one is open at a time, and picking a file, a session
+or a comment puts it away. The diff is unified, with one line number and long
+lines wrapped (the wrap button turns that off, and a phone keeps its own
+setting; unwrapped, drag a line sideways to read the rest). Tap a line number to comment on the line; a selection comments on the
+lines it covers once you let its handles rest; a double tap on a name goes to
+its definition. The buttons that show on pointing at a line show always, and
+the on-screen keyboard shrinks the page rather than covering the message box.
+A session's header has its context as a percent, and near compacting, how much
+is left. Android's keyboard and Paste put only text in the message box, so `+`
+there offers *Paste image*, which reads what was copied; browsers allow that only
+over https or on localhost, and elsewhere `+` picks a photo or file.
+
 ## Keyboard
 
 | key | action |
@@ -249,12 +374,18 @@ already running on the repository picks the change up, and so do its pages.
 | `[` / `]` | previous / next file (also `Shift+P` / `Shift+N`) |
 | `n` / `p` | next / previous change, into the next file when this one runs out |
 | `f` | view the whole file at the line you are on |
-| `m` | switch between Diff and Code |
+| `Shift+←` / `Shift+→` | previous / next mode: Diff, Code, Agent (in the Agent view too, while the message box is empty) |
 | `c` | comment on the line under the cursor |
 | `Esc` | dismiss a composer with nothing typed in it, step back a definition, or close an overlay |
 | `Shift+Esc` | close an overlay outright, however deep the trail |
 | `Alt+←` / `Alt+→` | back to the previous definition; in Code mode, back and forward through files |
-| `a` | ask Claude about the line under the cursor |
+| `a` | add the line under the cursor, or the file, to your next message to Claude |
+| `Esc` `Esc` | in the Agent view, rewind the session to before one of your messages |
+| `Esc` | in the Agent view, take back a queued message or one sent in the last five seconds; otherwise stop Claude |
+| `↑` / `↓` | in the Agent view's empty message box, bring back a queued message, or step through what you said |
+| `[` / `]` | in the Agent view, your previous / next message |
+| `Shift+Tab` | in the Agent view's message box, change the permission mode |
+| `Shift+↑` / `Shift+↓` | in the Agent view, the previous / next open session (from the message box, when it is empty) |
 | `v` | mark the current file viewed (in Diff) |
 | `u` | toggle split / unified |
 | `w` | toggle line wrapping |
@@ -297,10 +428,10 @@ to hand to an agent along with "address these".
 ```
 main.go              CLI entry point: open the repo, start the server, print the URL; dv reset, dv claude
 internal/gitx        git plumbing, scope resolution, and the diff algorithm
-internal/store       .dv/comments.json, .dv/viewed.json, .dv/server.json and the .git/info/exclude registration
+internal/store       .dv/comments.json, .dv/viewed.json, .dv/agent.json, .dv/server.json and the .git/info/exclude registration
 internal/symindex    regex symbol index + ripgrep-backed text search
-internal/server      JSON API, SSE ask and prompt endpoints, embedded UI assets
-internal/ask         bridge to the `claude` CLI
+internal/server      JSON API, SSE session and prompt endpoints, embedded UI assets
+internal/agent       Claude Code sessions: transcripts, the headless `claude` processes dv runs, rewinds
 internal/permit      Claude Code's permission prompts: the hook and its install, the requests waiting, edit previews
 web/frontend         React UI, bundled by esbuild into internal/server/static
 install.sh           the curl | sh installer, reading the GitHub releases

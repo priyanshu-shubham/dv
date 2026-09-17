@@ -301,14 +301,15 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 }
 
 type threadReq struct {
-	File      string   `json:"file"`
-	Side      string   `json:"side"`
-	StartLine int      `json:"startLine"`
-	EndLine   int      `json:"endLine"`
-	Quote     []string `json:"quote"`
-	Scope     string   `json:"scope"`
-	Body      string   `json:"body"`
-	Author    string   `json:"author"`
+	File      string        `json:"file"`
+	Side      string        `json:"side"`
+	StartLine int           `json:"startLine"`
+	EndLine   int           `json:"endLine"`
+	Quote     []string      `json:"quote"`
+	Scope     string        `json:"scope"`
+	Body      string        `json:"body"`
+	Author    string        `json:"author"`
+	Origin    *store.Origin `json:"origin"`
 }
 
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +336,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		Quote:     req.Quote,
 		Scope:     req.Scope,
 		BaseSHA:   s.repo.Head().SHA,
+		Origin:    req.Origin,
 	}, req.Body, authorOr(req.Author))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)

@@ -38,15 +38,23 @@ type group struct {
 	Hooks []handler `json:"hooks"`
 }
 
+// ConfigDir is where Claude Code keeps its settings and sessions.
+func ConfigDir() (string, error) {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
 // SettingsPath is the user's Claude Code settings file.
 func SettingsPath() (string, error) {
-	dir := os.Getenv("CLAUDE_CONFIG_DIR")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(home, ".claude")
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(dir, "settings.json"), nil
 }

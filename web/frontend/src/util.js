@@ -38,6 +38,38 @@ export function usePersisted(key, initial, { session = false } = {}) {
   return [value, set];
 }
 
+// useDismiss closes a menu on a press outside the element its ref is put on,
+// or outside `also`, a menu drawn elsewhere in the page.
+export function useDismiss(open, close, also) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (ref.current?.contains(e.target) || also?.current?.contains(e.target)) return;
+      close();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  return ref;
+}
+
+// PHONE is the width dv lays itself out for a phone under, as styles.css has it.
+export const PHONE = "(max-width: 760px)";
+
+// useMedia is whether a media query matches, as the window changes.
+export function useMedia(query) {
+  const [on, setOn] = useState(() => matchMedia(query).matches);
+  useEffect(() => {
+    const m = matchMedia(query);
+    const change = () => setOn(m.matches);
+    change();
+    m.addEventListener("change", change);
+    return () => m.removeEventListener("change", change);
+  }, [query]);
+  return on;
+}
+
 // useDebounced delays a fast-changing value, used for search-as-you-type.
 export function useDebounced(value, ms) {
   const [v, setV] = useState(value);

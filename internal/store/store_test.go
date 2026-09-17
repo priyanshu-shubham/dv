@@ -96,3 +96,24 @@ func TestViewedMarks(t *testing.T) {
 		t.Fatalf("other still has %v after the reset", got)
 	}
 }
+
+func TestSessionsOpenMostRecentFirstAndSurviveReopening(t *testing.T) {
+	root := t.TempDir()
+	s, _ := OpenSessions(root)
+	for _, id := range []string{"a", "b"} {
+		if changed, err := s.Set(id, true); err != nil || !changed {
+			t.Fatalf("open %s: %v %v", id, changed, err)
+		}
+	}
+	if changed, _ := s.Set("a", true); changed {
+		t.Fatal("opening an open session changed the set")
+	}
+	again, _ := OpenSessions(root)
+	if got := again.IDs(); !slices.Equal(got, []string{"b", "a"}) {
+		t.Fatalf("reopened set %v", got)
+	}
+	again.Set("b", false)
+	if s.Has("b") || !s.Has("a") {
+		t.Fatalf("after closing b elsewhere: %v", s.IDs())
+	}
+}

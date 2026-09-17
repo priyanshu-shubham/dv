@@ -1,52 +1,53 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
-import { cx, modKey } from "./util.js";
+import { cx, modKey, useDismiss } from "./util.js";
 import {
-  IconBell, IconBranch, IconCheck, IconChevronDown, IconKeyboard, IconMoon, IconPin, IconRefresh,
-  IconSearch, IconSpark, IconSplit, IconSun, IconUndo, IconUnified, IconWrap,
+  IconBell, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconMenu, IconMoon, IconPin,
+  IconSearch, IconSplit, IconSun, IconUndo, IconUnified, IconWrap,
 } from "./icons.jsx";
 
 // AUTO is the scope dv starts on: whichever comparison has something in it,
 // followed as the work moves. Any other scope is a pin.
 export const AUTO = { kind: "auto", rev: "" };
 
+// The bar names the repository in its middle, and holds how the page is drawn
+// and the tools at its right. Which mode the page is in is the sidebar's, at
+// the top of the list that mode fills. On a phone, what is marked wide-only
+// gives way (the diff is unified and wrapped there), and the sidebar is behind
+// the menu button.
 export default function Header({
-  meta, mode, onMode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
-  theme, onTheme, onRefresh, refreshing, onSearch, onHelp, onAsk, askOn, waiting, arrived, onBell, bellOn,
+  meta, mode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
+  theme, onTheme, onSearch, onHelp, waiting, arrived, onBell, bellOn,
+  comments, commentsOn, onComments, sideOn, onSide,
 }) {
+  const agent = mode === "agent";
   return (
     <header className="topbar">
-      <div className="brand">
+      <div className="topbar-left">
+        <button className={cx("icon", "menu-toggle", sideOn && "on")} aria-pressed={sideOn} onClick={onSide} title="Files and sessions">
+          <IconMenu size={15} />
+        </button>
         <span className="logo">dv</span>
+      </div>
+
+      <div className="topbar-title">
         <span className="repo" title={meta?.root}>
           {meta?.repo}
         </span>
+        {(meta?.head?.branch || meta?.head?.sha) && (
+          <span className="headref" title={meta.head.subject}>
+            <IconBranch size={13} />
+            <span>{meta.head.branch || meta.head.sha}</span>
+          </span>
+        )}
       </div>
 
-      {(meta?.head?.branch || meta?.head?.sha) && (
-        <div className="headref" title={meta.head.subject}>
-          <IconBranch size={13} />
-          <span>{meta.head.branch || meta.head.sha}</span>
-          <span className="dim subject">{meta.head.subject}</span>
-        </div>
-      )}
+      <div className="topbar-right">
+      {!agent && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />}
 
-      <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />
-
-      <div className="seg mode-switch" role="group" aria-label="Mode">
-        <button className={cx(mode === "diff" && "on")} aria-pressed={mode === "diff"} onClick={() => onMode("diff")} title="The changes (m toggles)">
-          Diff
-        </button>
-        <button className={cx(mode === "code" && "on")} aria-pressed={mode === "code"} onClick={() => onMode("code")} title="The whole repository (m toggles)">
-          Code
-        </button>
-      </div>
-
-      <span className="spacer" />
-
-      {mode === "diff" && (
+      {mode !== "code" && (
         <>
-          <div className="seg" role="group" aria-label="Diff layout">
+          <div className="seg wide-only" role="group" aria-label="Diff layout">
             <button className={cx(view === "split" && "on")} aria-pressed={view === "split"} onClick={() => onView("split")} title="Split view (u toggles)">
               <IconSplit size={14} />
             </button>
@@ -55,16 +56,7 @@ export default function Header({
             </button>
           </div>
 
-          <label className="ctx" title="Lines of context around each change">
-            ctx
-            <select value={contextLines} onChange={(e) => onContext(Number(e.target.value))}>
-              {[0, 3, 8, 20].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ContextPicker value={contextLines} onPick={onContext} />
         </>
       )}
 
@@ -72,7 +64,7 @@ export default function Header({
         <IconWrap size={14} />
       </button>
 
-      <span className="divider" />
+      <span className="divider wide-only" />
 
       {waiting > 0 && (
         <button
@@ -88,22 +80,99 @@ export default function Header({
           <span className="bell-count">{waiting}</span>
         </button>
       )}
-      <button className={cx("icon", askOn && "on")} aria-pressed={askOn} onClick={onAsk} title="Ask Claude about this change (a)">
-        <IconSpark size={14} />
+      <button
+        className={cx("icon", "comments-toggle", commentsOn && "on")}
+        aria-pressed={commentsOn}
+        onClick={onComments}
+        title={`Comments in the review${comments ? `: ${comments} open` : ""}`}
+      >
+        <IconComment size={14} />
+        {comments > 0 && <span className="comments-count">{comments}</span>}
       </button>
       <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
         <IconSearch size={14} />
       </button>
-      <button className={cx("icon", refreshing && "spin")} onClick={onRefresh} title="Reload the diff (r)">
-        <IconRefresh size={14} />
-      </button>
-      <button className="icon" onClick={() => onTheme(theme === "dark" ? "light" : "dark")} title="Toggle theme">
+      <button className="icon wide-only" onClick={() => onTheme(theme === "dark" ? "light" : "dark")} title="Toggle theme">
         {theme === "dark" ? <IconSun size={14} /> : <IconMoon size={14} />}
       </button>
-      <button className="icon" onClick={onHelp} title="Keyboard shortcuts (?)">
+      <button className="icon wide-only" onClick={onHelp} title="Keyboard shortcuts (?)">
         <IconKeyboard size={14} />
       </button>
+      </div>
     </header>
+  );
+}
+
+// ModeSwitch is Diff, Code and Agent, at the top of the sidebar whose list
+// each of them fills. Agent counts what waits to go with the next message.
+export function ModeSwitch({ mode, onMode, attached }) {
+  const agent = mode === "agent";
+  return (
+    <div className="seg mode-switch" role="group" aria-label="Mode">
+      <button className={cx(mode === "diff" && "on")} aria-pressed={mode === "diff"} onClick={() => onMode("diff")} title="The changes (Shift+←/→ steps through the modes)">
+        Diff
+      </button>
+      <button className={cx(mode === "code" && "on")} aria-pressed={mode === "code"} onClick={() => onMode("code")} title="The whole repository (Shift+←/→ steps through the modes)">
+        Code
+      </button>
+      <button
+        className={cx(agent && "on")}
+        aria-pressed={agent}
+        onClick={() => onMode("agent")}
+        title={`Claude Code sessions (Shift+←/→ steps through the modes)${attached ? ` - ${attached} added to your next message` : ""}`}
+      >
+        Agent
+        {/* Keyed by the count, so each addition pulses. */}
+        {attached > 0 && (
+          <span className="attached-count" key={attached}>
+            {attached}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+const CONTEXT_LINES = [0, 3, 8, 20];
+const linesLabel = (n) => (n ? `${n} lines` : "No context");
+
+// ContextPicker is how many unchanged lines show around each change.
+function ContextPicker({ value, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
+  return (
+    <div className="scope ctx-picker wide-only" ref={ref}>
+      <button className="scope-button" onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Lines of context around each change">
+        <span>{linesLabel(value)}</span>
+        <IconChevronDown size={12} />
+      </button>
+      {open && (
+        <div className="scope-menu ctx-menu">
+          <div className="scope-sep">Context around each change</div>
+          {CONTEXT_LINES.map((n) => (
+            <ScopeItem
+              key={n}
+              on={n === value}
+              label={linesLabel(n)}
+              onClick={() => {
+                onPick(n);
+                setOpen(false);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -245,6 +314,8 @@ function ScopePicker({ scope, resolved, meta, mode, onScope }) {
                   key={p.kind}
                   on={on}
                   label={p.label}
+                  // What the last commit is, which the bar no longer spells out.
+                  sub={p.kind === "head" ? meta?.head?.subject : ""}
                   hint={p.hint(base)}
                   onClick={() => pick({ kind: p.kind, rev: "" })}
                 />

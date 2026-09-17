@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dv/internal/agent"
 	"dv/internal/gitx"
 	"dv/internal/permit"
 	"dv/internal/store"
@@ -45,11 +46,16 @@ type Server struct {
 	viewed *store.Viewed
 	index  *symindex.Index
 	permit *permit.Broker
+	agent  *agent.Manager
 }
 
-func New(repo *gitx.Repo, st *store.Store, vw *store.Viewed, ix *symindex.Index) *Server {
-	return &Server{repo: repo, store: st, viewed: vw, index: ix, permit: permit.New(repo.Root)}
+func New(repo *gitx.Repo, st *store.Store, vw *store.Viewed, sessions *store.Sessions, ix *symindex.Index) *Server {
+	broker := permit.New(repo.Root)
+	return &Server{repo: repo, store: st, viewed: vw, index: ix, permit: broker, agent: agent.New(repo.Root, broker, sessions)}
 }
+
+// Close stops the Claude Code sessions dv is running.
+func (s *Server) Close() { s.agent.Close() }
 
 // Handler builds the route table.
 func (s *Server) Handler() http.Handler {
@@ -81,12 +87,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/symbols/refresh", s.handleSymbolRefresh)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 
-	mux.HandleFunc("GET /api/ask/models", s.handleAskModels)
-	mux.HandleFunc("POST /api/ask", s.handleAsk)
-
 	mux.HandleFunc("POST /api/claude/hook", guarded(s.handleClaudeHook))
 	mux.HandleFunc("GET /api/claude/requests", guarded(s.handleClaudeRequests))
 	mux.HandleFunc("POST /api/claude/requests/{id}", guarded(s.handleClaudeAnswer))
+
+	mux.HandleFunc("GET /api/agent/sessions", guarded(s.handleAgentSessions))
+	mux.HandleFunc("POST /api/agent/sessions", guarded(s.handleAgentCreate))
+	mux.HandleFunc("GET /api/agent/commands", guarded(s.handleAgentCommands))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/open", guarded(s.handleAgentOpen))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/events", guarded(s.handleAgentEvents))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/messages", guarded(s.handleAgentSend))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/messages/{message}/unqueue", guarded(s.handleAgentUnqueue))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/messages/{message}/images/{n}", guarded(s.handleAgentImage))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/interrupt", guarded(s.handleAgentInterrupt))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/settings", guarded(s.handleAgentSettings))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/rewind", guarded(s.handleAgentRewind))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/prompts", guarded(s.handleAgentPrompts))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/edits/{tool}", guarded(s.handleAgentEdit))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/title", guarded(s.handleAgentRename))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}", guarded(s.handleAgentOutput))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/image", guarded(s.handleAgentImage))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/live", guarded(s.handleAgentTaskOutput))
+	mux.HandleFunc("GET /api/agent/sessions/{id}/agents/{tool}/events", guarded(s.handleAgentSubagentEvents))
 
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheHeaders(http.FileServer(http.FS(sub)))))

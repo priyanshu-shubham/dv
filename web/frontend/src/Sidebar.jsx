@@ -2,24 +2,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cx, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, visibleRows } from "./tree.js";
 import { ThreadList } from "./Threads.jsx";
+import { SessionList } from "./Agent.jsx";
+import { ModeSwitch } from "./Header.jsx";
 import {
-  IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFile, IconFilter,
+  IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFilter,
 } from "./icons.jsx";
 
 const MIN_WIDTH = 180;
 const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.innerWidth / 2)));
 
-// The left rail: the file tree, and every comment in the review. In the diff
-// the tree is the changed files; in Code mode it is the whole repository.
-// Either way a changed file is decorated the way VS Code's explorer does it.
+// The left rail: the mode, over what it lists. In the diff that is the changed
+// files; in Code mode it is the whole repository, with changed files marked
+// as they are in the diff. In Agent mode the tree's place is taken by the
+// sessions.
 export default function Sidebar({
-  mode, files, threads, activePath, viewed, onSelect, onThreadAction, onJump, commentsPath,
+  mode, files, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
-  filtersPaused, onPauseFilters, onReset,
-  onWidth,
+  filtersPaused, onPauseFilters, onReset, agent, onWidth, onMode, attached,
 }) {
   const code = mode === "code";
-  const [tab, setTab] = useState("files");
   const [filter, setFilter] = useState("");
   const [pathFilterOpen, setPathFilterOpen] = useState(false);
   const pathFilterOn = !!(pathFilter.include.trim() || pathFilter.exclude.trim());
@@ -42,7 +43,7 @@ export default function Sidebar({
     [files, q],
   );
   const tree = useMemo(() => buildTree(shown), [shown]);
-  const treeKind = q ? "filter" : mode;
+  const treeKind = q ? "filter" : code ? "code" : "diff";
   const startsOpen = treeKind !== "code";
   const flipped = flips[treeKind];
   const isOpen = useCallback((path) => startsOpen !== flipped.has(path), [startsOpen, flipped]);
@@ -58,9 +59,9 @@ export default function Sidebar({
 
   // Keep the file being read in sight, as VS Code's explorer does: open the
   // folders it sits in, then scroll the tree to it. Only a change of file (or
-  // coming back to this tab) does this, so folding or browsing the tree by hand
-  // is never undone from under you. Code mode's tree arrives after its file
-  // does, so the tree turning up counts as a change too.
+  // of mode) does this, so folding or browsing the tree by hand is never undone
+  // from under you. Code mode's tree arrives after its file does, so the tree
+  // turning up counts as a change too.
   const listRef = useRef(null);
   const revealing = useRef(null);
   const treeReady = tree.length > 0;
@@ -69,7 +70,7 @@ export default function Sidebar({
     const shut = ancestorsOf(tree, activePath).filter((p) => !isOpen(p));
     if (shut.length) setOpen(shut, true);
     revealing.current = activePath;
-  }, [activePath, tab, mode, treeReady]);
+  }, [activePath, mode, treeReady]);
 
   // After every render: scroll once the row a reveal is waiting for exists. It
   // falls back to a folded folder only when that folder is not about to open.
@@ -99,7 +100,6 @@ export default function Sidebar({
       ),
     [files],
   );
-  const openCount = threads.filter((t) => !t.resolved).length;
 
   // As the ask panel does it: the drag writes to the DOM and commits on release.
   const rootRef = useRef(null);
@@ -127,6 +127,9 @@ export default function Sidebar({
   const statusOf = useMemo(() => new Map(files.filter((f) => f.status).map((f) => [f.path, f])), [files]);
 
   return (
+    // Slid off a phone's screen it is out of reach already. It is not made inert:
+    // with the accessibility tree on, as a phone's autofill turns it on, that
+    // rebuilds the tree for every row on each open and close.
     <aside className="sidebar" ref={rootRef}>
       <div
         className="side-resize"
@@ -140,16 +143,12 @@ export default function Sidebar({
           onWidth(0);
         }}
       />
-      <div className="tabs">
-        <button className={cx(tab === "files" && "on")} onClick={() => setTab("files")}>
-          <IconFile size={13} /> {code ? "Explorer" : "Files"} <span className="count">{files.length.toLocaleString()}</span>
-        </button>
-        <button className={cx(tab === "comments" && "on")} onClick={() => setTab("comments")}>
-          <IconComment size={13} /> Comments {openCount > 0 && <span className="count">{openCount}</span>}
-        </button>
+      <div className="sidebar-modes">
+        <ModeSwitch mode={mode} onMode={onMode} attached={attached} />
       </div>
-
-      {tab === "files" ? (
+      {mode === "agent" ? (
+        <SessionList {...agent} />
+      ) : (
         <>
           <div className="sidebar-filter">
             <input
@@ -157,7 +156,7 @@ export default function Sidebar({
               placeholder="Filter files"
               onChange={(e) => {
                 setFilter(e.target.value);
-                setFilterFolded(new Set());
+                setFlips((f) => ({ ...f, filter: new Set() }));
               }}
               onKeyDown={(e) => e.stopPropagation()}
             />
@@ -309,32 +308,69 @@ export default function Sidebar({
             )}
           </div>
         </>
-      ) : (
-        <>
-          <div className="comment-list">
-            {threads.length === 0 ? (
-              <div className="empty">
-                No comments yet. Drag across line numbers in the diff, or hover a line and hit +.
-              </div>
-            ) : (
-              <ThreadList
-                threads={threads}
-                compact
-                onAction={(action) => {
-                  if (action.type === "jump") onJump(action.thread);
-                  else onThreadAction(action);
-                }}
-              />
-            )}
-          </div>
-          <div className="sidebar-foot">
-            <span className="saved-to" title={commentsPath}>
-              saved to {commentsPath}
-            </span>
-            <ResetButton onReset={onReset} />
-          </div>
-        </>
       )}
+    </aside>
+  );
+}
+
+// CommentsPanel is every comment in the review, at the page's right in any
+// mode, opened and closed from the header, which counts them. Its width is
+// dragged from its left edge.
+export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, onWidth }) {
+  const rootRef = useRef(null);
+  const drag = useRef(null);
+  const onResizeDown = (e) => {
+    e.preventDefault();
+    drag.current = { x: e.clientX, w: rootRef.current.offsetWidth, to: 0 };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    document.body.classList.add("resizing", "resizing-comments");
+  };
+  const onResizeMove = (e) => {
+    const d = drag.current;
+    if (!d) return;
+    d.to = Math.round(Math.max(MIN_WIDTH + 60, Math.min(d.w - (e.clientX - d.x), window.innerWidth / 2)));
+    rootRef.current.parentElement.style.setProperty("--comments-w", d.to + "px");
+  };
+  const onResizeUp = () => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    document.body.classList.remove("resizing", "resizing-comments");
+    if (d.to) onWidth(d.to);
+  };
+  return (
+    <aside className="comments-panel" ref={rootRef}>
+      <div
+        className="side-resize comments-resize"
+        title="Drag to resize, double-click to reset"
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        onPointerCancel={onResizeUp}
+        onDoubleClick={() => {
+          rootRef.current.parentElement.style.removeProperty("--comments-w");
+          onWidth(0);
+        }}
+      />
+      <div className="comment-list">
+        {threads.length === 0 ? (
+          <div className="empty">No comments yet. Drag across line numbers in the diff, or hover a line and hit +.</div>
+        ) : (
+          <ThreadList
+            threads={threads}
+            compact
+            onAction={(action) => {
+              if (action.type === "jump") onJump(action.thread);
+              else onThreadAction(action);
+            }}
+          />
+        )}
+      </div>
+      <div className="sidebar-foot">
+        <span className="saved-to" title={commentsPath}>
+          saved to {commentsPath}
+        </span>
+      </div>
     </aside>
   );
 }

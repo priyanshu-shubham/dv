@@ -81,6 +81,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	sessions, err := store.OpenSessions(repo.Root)
+	if err != nil {
+		return err
+	}
 	excludeNotes(repo)
 
 	ix := symindex.New(repo.Root, repo)
@@ -90,7 +94,8 @@ func run() error {
 		return fmt.Errorf("this binary has no UI bundle in it - run `make build` (needs Node) and try again")
 	}
 
-	srv := server.New(repo, st, vw, ix)
+	srv := server.New(repo, st, vw, sessions, ix)
+	defer srv.Close()
 	ln, err := listen(*host, *port, repo.Root)
 	if err != nil {
 		return err
@@ -113,9 +118,9 @@ func run() error {
 
 	httpSrv := &http.Server{
 		Handler: srv.Handler(),
-		// No write timeout: /api/ask streams a model's answer and a permission
-		// prompt waits on the reader, both for minutes. Read timeouts still bound
-		// a stuck client.
+		// No write timeout: a session's events stream for as long as the page is
+		// open, and a permission prompt waits on the reader. Read timeouts still
+		// bound a stuck client.
 		ReadHeaderTimeout: 15 * time.Second,
 		ReadTimeout:       60 * time.Second,
 	}

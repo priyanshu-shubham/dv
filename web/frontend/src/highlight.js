@@ -80,7 +80,9 @@ export function highlightLines(key, lines, lang) {
     html = lines.map(escapeHtml);
   } else {
     try {
-      html = splitHighlighted(hljs.highlight(lines.join("\n"), { language: lang, ignoreIllegals: true }).value);
+      let value = hljs.highlight(lines.join("\n"), { language: lang, ignoreIllegals: true }).value;
+      if (!NO_CALLS.has(lang)) value = markCalls(value);
+      html = splitHighlighted(value);
       // A grammar that swallows newlines would desynchronise every row after
       // it, so fall back rather than render a scrambled file.
       if (html.length !== lines.length) html = lines.map(escapeHtml);
@@ -91,6 +93,24 @@ export function highlightLines(key, lines, lang) {
   cache.set(key, { lines, ready, html });
   if (cache.size > 40) cache.delete(cache.keys().next().value);
   return html;
+}
+
+// Grammars whose text is prose or data, where "word(" is not a call.
+const NO_CALLS = new Set(["markdown", "xml", "json", "yaml", "ini"]);
+const CALL = /(?<![\w$])([A-Za-z_][\w$]*)(?=\()/g;
+// Spans whose bare text is still code, unlike a string's or a comment's.
+const CODE_SPAN = /hljs-(subst|function)"/;
+
+// markCalls colours the name in a call, which some grammars do (JavaScript,
+// Rust) and others leave as plain text (Go, Python).
+function markCalls(html) {
+  const open = [];
+  return html.replace(/(<span[^>]*>)|(<\/span>)|([^<]+)/g, (all, start, end, text) => {
+    if (start) open.push(start);
+    else if (end) open.pop();
+    else if (!open.length || CODE_SPAN.test(open.at(-1))) return text.replace(CALL, '<span class="hljs-title function_">$1</span>');
+    return all;
+  });
 }
 
 // splitHighlighted breaks highlighted HTML at newlines, closing open spans at

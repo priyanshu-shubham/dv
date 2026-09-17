@@ -1,0 +1,2819 @@
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import MarkdownIt from "markdown-it";
+import { api } from "./api.js";
+import { commentEvent, Request, RequestTitle } from "./ClaudePrompt.jsx";
+import { DiffBody } from "./FileDiff.jsx";
+import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { Orb } from "./Orb.jsx";
+import { Modal } from "./Overlays.jsx";
+import { cx, isTyping, LRM, relTime, splitPath, useDismiss, usePersisted } from "./util.js";
+import { IconArrowUp, IconBack, IconBell, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconPlus, IconStop, IconUndo, IconX } from "./icons.jsx";
+
+const md = new MarkdownIt({ html: false, linkify: true });
+// A command's output is Markdown, or lines of plain text that must stay lines.
+const mdOutput = new MarkdownIt({ html: false, linkify: true, breaks: true });
+const NO_THREADS = [];
+const NO_IMAGES = [];
+const NO_QUEUED = [];
+const NO_COMMANDS = [];
+const DOUBLE_ESC_MS = 600;
+// How long after sending Esc takes the message back instead of stopping Claude.
+const TAKE_BACK_MS = 5000;
+const UNDER_PX = 40; // the bar naming the message the view is under, and its gap
+// Claude scales down anything bigger itself; past this, the upload is only slower.
+const IMAGE_PX = 2000;
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+// useSession follows one session: its conversation, kept in order and patched
+// by key as updates arrive, and what it is doing now. lost is set while the
+// stream is down - dv stopped, most likely - and live is only what it last was.
+// With call, it is the conversation of the agent that call started instead.
+function useSession(id, call = "", from = "") {
+  const key = id && `${id} ${call}`;
+  const [state, setState] = useState({ key, items: [], live: null, lost: false });
+  useEffect(() => {
+    // Shown from further back, what is on screen stays until the rest comes.
+    setState((s) => (s.key === key ? s : { key, items: [], live: null, lost: false }));
+    if (!id) return;
+    const follow = call ? (...a) => api.agentSubagentEvents(id, call, ...a) : (update, drop) => api.agentEvents(id, update, drop, from);
+    return follow(
+      (u) =>
+        setState((s) => {
+          let items = s.items;
+          if (u.reset) items = u.items || [];
+          else if (u.items?.length) {
+            const at = new Map(items.map((it, i) => [it.key, i]));
+            items = items.slice();
+            for (const it of u.items) {
+              const i = at.get(it.key);
+              if (i === undefined) {
+                at.set(it.key, items.length);
+                items.push(it);
+              } else items[i] = it;
+            }
+          }
+          return { key, items, live: u.live, earlier: u.earlier, lost: false };
+        }),
+      () => setState((s) => (s.lost ? s : { ...s, lost: true })),
+    );
+  }, [key, from]);
+  return state.key === key ? state : { key, items: [], live: null, lost: false };
+}
+
+// toggled tells the conversation the reader opened or closed something in it,
+// which then keeps that in view as it changes size.
+const toggled = (el, open) => el?.dispatchEvent(new CustomEvent("dv:toggle", { bubbles: true, detail: { open } }));
+
+// anchorOf is what holds a scrolled-up reader's place: the topmost thing in
+// view, as deep as a diff line, then the item it is in should that one go, with
+// where each is. It is below anything in view still loading, which is about to
+// grow and is not what is being read; and a file header stuck to the top stays
+// put whatever moves, so it cannot be one.
+//
+// Where is in the content, not on screen: a scroll and a diff arriving can land
+// in one frame, with the scroll event after the growth.
+// loadingNear reports whether anything close enough to the view to be fetched
+// is still loading (EditCard fetches within 600px).
+function loadingNear(scroller) {
+  const box = scroller.getBoundingClientRect();
+  return [...scroller.querySelectorAll(".loading")].some((n) => {
+    const r = n.getBoundingClientRect();
+    return r.bottom > box.top - 600 && r.top < box.bottom + 600;
+  });
+}
+
+// itemEls are the conversation's items as drawn, one child of the log each,
+// after the way to what is above them.
+const itemEls = (scroller) => scroller.firstElementChild.querySelectorAll(":scope > :not(.agent-earlier)");
+
+// placeOf is an anchor as what outlives the conversation being drawn again: the
+// item's key, and how far down the view it is.
+function placeOf(scroller, anchor, items) {
+  const item = anchor?.at(-1).el;
+  const i = item ? Array.prototype.indexOf.call(itemEls(scroller), item) : -1;
+  return i >= 0 && i < items.length ? { key: items[i].key, at: item.getBoundingClientRect().top - scroller.getBoundingClientRect().top } : null;
+}
+
+const offsetIn = (scroller, el) => el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+function anchorOf(scroller) {
+  const log = scroller.firstElementChild;
+  const box = scroller.getBoundingClientRect();
+  const x = log.getBoundingClientRect().left + 40;
+  let from = box.top + 4;
+  for (const note of log.querySelectorAll(".loading")) {
+    const r = note.closest(".agent-log > *").getBoundingClientRect();
+    if (r.top < box.bottom && r.bottom > box.top) from = Math.max(from, r.bottom + 4);
+  }
+  if (from >= box.bottom) from = box.top + 4;
+  for (let y = from; y < box.bottom; y += 16) {
+    const hit = document.elementFromPoint(x, y);
+    // Nor can the way to earlier items, which they arrive under.
+    if (!hit || hit === log || !log.contains(hit) || hit.closest(".file-head, .hbars, .agent-earlier")) continue;
+    return [hit.closest("[data-line]") || hit, hit.closest(".agent-log > *")].map((el) => ({ el, at: offsetIn(scroller, el) }));
+  }
+  return null;
+}
+
+// What goes with a message is appended in a block Claude reads as context and
+// the page reads back into chips: code as it was seen, whole files by name,
+// and review comments with the lines they were left on.
+const CONTEXT = /\n*<dv-context>\n?([\s\S]*?)\n?<\/dv-context>\s*$/;
+const attr = (s) => String(s ?? "").replace(/[&"<>]/g, (c) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c]);
+const unattr = (s) => s.replace(/&(amp|quot|lt|gt);/g, (_, e) => ({ amp: "&", quot: '"', lt: "<", gt: ">" })[e]);
+const span = (a, b) => (a === b ? `${a}` : `${a}-${b}`);
+
+// commandOf is the slash command a message is, as Claude Code takes it -
+// { name, description, argumentHint, text } - or null for words to Claude.
+function commandOf(message, commands) {
+  const m = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(message.trim());
+  const c = m && commands.find((c) => c.name === m[1]);
+  if (!c) return null;
+  const args = (m[2] || "").trim();
+  return { ...c, text: `/${c.name}${args ? " " + args : ""}` };
+}
+
+// commandsFor is what a box holding a slash and part of a name could go on to
+// be: names that start so - or whose part after a plugin's colon does - then
+// names that hold it anywhere.
+function commandsFor(draft, commands) {
+  const m = /^\/(\S*)$/.exec(draft);
+  if (!m) return [];
+  const q = m[1].toLowerCase();
+  const starts = [];
+  const within = [];
+  for (const c of commands) {
+    const n = c.name.toLowerCase();
+    if (n.startsWith(q) || n.split(":").at(-1).startsWith(q)) starts.push(c);
+    else if (n.includes(q)) within.push(c);
+  }
+  const byName = (a, b) => (a.name === q ? -1 : b.name === q ? 1 : a.name.includes(":") - b.name.includes(":") || a.name.localeCompare(b.name));
+  return [...starts.sort(byName), ...within.sort(byName)];
+}
+
+function composeMessage(text, attached, threads) {
+  const parts = [];
+  for (const a of attached) {
+    if (a.kind === "lines") {
+      const width = String(a.end).length;
+      const body = (a.quote || []).map((l, i) => `${String(a.start + i).padStart(width)}  ${l}`).join("\n");
+      parts.push(`<code path="${attr(a.file)}" lines="${span(a.start, a.end)}" from="${attr(a.at)}">\n${body}\n</code>`);
+    } else if (a.kind === "file") {
+      parts.push(`<file path="${attr(a.file)}" />`);
+    } else if (a.kind === "thread") {
+      const t = threads.find((x) => x.id === a.threadId);
+      if (!t) continue;
+      const quote = (t.quote || []).map((l) => `> ${l}`).join("\n");
+      const said = t.comments.map((c) => (t.comments.length > 1 ? `${c.author}: ${c.body}` : c.body)).join("\n\n");
+      const on = t.origin ? ` on="your edit"` : "";
+      parts.push(`<comment path="${attr(t.file)}" lines="${span(t.startLine, t.endLine)}" side="${t.side}"${on}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
+    }
+  }
+  const body = text.trim();
+  return parts.length ? `${body}\n\n<dv-context>\n${parts.join("\n")}\n</dv-context>` : body;
+}
+
+function splitContext(text) {
+  const m = CONTEXT.exec(text || "");
+  if (!m) return { text: text || "", refs: [] };
+  const refs = [...m[1].matchAll(/<(code|file|comment) path="([^"]*)"(?: lines="([^"]*)")?/g)].map(([, kind, path, lines]) => ({
+    kind,
+    path: unattr(path),
+    lines,
+  }));
+  return { text: text.slice(0, m.index), refs };
+}
+
+function Chip({ kind, path, lines, onClick, onRemove }) {
+  const name = splitPath(path)[1];
+  return (
+    <span className={cx("agent-chip", kind === "comment" && "comment")} title={path + (lines ? `:${lines}` : "")}>
+      <button className="agent-chip-label" onClick={onClick} disabled={!onClick}>
+        {kind === "comment" && "comment · "}
+        {name}
+        {lines && <span className="dim">:{lines}</span>}
+      </button>
+      {onRemove && (
+        <button className="agent-chip-x" onClick={onRemove} title="Leave it out">
+          <IconX size={10} />
+        </button>
+      )}
+    </span>
+  );
+}
+
+const EFFORTS = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+
+// What the blank session offers to start from: the work dv is for.
+const SUGGESTIONS = [
+  "Review my uncommitted changes",
+  "Find bugs in the current diff",
+  "Write tests for what changed",
+  "Explain how this repository fits together",
+  "Draft a commit message",
+];
+
+const dataURL = (img) => `data:${img.mediaType};base64,${img.data}`;
+
+// newUUID works where crypto.randomUUID does not: dv reached by address over
+// plain http is not a secure context.
+function newUUID() {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+// readBack is what went with a message sent from elsewhere - another tab,
+// before a reload - as the transcript kept it: its pictures, and what was
+// added to it, read back from its context as far as the page can still find
+// each (a comment by where it was left).
+async function readBack(message, session, threads) {
+  const images = [];
+  for (let i = 0; message.uuid && i < (message.images || 0); i++) {
+    try {
+      const r = await fetch(api.agentPromptImageURL(session, message.uuid, i));
+      if (r.ok) images.push(await imageOf(await r.blob()));
+    } catch {}
+  }
+  const attached = [];
+  const m = CONTEXT.exec(message.text || "");
+  for (const [, kind, attrs, body = ""] of m ? m[1].matchAll(/<(code|file|comment)((?: \w+="[^"]*")*) ?(?:\/>|>\n?([\s\S]*?)\n?<\/\1>)/g) : []) {
+    const a = Object.fromEntries([...attrs.matchAll(/(\w+)="([^"]*)"/g)].map(([, k, v]) => [k, unattr(v)]));
+    const [start, end = start] = (a.lines || "").split("-").map(Number);
+    if (kind === "file") attached.push({ kind, file: a.path });
+    else if (kind === "code") attached.push({ kind: "lines", file: a.path, side: "new", start, end, at: a.from, quote: body.split("\n").map((l) => l.replace(/^ *\d+ {2}/, "")) });
+    else {
+      const t = threads.find((t) => t.file === a.path && t.side === a.side && t.startLine === start && t.endLine === end);
+      if (t) attached.push({ kind: "thread", threadId: t.id });
+    }
+  }
+  for (const a of attached) a.key = JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId]);
+  return { draft: splitContext(message.text).text, attached, images };
+}
+
+// imageOf is a picture as a message carries it, base64.
+async function imageOf(blob, name) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return { key: newUUID(), mediaType: blob.type, data: btoa(bin), name };
+}
+
+// readImage takes a picture for a message, scaled down if it is bigger than
+// Claude would look at or than it takes (5 MB, as base64).
+async function readImage(file) {
+  if (!IMAGE_TYPES.includes(file.type)) throw new Error(`${file.name || "That"} is not an image Claude takes: PNG, JPEG, GIF or WebP.`);
+  let blob = file;
+  const bitmap = file.type === "image/gif" ? null : await createImageBitmap(file).catch(() => null);
+  const long = bitmap ? Math.max(bitmap.width, bitmap.height) : 0;
+  if (bitmap && (long > IMAGE_PX || file.size > 3.5e6)) {
+    const scale = Math.min(1, IMAGE_PX / long);
+    const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    blob = await canvas.convertToBlob({ type: "image/png" });
+    if (blob.size > 3.5e6) blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
+  }
+  if (blob.size > 3.75e6) throw new Error(`${file.name || "That image"} is over the 5 MB Claude takes.`);
+  return imageOf(blob, file.name);
+}
+
+// imagesIn is the pictures a paste carries. Some browsers list a copied image
+// only among the items.
+function imagesIn(data) {
+  const files = [...data.files];
+  if (!files.length) for (const it of data.items || []) if (it.kind === "file") files.push(it.getAsFile());
+  return files.filter((f) => f?.type.startsWith("image/"));
+}
+
+// Android's keyboard and its long-press Paste put only text in a plain text
+// box, so a phone pastes a picture by asking for the clipboard - which a page
+// can do only over https or on localhost.
+const canReadClipboard = () => !!navigator.clipboard?.read && matchMedia("(hover: none)").matches;
+
+async function pasteImages() {
+  const files = [];
+  for (const item of await navigator.clipboard.read()) {
+    const type = item.types.find((t) => t.startsWith("image/"));
+    if (type) files.push(new File([await item.getType(type)], "Pasted image", { type }));
+  }
+  return files;
+}
+
+// AddImages is the box's +: a file, or on a phone that can, what was copied.
+function AddImages({ onFiles, onPaste }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  const pick = (fn) => () => (setOpen(false), fn());
+  return (
+    <div className="model-menu" ref={ref}>
+      <button
+        className="ghost composer-add"
+        onClick={canReadClipboard() ? () => setOpen((o) => !o) : onFiles}
+        title="Add images - or paste or drop them in"
+      >
+        <IconPlus size={15} />
+      </button>
+      {open && (
+        <div className="model-list up">
+          <button onClick={pick(onFiles)}>
+            <span className="model-name">Photo or file</span>
+          </button>
+          <button onClick={pick(onPaste)}>
+            <span className="model-name">Paste image</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// sameModel matches a model id with or without its 1M suffix, which the
+// transcript leaves off.
+const sameModel = (a, b) => !!a && !!b && a.replace("[1m]", "") === b.replace("[1m]", "");
+
+// SessionName is a session's name on its card, renamed by double-clicking it
+// (the terminal's /rename). A session a terminal runs is its to rename.
+function SessionName({ title, hint, onRename }) {
+  const [draft, setDraft] = useState(null);
+  if (draft === null) {
+    return (
+      <span
+        className="name"
+        title={onRename ? `${hint}\nDouble-click to rename` : hint}
+        onDoubleClick={onRename && ((e) => (e.stopPropagation(), setDraft(title)))}
+      >
+        {title}
+      </span>
+    );
+  }
+  const done = (save) => {
+    const t = draft.trim();
+    if (save && t && t !== title) onRename(t);
+    setDraft(null);
+  };
+  return (
+    <input
+      className="session-rename"
+      autoFocus
+      value={draft}
+      onFocus={(e) => e.target.select()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => done(true)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") done(true);
+        else if (e.key === "Escape") done(false);
+      }}
+    />
+  );
+}
+
+const tokens = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
+
+// ContextMeter is how full the session's context is, with a tick where Claude
+// Code compacts it. Near there it says how close, as the terminal does. Given
+// onCompact, it is also where to compact it now.
+function ContextMeter({ context: { used, max, compact }, onCompact }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  const pct = Math.min(100, (used / max) * 100);
+  const limit = compact || max;
+  const left = Math.max(0, Math.round(((compact - used) / compact) * 100));
+  const near = compact > 0 && left <= 20;
+  const className = cx("agent-context", used >= limit * 0.9 ? "high" : used >= limit * 0.75 && "warn");
+  const title =
+    `Context: ${used.toLocaleString()} of ${max.toLocaleString()} tokens (${Math.round(pct)}%). ` +
+    (compact
+      ? `Claude Code compacts the conversation at ${compact.toLocaleString()}, summarising it to make room.`
+      : "Claude Code compacts the conversation as it nears the end, when auto-compact is on.");
+  const meter = (
+    <>
+      <Bar pct={pct} tick={compact && (compact / max) * 100} />
+      <span className="agent-context-tokens">
+        {tokens(used)} / {tokens(max)} ·
+      </span>{" "}
+      {Math.round(pct)}%
+      {near && (
+        <span className="agent-context-left">
+          {left}%<span className="until"> until auto-compact</span>
+          <span className="short"> left</span>
+        </span>
+      )}
+    </>
+  );
+  if (!onCompact) {
+    return (
+      <span className={className} title={title}>
+        {meter}
+      </span>
+    );
+  }
+  return (
+    <div className="model-menu" ref={ref}>
+      <button className={cx("ghost", className)} title={title} onClick={() => setOpen((o) => !o)}>
+        {meter}
+      </button>
+      {open && (
+        <div className="model-list">
+          <button onClick={() => (setOpen(false), onCompact())}>
+            <span className="model-name">Compact now</span>
+            <span className="model-note">Summarise the conversation so far to free up context, as /compact does</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const Bar = ({ pct, tick }) => (
+  <span className="meter">
+    <span style={{ width: `${pct}%` }} />
+    {tick > 0 && tick < 100 && <i style={{ left: `${tick}%` }} />}
+  </span>
+);
+
+// prettyModel names a model id the way a person would: claude-opus-5[1m] is Opus 5 (1M).
+function prettyModel(id) {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d)(?!\d))?/.exec(id || "");
+  if (!m) return id || "";
+  const name = `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? "." + m[3] : ""}`;
+  return /\[1m\]/.test(id) ? `${name} (1M)` : name;
+}
+
+// AgentView is Agent mode's main pane: one session's conversation, and the box
+// to talk to it in. A session running in a terminal is followed, not talked to.
+export default function AgentView({
+  id, session, available, models, modes, defaultMode, root, view, contextLines, wrap, threads, attached,
+  onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
+  requests, onSelect, onNew, onStart, onClose, onChanged, reveal, offline, active = true,
+}) {
+  // A session shows from its latest compaction until the reader asks for what
+  // came before: by session, where it is shown from then.
+  const [fromBy, setFromBy] = useState({});
+  const from = fromBy[id] || "";
+  const { items, live, earlier, lost: dropped } = useSession(id, "", from);
+  // Hidden rather than gone in the other modes, so coming back draws nothing
+  // again; its keys and its grabs for focus wait until then.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const lost = offline || dropped;
+  const [draft, setDraft] = usePersisted("draft:" + (id || "new"), "");
+  // The slash commands Claude Code takes, asked for on coming to the view and
+  // again on starting to type one, which is when a new skill would be wanted.
+  const [commands, setCommands] = useState(NO_COMMANDS);
+  const slashing = draft.startsWith("/");
+  useEffect(() => {
+    if (!active || !available || (commands.length && !slashing)) return;
+    api.agentCommands().then((r) => r.commands?.length && setCommands(r.commands), () => {});
+  }, [active, available, slashing]);
+  // The suggestions under a slash: which is picked, and the draft Esc put them away for.
+  const [pick, setPick] = useState(0);
+  const [unsuggested, setUnsuggested] = useState(null);
+  const suggestions = useMemo(() => (draft === unsuggested ? NO_COMMANDS : commandsFor(draft, commands)), [draft, unsuggested, commands]);
+  useEffect(() => setPick(0), [draft]);
+  // Pictures to go with the next message, by session like the draft: { key, mediaType, data }.
+  const [imagesBy, setImagesBy] = useState({});
+  const images = imagesBy[id || ""] || NO_IMAGES;
+  const setImages = (change, to = id || "") => setImagesBy((by) => ({ ...by, [to]: change(by[to] || NO_IMAGES) }));
+  // Sent from here, not yet in the conversation: { text, uuid, seen }, seen
+  // being how many prompts already said the same, so a repeat still waits.
+  const [pending, setPending] = useState([]);
+  // What each message sent from here was written as, to put back in the box
+  // when it is taken back: uuid -> { draft, attached, images }.
+  const sent = useRef(new Map());
+  // The last message sent, which Esc takes back for a moment after.
+  const lastSent = useRef(null);
+  const carry = useRef(null); // sent from the blank session, until its own is on screen
+  const shownId = useRef(id);
+  shownId.current = id;
+  const [justSent, setJustSent] = useState(null);
+  const [undoing, setUndoing] = useState(null); // { uuid, until }
+  const [error, setError] = useState("");
+  const [rewinding, setRewinding] = useState(null); // { prompt } or {} to pick one
+  const inputRef = useRef(null);
+  const scrollRef = useRef(null);
+  // stick follows the end as the conversation grows; otherwise anchor holds the
+  // reader's place, and for a moment after something is opened, opened keeps it
+  // in view while it fills. top is where the view last was, and back where to
+  // put it once the conversation is in.
+  const follow = useRef({ stick: true, anchor: null, opened: null, top: 0, back: null });
+  const [away, setAway] = useState(false);
+  // Where the reader left each session scrolled up, to come back to there.
+  const places = useRef(new Map());
+  const shown = useRef(null);
+  shown.current = { items, live };
+
+  const running = live?.running || session?.running || "";
+  const readOnly = running === "terminal";
+  // Not known while dv is out of reach; the rest of live is only what it was.
+  const busy = !!live?.busy && !lost;
+  const byTool = useMemo(() => {
+    const m = new Map();
+    for (const t of threads) if (t.origin?.session === id) m.set(t.origin.tool, [...(m.get(t.origin.tool) || []), t]);
+    return m;
+  }, [threads, id]);
+  // What can be rewound to: a command too, whose output - or a skill's turn - goes with it.
+  const prompts = useMemo(() => items.filter((it) => (it.kind === "prompt" || it.kind === "command") && it.uuid), [items]);
+
+  // Before anything is drawn for the new session, or its first update would
+  // be followed to the end.
+  useLayoutEffect(() => {
+    setError("");
+    setPending(carry.current ? [carry.current] : []);
+    carry.current = null;
+    browse.current = null;
+    const place = places.current.get(id);
+    follow.current = { stick: true, anchor: null, opened: null, top: 0, back: place && { ...place } };
+    setAway(false);
+    if (!readOnly && activeRef.current) inputRef.current?.focus({ preventScroll: true });
+  }, [id]);
+  useEffect(() => {
+    if (active && !readOnly) inputRef.current?.focus({ preventScroll: true });
+  }, [active]);
+
+  const said = useMemo(() => {
+    const n = new Map();
+    for (const it of items) if (it.kind === "prompt" || it.kind === "command") n.set(it.text, (n.get(it.text) || 0) + 1);
+    return n;
+  }, [items]);
+  useEffect(() => {
+    setPending((p) => (p.some((m) => (said.get(m.text) || 0) > m.seen) ? p.filter((m) => (said.get(m.text) || 0) <= m.seen) : p));
+  }, [said]);
+  // What is on its way in: queued in the session from anywhere - another tab,
+  // before a reload - until Claude takes it up, then sent from here until the
+  // transcript has it.
+  const queued = live?.queued || NO_QUEUED;
+  const incoming = useMemo(() => {
+    const out = queued.map((q) => ({ ...q, queued: true }));
+    for (const m of pending) if (!out.some((w) => w.uuid === m.uuid)) out.push(m);
+    return out;
+  }, [queued, pending]);
+  // Nothing said yet: the page's blank session, or one made and not written to.
+  const blank = !items.length && !incoming.length && (!id || (live && !live.found));
+  // Up goes back through what was said here, as in the terminal.
+  const history = useMemo(() => prompts.map((p) => splitContext(p.text).text).filter((t) => t.trim()), [prompts]);
+  const runs = useMemo(() => runsOf(items, !!live?.busy, running), [items, live?.busy, running]);
+  // What Claude left at work - agents, and commands in the background - over
+  // the message box, each opening on what it is doing; peek is the call open.
+  const atWork = useMemo(() => items.filter((it) => peekable(it) && working(it, !!live?.busy, running)), [items, live?.busy, running]);
+  const [peek, setPeek] = useState(null);
+  const peekItem = peek && items.find((it) => it.toolId === peek);
+  const peekRef = useRef(null);
+  peekRef.current = peekItem;
+  useEffect(() => setPeek(null), [id]);
+  const browse = useRef(null); // { i, saved }: the entry shown, and the draft it replaced
+
+  // Whenever the conversation changes size - an update, an edit's diff fetched
+  // as it nears the screen, rows drawn, something opened - it is put back to
+  // where the reader was. The browser's own scroll anchoring does not hold here.
+  const keep = useCallback(() => {
+    const el = scrollRef.current;
+    // Hidden, everything measures 0: a place taken now would be lost on return.
+    if (!el?.clientHeight) return;
+    const anchor = follow.current.anchor;
+    const a = anchor?.find((a) => a.el.isConnected);
+    const moved = a ? offsetIn(el, a.el) - a.at : 0;
+    if (Math.abs(moved) < 1) return;
+    for (const b of anchor) if (b.el.isConnected) b.at = offsetIn(el, b.el);
+    el.scrollTop += moved;
+    follow.current.top = el.scrollTop;
+  }, []);
+  const hold = useCallback(() => {
+    const el = scrollRef.current;
+    const f = follow.current;
+    if (!el?.clientHeight) return;
+    if (f.back) {
+      const { items, live } = shown.current;
+      if (!live) return;
+      const i = items.findIndex((it) => it.key === f.back.key);
+      const item = i >= 0 && itemEls(el)[i];
+      f.back.until ??= performance.now() + 3000;
+      if (item && performance.now() < f.back.until) {
+        const off = () => item.getBoundingClientRect().top - el.getBoundingClientRect().top - f.back.at;
+        el.scrollTop += off();
+        Object.assign(f, { stick: false, anchor: [{ el: item, at: offsetIn(el, item) }], top: el.scrollTop });
+        // Drawn again, its diffs load again: until what is below has, the view
+        // may not go down far enough, and until those around it have, it is
+        // not laid out as it was. Each time something loads, it goes again.
+        if (off() < 1 && !loadingNear(el)) f.back = null;
+        return;
+      }
+      f.back = null;
+    }
+    if (f.opened && (!f.opened.el.isConnected || performance.now() > f.opened.until)) f.opened = null;
+    if (f.opened) {
+      // As much of it as fits, without pushing its top out.
+      const box = el.getBoundingClientRect();
+      const r = f.opened.el.getBoundingClientRect();
+      const down = Math.min(r.bottom - box.bottom + 12, r.top - box.top - 12);
+      if (down > 0) el.scrollTop += down;
+      f.top = el.scrollTop;
+    } else if (f.stick) {
+      el.scrollTop = el.scrollHeight;
+      f.top = el.scrollTop;
+    } else {
+      keep();
+    }
+  }, [keep]);
+  useLayoutEffect(hold, [items, live, incoming]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el?.firstElementChild) return;
+    const ro = new ResizeObserver(hold);
+    ro.observe(el.firstElementChild);
+    // The view itself shrinks as the message box grows.
+    ro.observe(el);
+    // What was opened stays where it was clicked, and comes into view as it
+    // fills; closing it leaves it where it was.
+    const onToggle = (e) => {
+      const f = follow.current;
+      f.anchor = [{ el: e.target, at: offsetIn(el, e.target) }];
+      f.opened = e.detail.open ? { el: e.target, until: performance.now() + 1500 } : null;
+    };
+    // Until the reader scrolls themselves.
+    const onReader = () => {
+      follow.current.opened = follow.current.back = null;
+    };
+    el.addEventListener("dv:toggle", onToggle);
+    el.addEventListener("wheel", onReader, { passive: true });
+    el.addEventListener("pointerdown", onReader);
+    el.addEventListener("keydown", onReader);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("dv:toggle", onToggle);
+      el.removeEventListener("wheel", onReader);
+      el.removeEventListener("pointerdown", onReader);
+      el.removeEventListener("keydown", onReader);
+    };
+  }, [available, hold, blank]);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    const f = follow.current;
+    if (!el.clientHeight) return;
+    findUnder();
+    // The last session's conversation giving way, not the reader.
+    if (f.back || !live) return;
+    const below = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // Only scrolling up leaves the end. Otherwise a diff that loaded after the
+    // view went to the end, but before the event for that came, would read as
+    // the reader having moved away from it.
+    f.stick = below < 8 || (f.stick && !f.opened && el.scrollTop >= f.top - 1);
+    f.top = el.scrollTop;
+    if (f.stick) {
+      f.anchor = null;
+      if (below >= 8) hold();
+    } else {
+      // What grew in the frame this scroll came in, before taking a new place.
+      keep();
+      f.anchor = anchorOf(el);
+    }
+    places.current.set(id, f.stick ? null : placeOf(el, f.anchor, items));
+    setAway(el.scrollHeight - el.scrollTop - el.clientHeight > 150);
+  };
+  // What came before shows above, the view holding on to what was at the top.
+  const showEarlier = () => {
+    const el = scrollRef.current;
+    const first = el && itemEls(el)[0];
+    if (first) Object.assign(follow.current, { stick: false, opened: null, back: null, anchor: [{ el: first, at: offsetIn(el, first) }] });
+    setFromBy((by) => ({ ...by, [id]: earlier.next }));
+  };
+  const toLatest = () => {
+    const el = scrollRef.current;
+    el.scrollTop = el.scrollHeight;
+    follow.current = { stick: true, anchor: null, opened: null, top: el.scrollTop };
+  };
+
+  // Your messages are easy to scroll past in a long session: the one the view
+  // is under, once it is out of sight, is named over the conversation, and [
+  // and ] step between them.
+  const [under, setUnder] = useState(null); // { text }
+  const yours = () => [...(scrollRef.current?.querySelectorAll(".agent-log > .agent-prompt:not(.pending)") || [])];
+  const findUnder = () => {
+    const el = scrollRef.current;
+    const all = yours();
+    // Under the bar's own height, a message counts as reached.
+    const top = el.getBoundingClientRect().top + UNDER_PX;
+    let lo = 0;
+    let hi = all.length - 1;
+    let at = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (all[mid].getBoundingClientRect().top <= top) (at = mid), (lo = mid + 1);
+      else hi = mid - 1;
+    }
+    const p = all[at];
+    const out = p && p.getBoundingClientRect().bottom < top - UNDER_PX + 8;
+    const text = out ? p.querySelector(".agent-prompt-text:not(.dim)")?.textContent.split("\n")[0] || "(images)" : null;
+    setUnder((u) => (u?.text === text && u?.at === at ? u : text === null ? null : { text, at }));
+  };
+  const toYours = (dir) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = el.getBoundingClientRect().top;
+    const all = yours();
+    const to = dir < 0 ? all.findLast((p) => p.getBoundingClientRect().top < top - 4) : all.find((p) => p.getBoundingClientRect().top > top + UNDER_PX);
+    if (!to) return dir > 0 && toLatest();
+    Object.assign(follow.current, { opened: null, back: null });
+    el.scrollTop += to.getBoundingClientRect().top - top - 18; // clear of the strip under the header
+  };
+  useEffect(() => setUnder(null), [id]);
+  const step = useRef();
+  step.current = toYours;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!activeRef.current || peekRef.current || (e.key !== "[" && e.key !== "]") || e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      step.current(e.key === "]" ? 1 : -1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // A comment's way back to the edit it was left on.
+  useEffect(() => {
+    if (!reveal?.tool || !items.length) return;
+    const el = document.getElementById("tool-" + reveal.tool);
+    if (!el) {
+      // Before what is shown, maybe; items changing comes back here.
+      if (earlier) setFromBy((by) => ({ ...by, [id]: "all" }));
+      return;
+    }
+    follow.current = { stick: false, anchor: null, opened: null, top: 0 };
+    el.scrollIntoView({ block: "center" });
+  }, [reveal, items.length]);
+
+  // The message shows at once, and from the blank session is carried into the
+  // one made for it.
+  const send = async () => {
+    // A command goes alone; what was added and the pictures wait in the box for the next message.
+    const command = commandOf(draft, commands);
+    if (command?.name === "clear") {
+      setDraft("");
+      onStart();
+      return;
+    }
+    const text = command ? command.text : composeMessage(draft, attached, threads);
+    const pictures = command ? NO_IMAGES : images;
+    if ((!text && !pictures.length) || readOnly) return;
+    setError("");
+    const uuid = newUUID();
+    sent.current.set(uuid, { draft, attached: command ? [] : attached, images: pictures });
+    const entry = { text, uuid, pictures, seen: said.get(text) || 0, command: !!command };
+    carry.current = id ? null : entry;
+    setPending((p) => [...p, entry]);
+    setDraft("");
+    if (!command) {
+      setImages(() => NO_IMAGES);
+      onClearAttached();
+    }
+    browse.current = null;
+    Object.assign(follow.current, { stick: true, anchor: null, opened: null, back: null });
+    let to = id;
+    try {
+      to ||= await onNew();
+      if (!id && Object.keys(picks).length) {
+        await api.agentSettings(to, picks);
+        setPicks({});
+      }
+      await api.agentSend(to, text, uuid, pictures.map(({ mediaType, data }) => ({ mediaType, data })));
+      // Taking a message back rewinds to before it, which does not undo a command.
+      if (!command) {
+        lastSent.current = { session: to, uuid, at: Date.now(), queued: busy };
+        setJustSent(uuid);
+      }
+      onChanged();
+    } catch (e) {
+      carry.current = null;
+      putBack([entry], to || "");
+      setError(e.message);
+    }
+  };
+  // compactNow is the terminal's /compact, sent without touching the box.
+  const compactNow = async () => {
+    const entry = { text: "/compact", uuid: newUUID(), seen: said.get("/compact") || 0, command: true };
+    setError("");
+    setPending((p) => [...p, entry]);
+    Object.assign(follow.current, { stick: true, anchor: null, opened: null, back: null });
+    try {
+      await api.agentSend(id, entry.text, entry.uuid, []);
+      onChanged();
+    } catch (e) {
+      setPending((p) => p.filter((w) => w !== entry));
+      setError(e.message);
+    }
+  };
+  useEffect(() => {
+    if (!justSent) return;
+    const t = setTimeout(() => setJustSent(null), TAKE_BACK_MS);
+    return () => clearTimeout(t);
+  }, [justSent]);
+
+  const addImages = async (files) => {
+    for (const file of files) {
+      try {
+        const img = await readImage(file);
+        setImages((list) => [...list, img]);
+      } catch (e) {
+        setError(e.message);
+      }
+    }
+  };
+
+  // putBack returns messages to the box they were sent from: their words, the
+  // pictures and what was added with them. to is the session whose box it is,
+  // "" for the blank one.
+  const putBack = async (messages, to) => {
+    const from = id;
+    setPending((p) => p.filter((w) => !messages.some((m) => m.uuid === w.uuid)));
+    setJustSent(null);
+    const words = [];
+    for (const m of messages) {
+      if (lastSent.current?.uuid === m.uuid) lastSent.current = null;
+      const s = sent.current.get(m.uuid) || (await readBack(m, from, threads));
+      words.push(s.draft);
+      if (s.images.length) setImages((list) => [...s.images, ...list], to);
+      if (s.attached.length) onRestoreAttached(to, s.attached);
+    }
+    const put = (old) => [...words, old].filter((t) => t.trim()).join("\n\n");
+    // The box's draft follows the session on screen, which may have moved on
+    // since this was called.
+    if (to === (shownId.current || "")) setDraft(put);
+    else {
+      const key = "dv:draft:" + (to || "new");
+      try {
+        localStorage.setItem(key, JSON.stringify(put(JSON.parse(localStorage.getItem(key) || '""'))));
+      } catch {}
+    }
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  // Messages still waiting for the step Claude is on come back to be edited.
+  const takeBackQueued = async () => {
+    const back = [];
+    for (const q of queued) {
+      const r = await api.agentUnqueue(id, q.uuid).catch(() => null);
+      if (r?.cancelled) back.push(q);
+    }
+    if (back.length) putBack(back, id);
+  };
+
+  // A message that started a turn a moment ago is taken back once Claude has
+  // stopped and the transcript has it: the conversation goes back to before
+  // it, and so does any file it got as far as changing.
+  const takeBack = (s) => {
+    lastSent.current = null;
+    setUndoing({ uuid: s.uuid, until: Date.now() + 10_000 });
+    if (busy) api.agentInterrupt(id).catch(() => {});
+  };
+  useEffect(() => {
+    if (!undoing) return;
+    const i = items.findIndex((it) => it.uuid === undoing.uuid);
+    if (i < 0 || busy) {
+      const t = setTimeout(() => {
+        setUndoing(null);
+        setError("Could not take the message back: Claude Code has not stopped. Esc Esc rewinds to before it once it has.");
+      }, undoing.until - Date.now());
+      return () => clearTimeout(t);
+    }
+    setUndoing(null);
+    const prompt = items[i];
+    const code = items.slice(i + 1).some((it) => it.result?.edited);
+    rewind(prompt, { conversation: true, code });
+  }, [undoing, items, busy]);
+
+  const interrupt = () => api.agentInterrupt(id).catch((e) => setError(e.message));
+  // With no session yet, what is picked waits for the one the first message starts.
+  const [picks, setPicks] = useState({});
+  const settings = (patch) => {
+    if (id) return api.agentSettings(id, patch).catch((e) => setError(e.message));
+    setPicks((p) => {
+      const next = { ...p, ...patch };
+      // As a session does: an effort the new model does not take is dropped.
+      const m = patch.model !== undefined && models.find((c) => c.id === patch.model);
+      if (m && !m.efforts?.includes(next.effort)) delete next.effort;
+      return next;
+    });
+  };
+
+  // The picker has every message, those from before the compaction the page
+  // shows from fetched as it opens: what is on the page lists at once.
+  const [allPrompts, setAllPrompts] = useState(null); // { id, list }
+  const picking = !!rewinding && !rewinding.prompt;
+  useEffect(() => {
+    if (!picking || !earlier) return;
+    let gone = false;
+    api.agentPrompts(id).then((r) => gone || setAllPrompts({ id, list: r.prompts || [] }), () => {});
+    return () => {
+      gone = true;
+    };
+  }, [picking, id]);
+  const rewindable = useMemo(() => {
+    if (!earlier || allPrompts?.id !== id) return prompts;
+    const shown = new Set(prompts.map((p) => p.key));
+    return [...allPrompts.list.filter((p) => !shown.has(p.key)).map((p) => ({ ...p, compacted: true })), ...prompts];
+  }, [prompts, allPrompts, earlier, id]);
+
+  const rewind = async (prompt, how) => {
+    setRewinding(null);
+    setError("");
+    try {
+      // Back past the first message there is no conversation left to keep:
+      // the blank session starts again, and this one is put away.
+      const first = !prompt.before && how.conversation;
+      if (!first || how.code) await api.agentRewind(id, { prompt: prompt.uuid, before: prompt.before, conversation: how.conversation && !first, code: how.code });
+      if (first) {
+        await api.agentOpen(id, false);
+        onSelect("");
+      }
+      // The message comes back to be edited, as the terminal does it.
+      if (how.conversation) putBack([prompt], first ? "" : id);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  // Esc twice picks a message to rewind to, as in the terminal. Once, it takes
+  // back what is queued, or a message sent a moment ago; otherwise, while
+  // Claude works, it stops it.
+  const lastEsc = useRef(0);
+  const escape = useRef();
+  escape.current = () => {
+    if (peekRef.current) return setPeek(null);
+    const now = Date.now();
+    if (now - lastEsc.current < DOUBLE_ESC_MS) {
+      lastEsc.current = 0;
+      if (!readOnly && (prompts.length || earlier)) setRewinding({});
+      return;
+    }
+    lastEsc.current = now;
+    if (readOnly || lost) return;
+    const s = lastSent.current;
+    if (queued.length) takeBackQueued();
+    else if (s?.session === id && !s.queued && now - s.at < TAKE_BACK_MS && running === "dv") takeBack(s);
+    else if (busy && running === "dv") return interrupt();
+    else return;
+    lastEsc.current = 0;
+  };
+  const onEscape = useCallback(() => escape.current(), []);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!activeRef.current || e.key !== "Escape" || e.shiftKey || isTyping(e.target)) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      onEscape();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onEscape]);
+
+  // Up, on the box's first line, brings back what is queued, else steps back
+  // through what was said; Down steps forward again, to the draft it replaced.
+  const recall = (e) => {
+    const el = e.currentTarget;
+    if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey || el.selectionStart !== el.selectionEnd) return;
+    const b = browse.current?.i < history.length && draft === history[browse.current.i] ? browse.current : null;
+    if (e.key === "ArrowUp") {
+      if (draft.lastIndexOf("\n", el.selectionStart - 1) >= 0) return;
+      if (!draft.trim() && queued.length) {
+        e.preventDefault();
+        takeBackQueued();
+        return;
+      }
+      const at = b ? b.i : draft.trim() ? 0 : history.length;
+      if (at === 0) return;
+      e.preventDefault();
+      browse.current = { i: at - 1, saved: b ? b.saved : draft };
+      setDraft(history[at - 1]);
+      requestAnimationFrame(() => el.setSelectionRange(0, 0));
+    } else if (e.key === "ArrowDown" && b) {
+      if (draft.indexOf("\n", el.selectionEnd) >= 0) return;
+      e.preventDefault();
+      browse.current = b.i + 1 < history.length ? { i: b.i + 1, saved: b.saved } : null;
+      setDraft(browse.current ? history[b.i + 1] : b.saved);
+    }
+  };
+
+  // Until a session starts, it is in whatever the user's settings start it in.
+  const asked = id ? live : picks;
+  const mode = asked?.mode || defaultMode || "default";
+  const cycleMode = () => {
+    const i = modes.findIndex((m) => m.id === mode);
+    settings({ mode: modes[(i + 1) % modes.length].id });
+  };
+  const modelChoices = useMemo(
+    // "" is the model the user's settings start on; Claude Code's "default" is the one it recommends.
+    () => models.map((c) => ({ ...c, label: prettyModel(c.model) || c.label, tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "" })),
+    [models],
+  );
+  // The model the session is on: what it reports once running, else what was
+  // asked for, else - resumed - what the transcript was last answered on.
+  const chosen = modelChoices.find((m) => m.id === (asked?.model || ""));
+  const onModel =
+    (live?.using && modelChoices.find((m) => sameModel(m.model, live.using))) ||
+    (!live?.model && live?.lastModel && modelChoices.find((m) => sameModel(m.model, live.lastModel))) ||
+    chosen;
+  const modelLabel = prettyModel(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || prettyModel(live.lastModel))) || chosen?.label || asked?.model;
+  const effort = live?.effortUsing || asked?.effort || onModel?.effort || "";
+
+  // Asked here, where the terminal would ask it, one at a time.
+  const waiting = requests.filter((r) => r.session === id);
+  const ask = waiting[0];
+  const [drafts, setDrafts] = useState({}); // request id -> { note, comments }
+  // The message box gives way to a request as the terminal's does, but not
+  // with a message half written, where a digit typed next would answer it.
+  const grabFocus = () => {
+    const a = document.activeElement;
+    return activeRef.current && (!a || a === document.body || (a === inputRef.current && !a.value));
+  };
+  useEffect(() => {
+    const a = document.activeElement;
+    if (activeRef.current && !ask && !readOnly && (!a || a === document.body)) inputRef.current?.focus({ preventScroll: true });
+  }, [ask?.id]);
+
+  // c and a act on the edit line under the pointer, as they do in Diff.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!activeRef.current || (e.key !== "c" && e.key !== "a") || e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      const cell = document.querySelector(".agent-edit [data-line][data-side]:hover");
+      if (!cell) return;
+      e.preventDefault();
+      const ev = commentEvent(cell);
+      cell.closest(".agent-edit").dispatchEvent(e.key === "c" ? ev : new CustomEvent("dv:attach", { detail: ev.detail }));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // The box grows with what is written in it, to a point.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 320) + "px";
+  }, [draft, blank, readOnly, lost]);
+
+  const [dropping, setDropping] = useState(false);
+  const fileRef = useRef(null);
+  const canSend = !!(draft.trim() || images.length || attached.length);
+  const command = useMemo(() => commandOf(draft, commands), [draft, commands]);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    menuRef.current?.children[pick]?.scrollIntoView({ block: "nearest" });
+  }, [pick]);
+  const complete = (c) => {
+    setDraft(`/${c.name} `);
+    inputRef.current?.focus();
+  };
+  const box = (
+    <div className="agent-composer">
+      <div
+        className={cx("composer-card", dropping && "dropping", command && "command")}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget) || setDropping(false)}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDropping(false);
+          addImages([...e.dataTransfer.files]);
+        }}
+      >
+        {suggestions.length > 0 && (
+          <div className="model-list up command-menu" ref={menuRef}>
+            {suggestions.map((c, i) => (
+              <button
+                key={c.name}
+                className={cx(i === pick && "on")}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setPick(i)}
+                onClick={() => complete(c)}
+              >
+                <span className="model-name">
+                  /{c.name}
+                  {c.argumentHint && <span className="command-args"> {c.argumentHint}</span>}
+                </span>
+                {c.description && <span className="model-note">{c.description}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        {(attached.length > 0 || images.length > 0) && (
+          <div className={cx("agent-attached", command && "held")}>
+            {images.map((img) => (
+              <span className="agent-image-chip" key={img.key} title={img.name || "Image"}>
+                <img src={dataURL(img)} alt="" />
+                <button className="agent-chip-x" onClick={() => setImages((list) => list.filter((x) => x !== img))} title="Leave it out">
+                  <IconX size={10} />
+                </button>
+              </span>
+            ))}
+            {attached.map((a) => {
+              const t = a.kind === "thread" ? threads.find((x) => x.id === a.threadId) : null;
+              if (a.kind === "thread" && !t) return null;
+              return (
+                <Chip
+                  key={a.key}
+                  kind={a.kind === "lines" ? "code" : a.kind === "thread" ? "comment" : "file"}
+                  path={t ? t.file : a.file}
+                  lines={t ? span(t.startLine, t.endLine) : a.kind === "lines" ? span(a.start, a.end) : ""}
+                  onClick={() => onJump(a)}
+                  onRemove={() => onDetach(a.key)}
+                />
+              );
+            })}
+            {attached.length > 1 && (
+              <button className="link" onClick={onClearAttached}>
+                Clear
+              </button>
+            )}
+            {command && <span className="agent-attached-held">Kept for your next message</span>}
+          </div>
+        )}
+        <textarea
+          ref={inputRef}
+          value={draft}
+          rows={blank ? 2 : 1}
+          placeholder={busy ? "Add to what Claude is doing" : blank ? "Ask Claude to do something in this repository" : "Reply to Claude"}
+          onChange={(e) => {
+            setDraft(e.target.value);
+          }}
+          onPaste={(e) => {
+            const files = imagesIn(e.clipboardData);
+            if (!files.length) return;
+            if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+            addImages(files);
+          }}
+          onKeyDown={(e) => {
+            // With nothing to select, Shift+arrows go on to step the modes.
+            if (!(draft === "" && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) e.stopPropagation();
+            // Over suggestions, the arrows pick one and Tab takes it; so does
+            // Enter, unless it is what is written already.
+            if (suggestions.length && !e.nativeEvent.isComposing) {
+              const c = suggestions[pick];
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setPick((p) => (p + (e.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length);
+                return;
+              }
+              if ((e.key === "Tab" && !e.shiftKey) || (e.key === "Enter" && !e.shiftKey && draft !== `/${c.name}`)) {
+                e.preventDefault();
+                complete(c);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setUnsuggested(draft);
+                return;
+              }
+            }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              send();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onEscape();
+            } else if (e.key === "Tab" && e.shiftKey) {
+              e.preventDefault();
+              cycleMode();
+            } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              recall(e);
+            }
+          }}
+        />
+        {command && !suggestions.length && (
+          <div className="composer-command" title={command.description}>
+            <span className="composer-command-name">/{command.name}</span>
+            <span className="composer-command-note">{command.description || "A Claude Code command"}</span>
+          </div>
+        )}
+        <div className="composer-bar">
+          <AddImages
+            onFiles={() => fileRef.current.click()}
+            onPaste={() => pasteImages().then((files) => (files.length ? addImages(files) : setError("There is no image to paste."))).catch((e) => setError(e.message))}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept={IMAGE_TYPES.join(",")}
+            multiple
+            hidden
+            onChange={(e) => {
+              addImages([...e.target.files]);
+              e.target.value = "";
+            }}
+          />
+          {/* Hidden for the moment it takes to ask Claude Code, rather than naming no model. */}
+          {modelChoices.length > 0 && (
+            <ModelPicker
+              label={modelLabel}
+              models={modelChoices}
+              model={asked?.model || ""}
+              efforts={onModel?.efforts}
+              effort={effort}
+              onPick={(patch) => settings(patch)}
+            />
+          )}
+          <Picker
+            label={modes.find((m) => m.id === mode)?.label || mode}
+            title="Permission mode (Shift+Tab)"
+            choices={modes}
+            value={mode}
+            onPick={(m) => settings({ mode: m })}
+          />
+          <span className="spacer" />
+          {busy && running === "dv" && !canSend ? (
+            <button className="composer-send stop" onClick={interrupt} title="Stop what Claude is doing (Esc)">
+              <IconStop size={12} />
+            </button>
+          ) : (
+            <button
+              className="composer-send"
+              onClick={send}
+              disabled={!canSend}
+              title={busy ? "Send: Claude reads it once the step it is on is done (Enter)" : "Send (Enter, Shift+Enter for a new line)"}
+            >
+              <IconArrowUp size={15} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // A message on its way in: pictures sent from here are shown from what was sent.
+  const bubble = (w) => (
+    <Prompt
+      key={w.uuid}
+      item={{ kind: w.command || commandOf(w.text, commands) ? "command" : "prompt", text: w.text, images: w.images }}
+      pictures={w.pictures || sent.current.get(w.uuid)?.images}
+      pending
+      queued={w.queued}
+      hint={w.queued ? "Esc or ↑ to edit" : w.uuid === justSent ? "Esc to edit" : undefined}
+    />
+  );
+
+  if (!available) {
+    return (
+      <div className="agent-pane" hidden={!active}>
+        <div className="empty-state">
+          <h2>Claude Code is not installed</h2>
+          <p>
+            The Agent view runs the <code>claude</code> CLI, which is not on your PATH. Install it and reload.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <OpenCall.Provider value={setPeek}>
+    <div className="agent-pane" hidden={!active}>
+      {id && (
+        // What the session is and where it runs, its card in the list says; this
+        // is what to do in it.
+        <header className="agent-head">
+          {peekItem ? (
+            <PeekTitle item={peekItem} root={root} busy={!!live?.busy} running={running} onBack={() => setPeek(null)} />
+          ) : under && !blank && (
+            <span className="agent-under">
+              <button className="agent-under-text" onClick={() => toYours(-1)} title="Back to this message of yours ([)">
+                <span className="dim">You:</span> {under.text}
+              </button>
+              <button className="ghost" onClick={() => toYours(-1)} title="Your previous message ([)">
+                <IconChevronUp size={12} />
+              </button>
+              <button className="ghost" onClick={() => toYours(1)} title="Your next message (])">
+                <IconChevronDown size={12} />
+              </button>
+            </span>
+          )}
+          <span className="spacer" />
+          {live?.context?.max > 0 && <ContextMeter context={live.context} onCompact={!readOnly && !lost ? compactNow : null} />}
+          {live?.cost > 0 && <span className="dim agent-cost">${live.cost.toFixed(2)}</span>}
+          {/* As on its card: what closing does depends on what runs it, and says so. */}
+          <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running)}>
+            <IconX size={13} />
+          </button>
+        </header>
+      )}
+
+      {blank ? (
+        <div className="agent-start">
+          <h1 className="agent-start-title">How can I help you today?</h1>
+          {box}
+          <div className="agent-suggestions">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => {
+                  setDraft(s);
+                  inputRef.current?.focus();
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          {error && <div className="agent-note error">{error}</div>}
+        </div>
+      ) : (
+      <>
+      {peekItem &&
+        (peekable(peekItem) === "agent" ? (
+          <SubagentView
+            key={peek}
+            session={id}
+            call={peek}
+            working={working(peekItem, !!live?.busy, running)}
+            root={root}
+            view={view}
+            contextLines={contextLines}
+            wrap={wrap}
+            onComment={onComment}
+            onThreadAction={onThreadAction}
+            onSymbol={onSymbol}
+            onOpenFile={onOpenFile}
+          />
+        ) : (
+          <TaskOutput key={peek} session={id} call={peek} />
+        ))}
+      {/* Kept, hidden, while a call is open: coming back finds the place held. */}
+      <div className="agent-scroll" ref={scrollRef} onScroll={onScroll} hidden={!!peekItem}>
+        <div className={cx("agent-log", lost && "lost")}>
+          {earlier && items.length > 0 && (
+            <div className="agent-earlier">
+              {/* Asked for and not come yet, it is still the one it was. */}
+              <button className="ghost" onClick={showEarlier} disabled={!!from && earlier.next === from}>
+                <IconChevronUp size={12} />
+                {from && earlier.next === from ? "Loading" : "Show the conversation before this"}
+              </button>
+              {earlier.messages > 0 && (
+                <span className="dim">
+                  {earlier.messages} {earlier.messages === 1 ? "message" : "messages"}
+                </span>
+              )}
+            </div>
+          )}
+          {items.map((it) => (
+            <Item
+              key={it.key}
+              item={it}
+              session={id}
+              hint={it.uuid === justSent && running === "dv" ? "Esc to edit" : undefined}
+              run={runs.byFirst.get(it.key)}
+              folded={runs.folded.has(it.key)}
+              root={root}
+              // As last heard, while dv is out of reach: the rows hold still instead.
+              busy={!!live?.busy}
+              running={running}
+              view={view}
+              contextLines={contextLines}
+              wrap={wrap}
+              threads={byTool.get(it.toolId) || NO_THREADS}
+              canRewind={!readOnly}
+              onRewind={setRewinding}
+              onAttach={readOnly ? null : onAttach}
+              onComment={onComment}
+              onThreadAction={onThreadAction}
+              onSymbol={onSymbol}
+              onOpenFile={onOpenFile}
+            />
+          ))}
+          {live?.blocks?.map((b, i) => (
+            <Streaming key={i} block={b} />
+          ))}
+          {/* What Claude is doing is under what it was asked; what waits for it, under that. */}
+          {incoming.filter((w) => !w.queued).map(bubble)}
+          {busy && !ask && <Activity live={live} items={items} root={root} />}
+          {incoming.filter((w) => w.queued).map(bubble)}
+          {ask && (
+            <div className="agent-ask prompt">
+              <div className="agent-ask-head prompt-head">
+                <RequestTitle req={ask} />
+                <span className="spacer" />
+                {waiting.length > 1 && <span className="prompt-count">{waiting.length - 1} more after this</span>}
+              </div>
+              <Request
+                key={ask.id}
+                req={ask}
+                active
+                grab={grabFocus}
+                draft={drafts[ask.id]}
+                onDraft={(patch) => setDrafts((d) => ({ ...d, [ask.id]: { ...d[ask.id], ...patch } }))}
+                view={view}
+                contextLines={contextLines}
+                wrap={wrap}
+                onSymbol={onSymbol}
+                onOpenFile={onOpenFile}
+              />
+            </div>
+          )}
+          {(live?.error || error) && <div className="agent-note error">{error || live.error}</div>}
+        </div>
+        {/* A long conversation takes a moment to read and a moment to draw. */}
+        {id && !live && !lost && !items.length && !incoming.length && (
+          <div className="agent-loading">
+            <Orb state="breathing" />
+            Loading the conversation
+          </div>
+        )}
+        {away && (
+          <div className="agent-jump">
+            <button onClick={toLatest} title="Scroll to the end of the conversation">
+              <IconChevronDown size={12} /> Latest
+            </button>
+          </div>
+        )}
+      </div>
+
+      {atWork.length > 0 && <AtWork calls={atWork} open={peekItem?.toolId} root={root} onOpen={(call) => setPeek(peekItem?.toolId === call ? null : call)} />}
+      {lost && id ? (
+        <div className="agent-readonly agent-lost">
+          Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back.
+        </div>
+      ) : peekItem ? null : readOnly ? (
+        <div className="agent-readonly">
+          This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it.
+        </div>
+      ) : (
+        box
+      )}
+      </>
+      )}
+
+      {rewinding && (
+        <RewindPicker
+          prompts={rewindable}
+          loading={picking && !!earlier && allPrompts?.id !== id}
+          start={rewinding.prompt}
+          running={running}
+          onClose={() => setRewinding(null)}
+          onRewind={rewind}
+        />
+      )}
+    </div>
+    </OpenCall.Provider>
+  );
+}
+
+// OpenCall opens the conversation page on a call, from the call's own line.
+const OpenCall = createContext(null);
+
+// AtWork is what Claude left at work, over the message box: each agent, and
+// each command in the background, opens on what it is doing.
+function AtWork({ calls, open, root, onOpen }) {
+  return (
+    <div className="agent-at-work">
+      {calls.map((c) => {
+        const agent = peekable(c) === "agent";
+        const { what } = toolSummary(c.tool, c.input, root);
+        return (
+          <button
+            key={c.toolId}
+            className={cx("agent-at-work-call", open === c.toolId && "on")}
+            onClick={() => onOpen(c.toolId)}
+            title={open === c.toolId ? "Back to the conversation (Esc)" : agent ? "See this agent's conversation as it goes" : "See this command's output as it comes"}
+          >
+            <span className="agent-at-work-dot" />
+            <span className="agent-at-work-kind">{agent ? c.input?.subagent_type || "Agent" : "Command"}</span>
+            <span className="agent-at-work-what">{what}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// PeekTitle stands in the header for the call open: what it is, and how it is.
+function PeekTitle({ item, root, busy, running, onBack }) {
+  const agent = peekable(item) === "agent";
+  const { what } = toolSummary(item.tool, item.input, root);
+  const state = toolState(item.result, item.task, busy, running);
+  return (
+    <span className="agent-peek-title">
+      <button className="ghost" onClick={onBack} title="Back to the conversation (Esc)">
+        <IconBack size={13} />
+      </button>
+      <span className="agent-peek-kind">{agent ? item.input?.subagent_type || "Agent" : "Command"}</span>
+      <span className="agent-peek-what">{what}</span>
+      <span className={cx("agent-tool-state", state)} title={STATES[state]} />
+      <span className="dim">{STATES[state]}</span>
+    </span>
+  );
+}
+
+// useAtEnd keeps a view at its end as what is in it grows, until the reader
+// scrolls up from there.
+function useAtEnd() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    let stick = true;
+    const onScroll = () => {
+      stick = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    };
+    const ro = new ResizeObserver(() => stick && (el.scrollTop = el.scrollHeight));
+    ro.observe(el);
+    ro.observe(el.firstElementChild);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+  return ref;
+}
+
+// SubagentView is the conversation of an agent a call started, followed as it
+// goes. Its own agents are not opened from here.
+function SubagentView({ session, call, working, root, ...rest }) {
+  const { items, live } = useSession(session, call);
+  const runs = useMemo(() => runsOf(items, working, "dv"), [items, working]);
+  const ref = useAtEnd();
+  return (
+    <OpenCall.Provider value={null}>
+      <div className="agent-scroll" ref={ref}>
+        <div className="agent-log">
+          {items.map((it) => (
+            <Item
+              key={it.key}
+              item={it}
+              session={session}
+              run={runs.byFirst.get(it.key)}
+              folded={runs.folded.has(it.key)}
+              root={root}
+              busy={working}
+              running="dv"
+              threads={NO_THREADS}
+              canRewind={false}
+              {...rest}
+            />
+          ))}
+          {working && live && <Activity live={null} items={items} root={root} />}
+        </div>
+        {(!live || !live.found) && (
+          <div className="agent-loading">
+            <Orb state="breathing" />
+            {live ? "Waiting for the agent to start" : "Loading the agent's conversation"}
+          </div>
+        )}
+      </div>
+    </OpenCall.Provider>
+  );
+}
+
+// Past this, the start of a command's output is let go.
+const OUTPUT_MAX = 1 << 20;
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+// TaskOutput is what a command left running in the background has written,
+// followed as it writes more.
+function TaskOutput({ session, call }) {
+  const [out, setOut] = useState(null); // { text, cut, gone }
+  useEffect(
+    () =>
+      api.agentTaskOutput(session, call, (c) =>
+        setOut((o) => {
+          if (c.gone) return { text: "", ...o, gone: true };
+          const text = (c.reset || !o ? "" : o.text) + c.text;
+          return { text: text.slice(-OUTPUT_MAX), cut: (c.reset ? c.cut : o?.cut) || text.length > OUTPUT_MAX, gone: false };
+        }),
+      ),
+    [session, call],
+  );
+  // A progress line redraws itself after a carriage return: the last draw is what shows.
+  const shown = useMemo(
+    () => (out?.text || "").replace(ANSI, "").split("\n").map((l) => l.slice(l.lastIndexOf("\r", l.length - 2) + 1)).join("\n"),
+    [out?.text],
+  );
+  const ref = useAtEnd();
+  return (
+    <div className="agent-scroll" ref={ref}>
+      <div className="agent-log">
+        {out?.cut && <div className="agent-note">Earlier output is left out.</div>}
+        {shown && <pre className="agent-task-output">{shown}</pre>}
+        {out && !shown && <div className="agent-note">{out.gone ? "The output is no longer kept." : "No output yet."}</div>}
+      </div>
+      {!out && (
+        <div className="agent-loading">
+          <Orb state="breathing" />
+          Loading the output
+        </div>
+      )}
+    </div>
+  );
+}
+
+// closeHint says what closing a session does, which depends on what runs it.
+function closeHint(running) {
+  if (running === "terminal") {
+    return "Stop following this session in dv. It keeps running in its terminal, which goes back to being the only place it asks for permission.";
+  }
+  const after = "It moves to Recent, and carries on from where it was when you next send to it.";
+  return running === "dv" ? `Close the session: dv stops the Claude Code running it. ${after}` : `Close the session. ${after}`;
+}
+
+const Item = memo(function Item(props) {
+  const { item } = props;
+  switch (item.kind) {
+    case "prompt":
+    case "command":
+      return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} />;
+    case "text":
+      return <div className="markdown agent-text" dangerouslySetInnerHTML={{ __html: md.render(item.text) }} />;
+    case "thinking":
+      return <Thinking text={item.text} />;
+    case "note":
+      return <div className={cx("agent-note", item.error && "error")}>{item.text}</div>;
+    case "output":
+      return <div className={cx("markdown agent-text agent-output", item.error && "error")} dangerouslySetInnerHTML={{ __html: mdOutput.render(item.text) }} />;
+    case "compact":
+      return <Compacted item={item} />;
+    case "mode":
+      return <div className="agent-mode-line">{modeChange(item.from, item.text)}</div>;
+    case "tool":
+      // Folded into the run's first call, but still one child per item: the
+      // view finds items by their place among the conversation's children.
+      if (props.folded) return <div hidden />;
+      if (props.run) {
+        return <ToolGroup calls={props.run} session={props.session} root={props.root} busy={props.busy} running={props.running} onOpenFile={props.onOpenFile} />;
+      }
+      return item.result?.edited ? (
+        <EditCard {...props} />
+      ) : (
+        <ToolRow item={item} session={props.session} root={props.root} busy={props.busy} running={props.running} onOpenFile={props.onOpenFile} />
+      );
+  }
+  return null;
+});
+
+// Prompt is what you said, set to the right. One still on its way in is
+// pending; its pictures are the ones sent, where the transcript's are fetched.
+function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind }) {
+  const { text, refs } = useMemo(() => splitContext(item.text), [item.text]);
+  const n = item.images || 0;
+  const srcs = pictures ? pictures.map(dataURL) : pending ? [] : Array.from({ length: n }, (_, i) => api.agentPromptImageURL(session, item.uuid, i));
+  return (
+    <div className={cx("agent-prompt", item.kind === "command" && "command", pending && "pending")}>
+      {srcs.length > 0 && (
+        <div className="agent-prompt-images">
+          {srcs.map((src, i) => (
+            <ToolImage key={i} src={src} name={`Image ${i + 1}`} />
+          ))}
+        </div>
+      )}
+      {!srcs.length && n > 0 && <div className="agent-prompt-text dim">{n === 1 ? "An image" : `${n} images`}</div>}
+      {text && <div className="agent-prompt-text">{text}</div>}
+      {refs.length > 0 && (
+        <div className="agent-chips">
+          {refs.map((r, i) => (
+            <Chip key={i} {...r} />
+          ))}
+        </div>
+      )}
+      {(queued || hint) && (
+        <div className="agent-prompt-foot">
+          {queued && <span title="Claude reads it once the step it is on is done">Queued</span>}
+          {hint && <span className="agent-prompt-hint">{hint}</span>}
+        </div>
+      )}
+      {canRewind && item.uuid && !pending && (
+        <button className="ghost agent-rewind" onClick={() => onRewind({ prompt: item })} title="Rewind to before this message (Esc Esc)">
+          <IconUndo size={12} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Kept as written, line breaks and all, less the blank lines around it.
+const Thinking = ({ text }) => <div className="agent-thinking">{text.trim()}</div>;
+
+// Permission modes as the mode picker names them.
+const MODE_NAMES = {
+  default: "Ask before edits",
+  acceptEdits: "Accept edits",
+  plan: "Plan",
+  auto: "Auto",
+  bypassPermissions: "Bypass permissions",
+  dontAsk: "Don't ask",
+};
+
+// modeChange words a change of permission mode: plan mode is a place Claude
+// goes into and comes out of, the others are switched between.
+function modeChange(from, to) {
+  const name = MODE_NAMES[to] || to;
+  if (to === "plan") return "Entered plan mode";
+  if (from === "plan") return `Exited plan mode · ${name}`;
+  return `Switched to ${name}`;
+}
+
+// Compacted is where Claude Code summarised the conversation to free its
+// context. What came before stays on the page; Claude has only the summary.
+function Compacted({ item }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const { auto, before, after } = item.compacted;
+  return (
+    <div className="agent-compacted" ref={ref}>
+      <button
+        className="agent-compacted-line"
+        onClick={() => {
+          setOpen(!open);
+          toggled(ref.current, !open);
+        }}
+        disabled={!item.text}
+        title={`${auto ? "The context was nearly full, so Claude Code" : "Claude Code"} summarised the conversation. Claude carries on from the summary, not from the messages above.`}
+      >
+        {item.text && (open ? <IconChevronDown size={11} /> : <IconChevron size={11} />)}
+        Conversation compacted{auto ? " automatically" : ""}
+        {before > 0 && <span className="agent-compacted-tokens">{after > 0 ? `${tokens(before)} → ${tokens(after)}` : tokens(before)}</span>}
+      </button>
+      {open && <div className="markdown agent-compacted-text" dangerouslySetInnerHTML={{ __html: md.render(item.text) }} />}
+    </div>
+  );
+}
+
+// Streaming is a reply as it arrives: its text, or its thinking. What a tool
+// call is doing shows in the Activity line under it.
+function Streaming({ block }) {
+  if (block.kind === "text") {
+    return <div className="markdown agent-text streaming" dangerouslySetInnerHTML={{ __html: md.render(block.text || "") }} />;
+  }
+  if (block.kind === "thinking" && block.text) return <Thinking text={block.text} />;
+  return null;
+}
+
+// Activity is what Claude is doing, while it works: an orb whose motion is the
+// kind of work, and a word or two for it.
+function Activity({ live, items, root }) {
+  const [state, label] = JSON.parse(useDwell(JSON.stringify(activityOf(live, items, root)), ACTIVITY_DWELL_MS));
+  return (
+    <div className="agent-working">
+      <Fade value={state} className="orb">
+        {(s) => <Orb state={s} />}
+      </Fade>
+      <Fade value={label} className="agent-working-label">
+        {(l) => l}
+      </Fade>
+    </div>
+  );
+}
+
+// Longer than a fade, so one finishes before the next starts; a run of quick
+// calls would otherwise flicker.
+const ACTIVITY_DWELL_MS = 1000;
+const FADE_MS = 600; // .fade-layer's animation
+
+// Fade crossfades from one value to the next: the orbs themselves only cut.
+function Fade({ value, className, children }) {
+  const [layers, setLayers] = useState([value]);
+  if (layers.at(-1) !== value) setLayers([layers.at(-1), value]);
+  useEffect(() => {
+    if (layers.length === 1) return;
+    const t = setTimeout(() => setLayers((ls) => ls.slice(-1)), FADE_MS);
+    return () => clearTimeout(t);
+  }, [layers]);
+  return (
+    <span className={cx("fade", className)}>
+      {layers.map((v, i) => (
+        <span key={v} className={cx("fade-layer", i < layers.length - 1 && "leaving")}>
+          {children(v)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// useDwell follows value, but holds each value it takes for at least ms.
+function useDwell(value, ms) {
+  const [shown, setShown] = useState(value);
+  const since = useRef(Date.now());
+  useEffect(() => {
+    if (value === shown) return;
+    const t = setTimeout(() => {
+      since.current = Date.now();
+      setShown(value);
+    }, since.current + ms - Date.now());
+    return () => clearTimeout(t);
+  }, [value, shown, ms]);
+  return shown;
+}
+
+const TOOL_ORBS = {
+  Read: "searching", Grep: "searching", Glob: "searching", WebSearch: "searching", WebFetch: "searching",
+  Edit: "shaping", Write: "shaping", NotebookEdit: "shaping",
+  Agent: "connecting", Task: "connecting",
+};
+
+// activityOf is the orb for what Claude is doing and the words beside it,
+// which name the call.
+function activityOf(live, items, root) {
+  if (live?.status === "compacting") return ["weaving", "Compacting the conversation"];
+  const block = live?.blocks?.at(-1);
+  if (block?.kind === "thinking") return ["solving", "Thinking"];
+  if (block?.kind === "text") return ["composing", "Writing"];
+  // A call still out, the latest first: its name, and what it is on.
+  const call = block?.kind === "tool" ? { tool: block.tool } : items.findLast((it) => it.kind === "tool" && !it.result);
+  if (call) {
+    const { name, what } = toolSummary(call.tool, call.input, root);
+    return [TOOL_ORBS[call.tool] || "working", [name || call.tool, what].filter(Boolean).join(" · ")];
+  }
+  // A terminal does not say it is compacting, and dv is not always told; past
+  // the point Claude Code compacts at, with no call out, that is what it does.
+  const c = live?.context;
+  if (c?.compact > 0 && c.used >= c.compact) return ["weaving", "Compacting the conversation"];
+  // Nothing streaming and no call out: waiting on the model.
+  return ["breathing", "Working"];
+}
+
+// toolSummary is the line a tool call is shown as: what it acted on.
+function toolSummary(tool, input = {}, root) {
+  const rel = (p) => (p && root && p.startsWith(root + "/") ? p.slice(root.length + 1) : p || "");
+  const firstLine = (s) => (s || "").split("\n")[0];
+  switch (tool) {
+    case "Bash":
+    case "PowerShell":
+      return { what: input.description || firstLine(input.command), mono: !input.description };
+    case "Read":
+      return { what: rel(input.file_path) + (input.offset ? `:${input.offset}` : ""), mono: true };
+    case "Edit":
+    case "Write":
+    case "NotebookEdit":
+      return { what: rel(input.file_path || input.notebook_path), mono: true };
+    case "Grep":
+      return { what: input.pattern + (input.glob ? `  ${input.glob}` : input.path ? `  ${rel(input.path)}` : ""), mono: true };
+    case "Glob":
+      return { what: input.pattern, mono: true };
+    case "WebFetch":
+      return { what: input.url, mono: true };
+    case "WebSearch":
+      return { what: input.query };
+    case "Agent":
+    case "Task":
+      return { what: input.description || firstLine(input.prompt) };
+    case "TodoWrite":
+      return { what: "Updated the to-do list" };
+    case "AskUserQuestion":
+      return { what: input.questions?.[0]?.question || "" };
+    case "ExitPlanMode":
+      return { what: "Proposed a plan" };
+    case "Skill":
+      return { what: input.skill || input.command || "" };
+  }
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
+  if (mcp) return { name: mcp[1], what: mcp[2] };
+  return { what: "" };
+}
+
+function ToolRow({ item, session, root, busy, running, onOpenFile }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const input = item.input || {};
+  const r = item.result;
+  const d = r?.detail;
+  const { name, what, mono } = toolSummary(item.tool, input, root);
+  const state = toolState(r, item.task, busy, running);
+  const sum = toolDetail(item.tool, r, item.task, state);
+  const rel = inRepo(input.file_path, root);
+  const file = item.tool === "Read" && d?.kind === "text" && rel && { path: rel, line: d.start || 1 };
+  const openCall = useContext(OpenCall);
+  // A command's output is only kept while it runs; an agent's conversation, for good.
+  const peek = openCall && peekable(item);
+  const opens = peek === "agent" || (peek === "command" && state === "background");
+  return (
+    <div className={cx("agent-tool", open && "open", state)} id={"tool-" + item.toolId} ref={ref}>
+      <div className="agent-tool-row">
+        <button
+          className="agent-tool-toggle"
+          onClick={() => {
+            setOpen(!open);
+            toggled(ref.current, !open);
+          }}
+        >
+          <span className={cx("agent-tool-state", state)} title={STATES[state]} />
+          <span className="agent-tool-name">{name || item.tool}</span>
+          <span className={cx("agent-tool-what", mono && "mono")}>
+            {LRM}
+            {what}
+          </span>
+          {sum && <span className="agent-tool-sum">{sum}</span>}
+        </button>
+        {file && (
+          <button className="view-file" onClick={() => onOpenFile(file.path, file.line)} title="The file as it is now, where Claude read">
+            <IconFile size={12} />
+            <span className="btn-label">File</span>
+          </button>
+        )}
+        {opens && (
+          <button className="view-file" onClick={() => openCall(item.toolId)} title={peek === "agent" ? "The agent's own conversation" : "The command's output so far, as it comes"}>
+            <span className="btn-label">{peek === "agent" ? "Conversation" : "Output"}</span>
+          </button>
+        )}
+      </div>
+      {item.tool === "TodoWrite" && <Todos todos={input.todos} />}
+      {open &&
+        (d?.kind === "image" && !r.isError ? (
+          <ToolImage src={api.agentImageURL(session, item.toolId)} detail={d} name={what} />
+        ) : (
+          <div className="agent-tool-body">
+            <ToolBody item={item} session={session} root={root} onOpenFile={onOpenFile} />
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ToolGroup is calls made one after another, once they are done: one line for
+// what they did together, which opens on each call's own line.
+function ToolGroup({ calls, session, root, busy, running, onOpenFile }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const failed = calls.filter((c) => c.result?.isError).length;
+  return (
+    <div className={cx("agent-tool", "agent-tools", open && "open")} ref={ref}>
+      <div className="agent-tool-row">
+        <button
+          className="agent-tool-toggle"
+          onClick={() => {
+            setOpen(!open);
+            toggled(ref.current, !open);
+          }}
+          title={open ? "Fold these calls into one line" : "Show each call"}
+        >
+          {open ? <IconChevronDown size={11} /> : <IconChevron size={11} />}
+          <span className="agent-tool-what">{didTogether(calls)}</span>
+          {failed > 0 && <span className="agent-tool-sum failed">{failed} failed</span>}
+        </button>
+      </div>
+      {open && (
+        <div className="agent-tools-list">
+          {calls.map((c) => (
+            <ToolRow key={c.key} item={c} session={session} root={root} busy={busy} running={running} onOpenFile={onOpenFile} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What calls of each kind did, counted: "read 3 files".
+const DID = [
+  [["Read"], "read", "a file", "files"],
+  [["Grep", "Glob", "LS"], "searched for", "a pattern", "patterns"],
+  [["Bash", "PowerShell"], "ran", "a command", "commands"],
+  [["WebFetch"], "fetched", "a page", "pages"],
+  [["WebSearch"], "ran", "a web search", "web searches"],
+  [["Agent", "Task"], "ran", "an agent", "agents"],
+  [["Skill"], "used", "a skill", "skills"],
+];
+// One kind for the rest, so they count together.
+const DID_OTHER = [[], "used", "a tool", "tools"];
+
+function didTogether(calls) {
+  const counts = new Map();
+  for (const c of calls) {
+    const kind = DID.find(([tools]) => tools.includes(c.tool)) || DID_OTHER;
+    counts.set(kind, (counts.get(kind) || 0) + 1);
+  }
+  const said = [...counts].map(([[, verb, one, many], n]) => `${verb} ${n === 1 ? one : `${n} ${many}`}`).join(", ");
+  return said[0].toUpperCase() + said.slice(1);
+}
+
+// foldable is a call that goes into a run of them: done, and saying no more
+// on its own line than the run's does. An edit is its diff, the to-do list
+// its list, and a question or a plan is read for itself.
+const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode"]);
+function foldable(it, busy, running) {
+  if (it.kind !== "tool" || it.result?.edited || UNFOLDED.has(it.tool)) return false;
+  return ["done", "failed", "stopped"].includes(toolState(it.result, it.task, busy, running));
+}
+
+// runsOf finds calls done one after another, which read as one line: by the
+// first call's key, the run; and the keys of the calls folded into it.
+function runsOf(items, busy, running) {
+  const byFirst = new Map();
+  const folded = new Set();
+  let run = [];
+  const end = () => {
+    if (run.length > 1) {
+      byFirst.set(run[0].key, run);
+      for (const it of run.slice(1)) folded.add(it.key);
+    }
+    run = [];
+  };
+  for (const it of items) {
+    if (foldable(it, busy, running)) run.push(it);
+    else end();
+  }
+  end();
+  return { byFirst, folded };
+}
+
+// peekable is what a call can be opened on: an agent on its conversation, a
+// command left in the background on its output.
+function peekable(it) {
+  if (it.kind !== "tool") return "";
+  if (it.tool === "Agent" || it.tool === "Task") return "agent";
+  if ((it.tool === "Bash" || it.tool === "PowerShell") && it.result?.detail?.background) return "command";
+  return "";
+}
+
+const working = (it, busy, running) => ["running", "background"].includes(toolState(it.result, it.task, busy, running));
+
+const STATES = {
+  running: "Running",
+  background: "Running in the background",
+  unfinished: "Never finished",
+  failed: "Failed",
+  stopped: "Stopped",
+  done: "Done",
+};
+
+// toolState is what a call's dot says. Work left in the background is not done
+// when its result comes, which only says it started, but when Claude Code says
+// it ended - or never, once nothing is running it.
+function toolState(r, task, busy, running) {
+  if (!r) return busy ? "running" : "unfinished";
+  if (r.isError) return "failed";
+  if (task) return task.status === "completed" ? "done" : task.status === "failed" ? "failed" : "stopped";
+  if (r.detail?.background) return running ? "background" : "unfinished";
+  return "done";
+}
+
+const plural = (n, one, many = one + "s") => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+// toolDetail is the few words after a call that say what came of it.
+function toolDetail(tool, r, task, state) {
+  const d = r?.detail;
+  if (task) {
+    const code = /exit code (\d+)/.exec(task.summary || "");
+    return code ? `exit ${code[1]}` : task.status;
+  }
+  if (state === "background") return "in the background";
+  if (!d || r.isError) return "";
+  switch (tool) {
+    case "Read":
+      if (d.kind === "image") return d.width ? `${d.width}×${d.height}` : "image";
+      if (d.kind !== "text") return d.kind;
+      if (d.total > d.lines) return `lines ${d.start}–${d.start + d.lines - 1} of ${d.total.toLocaleString()}`;
+      return plural(d.lines || 0, "line");
+    case "Grep":
+      return d.kind === "content" ? plural(d.lines || 0, "matching line") : plural(d.files ?? 0, "file");
+    case "Glob":
+      return plural(d.files ?? 0, "file") + (d.more ? "+" : "");
+    case "Bash":
+    case "PowerShell":
+      if (d.interrupted) return "interrupted";
+      return d.lines ? plural(d.lines, "line") + " of output" : "no output";
+    case "WebFetch":
+      return [d.status, d.bytes && `${Math.max(1, Math.round(d.bytes / 1024))} KB`].filter(Boolean).join(" · ");
+    case "WebSearch":
+      return plural(d.results ?? 0, "result");
+  }
+  return "";
+}
+
+// inRepo is a path relative to the repository, or "" for one outside it.
+function inRepo(path, root) {
+  return path && root && path.startsWith(root + "/") ? path.slice(root.length + 1) : "";
+}
+
+// ToolImage is a picture Claude was shown, under its line once that is opened.
+function ToolImage({ src, detail = {}, name }) {
+  const [zoom, setZoom] = useState(false);
+  return (
+    <>
+      <button className="agent-image" onClick={() => setZoom(true)} title="See it full size">
+        <img src={src} alt="" loading="lazy" width={detail.width || undefined} height={detail.height || undefined} />
+      </button>
+      {zoom && (
+        <Modal wide centred className="image-view" onClose={() => setZoom(false)}>
+          <div className="viewer-head">
+            <span className="path">{name}</span>
+            <span className="spacer" />
+            <button className="ghost" onClick={() => setZoom(false)} title="Close (Esc)">
+              <IconX size={13} />
+            </button>
+          </div>
+          <div className="image-view-body">
+            <img src={src} alt="" />
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+// Tools whose calls say what they did well enough in their line; the rest
+// show their arguments when opened.
+const SAID = new Set(["Read", "Glob", "WebFetch", "WebSearch", "TodoWrite"]);
+
+// ToolBody is a call opened: its arguments where they add to the line, and
+// what it came back with, fetched whole.
+function ToolBody({ item, session, root, onOpenFile }) {
+  const input = item.input || {};
+  const r = item.result;
+  const [out, setOut] = useState(null);
+  useEffect(() => {
+    if (!r) return;
+    let live = true;
+    api.agentOutput(session, item.toolId).then(
+      (o) => live && setOut(o),
+      (e) => live && setOut({ error: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [session, item.toolId, !!r]);
+
+  const tool = item.tool;
+  return (
+    <>
+      {tool === "Bash" || tool === "PowerShell" ? (
+        <Command text={input.command || ""} lang={tool === "Bash" ? "bash" : "powershell"} />
+      ) : tool === "ExitPlanMode" && input.plan ? (
+        <div className="markdown agent-plan" dangerouslySetInnerHTML={{ __html: md.render(input.plan) }} />
+      ) : (tool === "Agent" || tool === "Task") && input.prompt ? (
+        <div className="markdown agent-page" dangerouslySetInnerHTML={{ __html: md.render(input.prompt) }} />
+      ) : (
+        !SAID.has(tool) && <Fields input={input} />
+      )}
+      {r && !out && <div className="file-note loading">Loading...</div>}
+      {out?.error && <pre className={cx("agent-result", r.isError && "error")}>{r.text}</pre>}
+      {out && !out.error && <Output tool={tool} input={input} out={out} failed={r.isError} root={root} onOpenFile={onOpenFile} />}
+    </>
+  );
+}
+
+function Fields({ input }) {
+  const entries = Object.entries(input);
+  if (!entries.length) return null;
+  return (
+    <dl className="prompt-fields">
+      {entries.map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}</dt>
+          <dd>{typeof v === "string" ? v : JSON.stringify(v, null, 2)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Output({ tool, input, out, failed, root, onOpenFile }) {
+  if (out.read) return <ReadLines read={out.read} onOpenFile={onOpenFile} />;
+  if (out.found) return <FoundList found={out.found} path={inRepo(input.path, root) || input.path} onOpenFile={onOpenFile} />;
+  if (out.stdout || out.stderr) {
+    return (
+      <>
+        {out.stdout && <Lines className="agent-result" text={out.stdout} />}
+        {out.stderr && <Lines className="agent-result stderr" text={out.stderr} />}
+      </>
+    );
+  }
+  // A command left in the background has only Claude Code's word on where its
+  // output went.
+  if ((tool === "Bash" || tool === "PowerShell") && !out.text) return <div className="file-note">No output.</div>;
+  if (out.page) return <div className="markdown agent-page" dangerouslySetInnerHTML={{ __html: md.render(out.page) }} />;
+  if (out.links) {
+    return (
+      <ul className="agent-links">
+        {out.links.map((l, i) => (
+          <li key={i}>
+            <a href={l.url} target="_blank" rel="noreferrer noopener">
+              {l.title || l.url}
+            </a>
+            <span className="dim">{hostOf(l.url)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (!out.text) return null;
+  if (!failed && (tool === "Agent" || tool === "Task")) {
+    return <div className="markdown agent-page" dangerouslySetInnerHTML={{ __html: md.render(out.text) }} />;
+  }
+  return <Lines className={cx("agent-result", failed && "error")} text={out.text} />;
+}
+
+const hostOf = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+};
+
+// Past these, a result opens on its start with a way to the rest: a long
+// command's output or a whole file would push the conversation out of reach.
+const SHOWN_LINES = 12;
+const SHOWN_READ = 200;
+const SHOWN_FOUND = 200;
+
+function Lines({ className, text }) {
+  const [all, setAll] = useState(false);
+  const lines = text.replace(/\n$/, "").split("\n");
+  const cut = !all && lines.length > SHOWN_LINES + 3;
+  return (
+    <div className={cx(className, "agent-lines")}>
+      <pre>{cut ? lines.slice(0, SHOWN_LINES).join("\n") : text}</pre>
+      {cut && (
+        <button className="link agent-more" onClick={() => setAll(true)}>
+          Show all {lines.length.toLocaleString()} lines
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ReadLines is what a Read was given, highlighted, at its own line numbers.
+function ReadLines({ read, onOpenFile }) {
+  const [all, setAll] = useState(false);
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (read.lang) ensureLanguage(read.lang, () => force((n) => n + 1));
+  }, [read.lang]);
+  const lines = useMemo(() => read.content.replace(/\n$/, "").split("\n"), [read.content]);
+  const shown = useMemo(() => (all ? lines : lines.slice(0, SHOWN_READ)), [lines, all]);
+  const ready = langReady(read.lang);
+  const html = useMemo(() => highlightLines("read:" + read.path + ":" + read.start, shown, read.lang), [shown, read.lang, read.path, read.start, ready]);
+  return (
+    <div className="agent-code">
+      {html.map((h, i) => {
+        const n = read.start + i;
+        return (
+          <div className="agent-code-line" key={n}>
+            {read.inRepo ? (
+              <button className="n" onClick={() => onOpenFile(read.path, n)} title="Open the file here">
+                {n}
+              </button>
+            ) : (
+              <span className="n">{n}</span>
+            )}
+            <code dangerouslySetInnerHTML={{ __html: h || "&nbsp;" }} />
+          </div>
+        );
+      })}
+      {shown.length < lines.length && (
+        <button className="link agent-more" onClick={() => setAll(true)}>
+          Show all {lines.length.toLocaleString()} lines
+        </button>
+      )}
+    </div>
+  );
+}
+
+// FoundList is what a search turned up: files, or matching lines under their
+// file. A line with no file is in the one the search was given.
+function FoundList({ found, path, onOpenFile }) {
+  const [all, setAll] = useState(false);
+  if (!found.length) return <div className="file-note">Nothing found.</div>;
+  const shown = all ? found : found.slice(0, SHOWN_FOUND);
+  const groups = [];
+  for (const f of shown) {
+    const p = f.path || path || "";
+    const g = groups[groups.length - 1];
+    if (g && g.path === p && f.line) g.lines.push(f);
+    else groups.push({ path: p, inRepo: f.path ? f.inRepo : !!path && !path.startsWith("/"), lines: f.line ? [f] : [], text: f.line ? "" : f.text });
+  }
+  const open = (g, line) => g.inRepo && onOpenFile(g.path, line || 1);
+  return (
+    <div className="agent-found">
+      {groups.map((g, i) =>
+        !g.path ? (
+          <div className="agent-found-text" key={i}>
+            {g.text}
+          </div>
+        ) : (
+          <div className="agent-found-file" key={i}>
+            <button className="agent-found-path" disabled={!g.inRepo} onClick={() => open(g, g.lines[0]?.line)}>
+              {LRM}
+              {g.path}
+            </button>
+            {g.lines.map((f, j) => (
+              <button className="agent-found-line" key={j} disabled={!g.inRepo} onClick={() => open(g, f.line)}>
+                <span className="n">{f.line}</span>
+                <code>{f.text}</code>
+              </button>
+            ))}
+          </div>
+        ),
+      )}
+      {shown.length < found.length && (
+        <button className="link agent-more" onClick={() => setAll(true)}>
+          Show all {found.length.toLocaleString()}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Command({ text, lang }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    ensureLanguage(lang, () => force((n) => n + 1));
+  }, [lang]);
+  const ready = langReady(lang);
+  const html = useMemo(() => highlightLines("agent:" + text, text.split("\n"), lang), [text, lang, ready]);
+  return (
+    <pre className="prompt-command">
+      {html.map((h, n) => (
+        <code key={n} dangerouslySetInnerHTML={{ __html: h || "&nbsp;" }} />
+      ))}
+    </pre>
+  );
+}
+
+function Todos({ todos }) {
+  if (!todos?.length) return null;
+  const mark = { completed: "✓", in_progress: "▸", pending: "○" };
+  return (
+    <ul className="agent-todos">
+      {todos.map((t, i) => (
+        <li key={i} className={t.status}>
+          <span className="agent-todo-mark">{mark[t.status] || "○"}</span>
+          {t.status === "in_progress" ? t.activeForm || t.content : t.content}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// EditCard is a change Claude made, as a file in the review: the diff is
+// fetched when the card nears the screen, and commented on the way the diff
+// is. A comment here remembers the edit it was left on, and goes with the next
+// message unless taken out.
+function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, onComment, onThreadAction, onSymbol, onOpenFile }) {
+  const e = item.result.edited;
+  const ref = useRef(null);
+  const [state, setState] = useState(null); // { ed } or { error }
+  const [expanded, setExpanded] = useState({});
+  const [selection, setSelection] = useState(null);
+  const [composing, setComposing] = useState(null);
+  const [, force] = useState(0);
+  const fd = state?.ed?.diff;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || state) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        io.disconnect();
+        api
+          .agentEdit(session, item.toolId)
+          .then((ed) => setState({ ed }))
+          .catch((err) => setState({ error: err.message }));
+      },
+      // The conversation's own scroller as the root: against the window, the
+      // scroller clips the card first, and the margin never comes into it.
+      { root: el.closest(".agent-scroll"), rootMargin: "600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [session, item.toolId, state]);
+
+  useEffect(() => {
+    if (fd?.lang) ensureLanguage(fd.lang, () => force((n) => n + 1));
+  }, [fd?.lang]);
+
+  const expand = useCallback((gid, amount) => {
+    setExpanded((x) => ({ ...x, [gid]: amount === "all" ? "all" : (typeof x[gid] === "number" ? x[gid] : 0) + amount }));
+  }, []);
+
+  const startComment = useCallback(
+    (side, start, end, selected) => {
+      const src = side === "old" ? fd?.oldLines : fd?.newLines;
+      setComposing({ path: e.path, side, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setSelection(null);
+    },
+    [fd, e.path],
+  );
+
+  const comment = useCallback(
+    async (payload) => {
+      const t = await onComment({ ...payload, scope: "Claude's edit", origin: { session, tool: item.toolId } });
+      if (t && onAttach) onAttach({ kind: "thread", threadId: t.id });
+    },
+    [onComment, onAttach, session, item.toolId],
+  );
+  const attach = useMemo(() => onAttach && ((a) => onAttach({ ...a, at: "Claude's edit" })), [onAttach]);
+  useEffect(() => {
+    const el = ref.current;
+    const onComment = (ev) => startComment(ev.detail.side, ev.detail.line, ev.detail.line);
+    const onAttachLine = ({ detail: { side, line } }) => {
+      const src = side === "old" ? fd?.oldLines : fd?.newLines;
+      if (attach && src) attach({ kind: "lines", file: e.path, side, start: line, end: line, quote: [src[line - 1]] });
+    };
+    el.addEventListener("dv:comment", onComment);
+    el.addEventListener("dv:attach", onAttachLine);
+    return () => {
+      el.removeEventListener("dv:comment", onComment);
+      el.removeEventListener("dv:attach", onAttachLine);
+    };
+  }, [startComment, attach, fd, e.path]);
+
+  const [dir, name] = splitPath(e.path);
+  const first = fd?.ops?.find((o) => o.k !== 0);
+  return (
+    <div className="file agent-edit" id={"tool-" + item.toolId} ref={ref}>
+      <header className="file-head">
+        <span className={cx("badge", e.created ? "st-A" : "st-M")}>{e.created ? "A" : "M"}</span>
+        <h3 className="file-path" title={e.path}>
+          <span className="dir">
+            {LRM}
+            {dir}
+            {LRM}
+          </span>
+          <span className="name">{name}</span>
+        </h3>
+        {!e.inRepo && <span className="tag-generated">outside</span>}
+        {state?.ed?.partial && (
+          <span className="tag-generated" title="The transcript kept only the changed lines">
+            hunks
+          </span>
+        )}
+        <span className="spacer" />
+        {threads.length > 0 && <span className="file-comments">{threads.length} comment{threads.length === 1 ? "" : "s"}</span>}
+        <span className="stat">
+          <span className="add">+{e.adds}</span>
+          <span className="del">-{e.dels}</span>
+        </span>
+        {e.inRepo && (
+          <button className="view-file" onClick={() => onOpenFile(e.path, first ? first.ns + 1 : 1)} title="The whole file as it is now">
+            <IconFile size={12} />
+            <span className="btn-label">File</span>
+          </button>
+        )}
+      </header>
+      <div className={cx("file-body", wrap && "wrap")}>
+        {!state && <div className="file-note loading">Loading...</div>}
+        {state?.error && <div className="file-note error">{state.error}</div>}
+        {fd && !fd.binary && !fd.tooLarge && (
+          <DiffBody
+            fd={fd}
+            view={fd.status === "A" ? "unified" : view}
+            oneNumber={fd.status === "A" && view === "split"}
+            contextLines={contextLines}
+            expanded={expanded}
+            onExpand={expand}
+            threads={threads}
+            selection={selection}
+            setSelection={setSelection}
+            composing={composing}
+            setComposing={setComposing}
+            onStartComment={startComment}
+            onComment={comment}
+            onThreadAction={onThreadAction}
+            onSymbol={onSymbol}
+            onAttach={attach}
+            path={e.path}
+            wrap={wrap}
+            unknown={state.ed.partial}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Picker({ label, title, choices, value, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  return (
+    <div className="model-menu" ref={ref}>
+      <button className="mini" onClick={() => setOpen((o) => !o)} title={title}>
+        {label}
+        <IconChevronDown size={10} />
+      </button>
+      {open && (
+        <div className="model-list up">
+          {choices.map((c) => (
+            <button
+              key={c.id}
+              className={cx(c.id === value && "on")}
+              onClick={() => {
+                onPick(c.id);
+                setOpen(false);
+              }}
+            >
+              <span className="model-name">
+                {c.label}
+                {c.tag && <span className="model-tag">{c.tag}</span>}
+              </span>
+              {c.description && <span className="model-note">{c.description}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ModelPicker is the model and how hard it thinks, in one menu, as the
+// terminal's /model has them. onPick is given { model } or { effort }.
+function ModelPicker({ label, models, model, efforts, effort, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  return (
+    <div className="model-menu" ref={ref}>
+      <button className="mini composer-pick" onClick={() => setOpen((o) => !o)} title="Model and effort">
+        {label}
+        {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
+        <IconChevronDown size={10} />
+      </button>
+      {open && (
+        <div className="model-list up">
+          {models.map((c) => (
+            <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
+              <span className="model-name">
+                {c.label}
+                {c.tag && <span className="model-tag">{c.tag}</span>}
+              </span>
+              {c.description && <span className="model-note">{c.description}</span>}
+            </button>
+          ))}
+          {efforts?.length > 0 && (
+            <div className="model-efforts" title="How hard Claude thinks before answering">
+              <span>Effort</span>
+              <span className="seg">
+                {efforts.map((e) => (
+                  <button
+                    key={e}
+                    className={cx(e === effort && "on")}
+                    title={EFFORTS[e]}
+                    onClick={() => {
+                      onPick({ effort: e });
+                      setOpen(false);
+                    }}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const HOW = [
+  { label: "Restore the conversation", hint: "the code stays as it is", conversation: true, code: false },
+  { label: "Restore the code and the conversation", hint: "undo Claude's edits since", conversation: true, code: true },
+  { label: "Restore the code", hint: "keep the conversation", conversation: false, code: true },
+  { label: "Never mind" },
+];
+
+// RewindPicker is the terminal's double Esc: pick a message, then what to take
+// back to before it.
+function RewindPicker({ prompts, loading, start, running, onClose, onRewind }) {
+  const list = useMemo(() => prompts.slice().reverse(), [prompts]);
+  const [prompt, setPrompt] = useState(start || null);
+  const [sel, setSel] = useState(0);
+  const rows = prompt ? HOW : list;
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    setSel(0);
+    listRef.current?.focus();
+  }, [prompt]);
+
+  const choose = (i) => {
+    if (!prompt) return setPrompt(list[i]);
+    const how = HOW[i];
+    if (!how.conversation && !how.code) return onClose();
+    onRewind(prompt, { conversation: how.conversation, code: how.code });
+  };
+
+  const onKey = (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      setSel((s) => (s + d + rows.length) % rows.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      choose(sel);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} onBack={prompt && !start ? () => setPrompt(null) : undefined} className="palette rewind">
+      <div className="viewer-head">
+        <IconUndo size={13} className="spark" />
+        <span className="rewind-title">{prompt ? "Rewind to before this message" : "Rewind to before which message?"}</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={onClose}>
+          <IconX size={13} />
+        </button>
+      </div>
+      {prompt && <div className="palette-note rewind-quote">{splitContext(prompt.text).text || (prompt.images ? "(images)" : "(context only)")}</div>}
+      {prompt?.compacted && (
+        <div className="palette-note">
+          From before the conversation was compacted: it comes back as it was then, whole, and Claude Code compacts it again when it no longer fits.
+        </div>
+      )}
+      <div className="rewind-list" tabIndex={-1} ref={listRef} onKeyDown={onKey}>
+        {rows.map((r, i) => (
+          <button
+            key={prompt ? r.label : r.key}
+            className={cx("palette-row", i === sel && "on")}
+            onMouseEnter={() => setSel(i)}
+            onClick={() => choose(i)}
+          >
+            {prompt ? (
+              <>
+                <span>{r.label}</span>
+                {r.hint && <span className="why">{r.hint}</span>}
+              </>
+            ) : (
+              <>
+                <span className="rewind-text">{splitContext(r.text).text.split("\n")[0] || (r.images ? "(images)" : "(context only)")}</span>
+                <span className="why">{r.compacted ? `before compacting · ${relTime(r.at)}` : relTime(r.at)}</span>
+              </>
+            )}
+          </button>
+        ))}
+        {!prompt && loading && <div className="palette-note">Finding the messages from before the conversation was compacted…</div>}
+      </div>
+      <div className="palette-foot">
+        <span>
+          <kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> rewind · <kbd>Esc</kbd> {prompt && !start ? "back" : "close"}
+        </span>
+        {running === "dv" && <span className="spacer" />}
+        {running === "dv" && <span>Anything Claude is doing stops.</span>}
+      </div>
+    </Modal>
+  );
+}
+
+// SessionID is enough of the ID to tell sessions apart; a click copies all of
+// it, for claude --resume.
+function SessionID({ id }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <button
+      className={cx("session-id", copied && "copied")}
+      title={`Copy the session ID, ${id}`}
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(id).then(() => setCopied(true), () => {});
+      }}
+    >
+      {copied ? "copied" : id.slice(0, 8)}
+    </button>
+  );
+}
+
+// SessionList is the sidebar in Agent mode: sessions open in dv, then the rest
+// of the repository's, newest first.
+export function SessionList({ sessions, available, usage, notify, onNotify, activeId, added = {}, onSelect, onNew, onClose, onRename }) {
+  const [filter, setFilter] = useState("");
+  // The card is where the session on screen is named, so it is kept in sight.
+  const listRef = useRef(null);
+  useEffect(() => {
+    listRef.current?.querySelector(".session-row.on")?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
+  const q = filter.trim().toLowerCase();
+  const shown = q ? sessions.filter((s) => `${s.title} ${s.prompt} ${s.id}`.toLowerCase().includes(q)) : sessions;
+  const isOpen = (s) => s.open || s.running === "dv";
+  const open = shown.filter(isOpen);
+  const recent = shown.filter((s) => !isOpen(s));
+
+  // A card: what the session is, the last thing said in it, and how full it is.
+  const row = (s) => {
+    const c = s.context;
+    const pct = c && Math.min(100, (c.used / c.max) * 100);
+    const limit = c && (c.compact || c.max);
+    return (
+      <div
+        key={s.id}
+        role="button"
+        tabIndex={0}
+        className={cx("session-row", s.id === activeId && "on")}
+        onClick={() => onSelect(s.id)}
+        onKeyDown={(e) => e.key === "Enter" && onSelect(s.id)}
+      >
+        <div className="session-row-head">
+          <span className={cx("session-dot", s.running && "live-" + s.running, s.busy && "busy")} />
+          <SessionName
+            key={s.title}
+            title={s.title || s.prompt || "New session"}
+            hint={s.title || s.prompt || ""}
+            onRename={s.running !== "terminal" ? (t) => onRename(s.id, t) : null}
+          />
+          {isOpen(s) && (
+            <button
+              className="session-close"
+              title={closeHint(s.running)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(s.id);
+              }}
+            >
+              <IconX size={11} />
+            </button>
+          )}
+        </div>
+        {s.last && (
+          <div className="session-last">
+            {s.lastBy === "you" && <span className="session-you">You: </span>}
+            {s.last}
+          </div>
+        )}
+        <div className="session-meta">
+          <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? s.status || "working" : "running in dv") : relTime(s.updated)}</span>
+          <SessionID id={s.id} />
+          {added[s.id]?.length > 0 && (
+            <span className="session-added" title="Added from Diff or Code, to go with the next message">
+              {added[s.id].length} added
+            </span>
+          )}
+          <span className="spacer" />
+          {c && (
+            <span
+              className={cx("session-context", c.used >= limit * 0.9 ? "high" : c.used >= limit * 0.75 && "warn")}
+              title={`Context: ${c.used.toLocaleString()} of ${c.max.toLocaleString()} tokens`}
+            >
+              {Math.round(pct)}%
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="sidebar-filter">
+        <input value={filter} placeholder="Filter by name or ID" onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        <button
+          className={cx("ghost", "notify-toggle", notify && "on")}
+          aria-pressed={!!notify}
+          onClick={onNotify}
+          title={
+            notify
+              ? "Desktop notifications are on: with this tab in the background, you are told when Claude asks or finishes. Click to turn them off."
+              : "Turn on desktop notifications, for when Claude asks or finishes while this tab is in the background"
+          }
+        >
+          <IconBell size={13} />
+        </button>
+        <button className="ghost" onClick={onNew} title="New session" disabled={!available}>
+          <IconPlus size={13} />
+        </button>
+      </div>
+      <div className="file-list session-list" ref={listRef}>
+        {open.length > 0 && <div className="session-group">Open</div>}
+        {open.map(row)}
+        {recent.length > 0 && <div className="session-group">Recent</div>}
+        {recent.map(row)}
+        {!available && <div className="empty">The claude CLI is not on your PATH.</div>}
+        {available && shown.length === 0 && <div className="empty">{q ? "No sessions match." : "No sessions in this repository yet."}</div>}
+      </div>
+      <div className="sidebar-foot">
+        <span className="dim session-count">
+          {sessions.length} session{sessions.length === 1 ? "" : "s"}
+        </span>
+        <span className="spacer" />
+        {usage && <PlanLimit label="5h" of="This five-hour window" limit={usage.session} />}
+        {usage && <PlanLimit label="7d" of="This week" limit={usage.week} />}
+      </div>
+    </>
+  );
+}
+
+// PlanLimit is how much of one of a Claude plan's usage limits is spent.
+function PlanLimit({ label, of, limit }) {
+  if (!limit) return null;
+  const pct = Math.min(100, limit.percent);
+  const resets = limit.resetsAt && new Date(limit.resetsAt);
+  const when =
+    resets &&
+    (resets.toDateString() === new Date().toDateString()
+      ? resets.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : resets.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
+  return (
+    <span className={cx("plan-limit", pct >= 90 ? "high" : pct >= 75 && "warn")} title={`${of}: ${Math.round(limit.percent)}% of the plan's usage${when ? `, resets ${when}` : ""}`}>
+      {/* Elements, not bare text: with the bar hidden, text would run together. */}
+      <span>{label}</span>
+      <Bar pct={pct} />
+      <span>{Math.round(limit.percent)}%</span>
+    </span>
+  );
+}

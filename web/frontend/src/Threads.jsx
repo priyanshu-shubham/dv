@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
-import { cx, isSearchKey, LRM, modKey, relTime, searchSeed } from "./util.js";
-import { IconCheck, IconX } from "./icons.jsx";
+import { cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss } from "./util.js";
+import { IconCheck, IconChevronDown, IconSpark, IconX } from "./icons.jsx";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
@@ -68,7 +69,8 @@ function Thread({ thread, onAction, compact }) {
           ) : (
             <div className="markdown" dangerouslySetInnerHTML={{ __html: md.render(c.body) }} />
           )}
-          {i === thread.comments.length - 1 && !replying && !editing && (
+          {/* A draft goes out with an answer, so there is nothing to reply to or resolve. */}
+          {i === thread.comments.length - 1 && !replying && !editing && !thread.draft && (
             <div className="thread-foot">
               <button className="link" onClick={() => setReplying(true)}>
                 Reply
@@ -101,6 +103,76 @@ function Thread({ thread, onAction, compact }) {
         />
       )}
     </article>
+  );
+}
+
+// AttachTarget is the sessions code can be added to, and the one it goes to:
+// { choices: [{ id, label }], target, onTarget }, "" being a new session.
+export const AttachTarget = createContext(null);
+
+// AttachButton adds code to what goes with the next message to Claude, in the
+// Agent view. onClick is given the session it goes to; its menu picks another,
+// which stays picked.
+export function AttachButton({ className, onClick, title = "Add to your next message to Claude (a)" }) {
+  const t = useContext(AttachTarget);
+  const [at, setAt] = useState(null); // where the open menu goes, under the button
+  const menu = useRef(null);
+  const ref = useDismiss(!!at, () => setAt(null), menu);
+  // Fixed where it opened, it closes rather than drift from the button.
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    const onScroll = (e) => menu.current?.contains(e.target) || close();
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [at]);
+  const to = t?.choices.find((c) => c.id === t.target);
+  return (
+    <span className={cx("attach-split", className)} ref={ref}>
+      {/* Add, not send: it waits in that session's message box for you to send. */}
+      <button className="attach-btn" onClick={() => onClick(t?.target)} title={to ? `${title}, in ${to.label}` : title}>
+        <IconSpark size={12} />
+        <span className="btn-label">Add to {!to ? "agent" : to.id ? to.label : "a new session"}</span>
+      </button>
+      {t && (
+        <button
+          className="attach-btn attach-to"
+          onClick={() => {
+            const r = ref.current.getBoundingClientRect();
+            setAt(at ? null : { top: r.bottom + 4, right: window.innerWidth - r.right });
+          }}
+          title="Pick the session to add to"
+          aria-expanded={!!at}
+        >
+          <IconChevronDown size={10} />
+        </button>
+      )}
+      {/* In the page's top layer: a file card clips what overflows it. */}
+      {at &&
+        createPortal(
+        <div className="model-list attach-menu" ref={menu} style={at}>
+          <div className="menu-label">Add to</div>
+          {t.choices.map((c) => (
+            <button
+              key={c.id}
+              className={cx(c.id === t.target && "on")}
+              onClick={() => {
+                setAt(null);
+                t.onTarget(c.id);
+                onClick(c.id);
+              }}
+            >
+              <span className="model-name">{c.label}</span>
+            </button>
+          ))}
+        </div>,
+          document.body,
+        )}
+    </span>
   );
 }
 

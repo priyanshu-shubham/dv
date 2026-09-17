@@ -7,7 +7,9 @@ import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
 // behind the overlay the two are the same key doing the same thing.
-function Modal({ onClose, onBack, className, children, wide }) {
+// A palette hangs from near the top, where a list growing as you type does not
+// move what is being typed in; a dialog or viewer, whose size is set, is centred.
+export function Modal({ onClose, onBack, className, children, wide, centred }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
@@ -24,7 +26,7 @@ function Modal({ onClose, onBack, className, children, wide }) {
   }, [onClose, onBack]);
 
   return (
-    <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={cx("backdrop", centred && "centred")} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={cx("modal", wide && "modal-wide", className)}>{children}</div>
     </div>
   );
@@ -463,7 +465,7 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
   );
 
   return (
-    <Modal onClose={onClose} onBack={onBack} wide className="viewer">
+    <Modal onClose={onClose} onBack={onBack} wide centred className="viewer">
       <div className="viewer-head">
         <Back onBack={onBack} to={backTo} />
         <span className="path">{file}</span>
@@ -504,7 +506,7 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
 
 export function HelpOverlay({ onClose }) {
   const keys = [
-    ["m", "Switch between Diff and Code"],
+    ["Shift+← / Shift+→", "Previous / next mode: Diff, Code, Agent"],
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
     [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
@@ -513,7 +515,7 @@ export function HelpOverlay({ onClose }) {
     ["n / p", "Next / previous change"],
     ["f", "View the whole file at the focused line"],
     ["c", "Comment on the focused line"],
-    ["a", "Ask Claude about the focused line"],
+    ["a", "Add the focused line, or the file, to your next message to Claude"],
     ["v", "Mark the current file viewed, in Diff"],
     ["u", "Toggle split / unified"],
     ["w", "Toggle line wrapping"],
@@ -525,11 +527,17 @@ export function HelpOverlay({ onClose }) {
     ["drag line numbers", "Comment on a range of lines"],
     ["click a gap bar", "Expand 20 more lines of context"],
     ["↑ ↓ Enter, 1-9", "Answer what Claude is asking; Tab adds a note, Esc leaves it under the bell"],
+    ["Esc Esc", "In the Agent view, rewind the session to before one of your messages"],
+    ["Esc", "In the Agent view, take back a queued message, or one sent a moment ago; otherwise stop Claude"],
+    ["[ / ]", "In the Agent view, your previous / next message"],
+    ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],
+    ["Shift+Tab", "In the Agent view's message box, change the permission mode"],
+    ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty)"],
     ["Esc", "Back a step, or close what is open"],
     ["Shift+Esc", "Close whatever is open"],
   ];
   return (
-    <Modal onClose={onClose} className="help">
+    <Modal onClose={onClose} centred className="help">
       <div className="viewer-head">
         <span className="path">Keyboard</span>
         <span className="spacer" />

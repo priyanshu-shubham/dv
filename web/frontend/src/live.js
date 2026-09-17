@@ -8,13 +8,16 @@ const POLL_MS = 1500;
 
 // useVersionPoll calls onChange when the repository's fingerprint moves off
 // versionRef, the one the diff on screen was listed at, and hands every poll's
-// versions of the comments and viewed marks to onNotes. A slow repository is
-// polled less often, and a hidden tab not at all until it is shown again.
-export function useVersionPoll(versionRef, onChange, onNotes) {
+// versions of the comments and viewed marks to onNotes. onOffline hears whether
+// dv answered. A slow repository is polled less often, and a hidden tab not at
+// all until it is shown again.
+export function useVersionPoll(versionRef, onChange, onNotes, onOffline) {
   const cb = useRef(onChange);
   cb.current = onChange;
   const notes = useRef(onNotes);
   notes.current = onNotes;
+  const offline = useRef(onOffline);
+  offline.current = onOffline;
 
   useEffect(() => {
     let timer = null;
@@ -28,7 +31,16 @@ export function useVersionPoll(versionRef, onChange, onNotes) {
       let wait = POLL_MS;
       try {
         const t0 = performance.now();
-        const { version, ...rest } = await api.version();
+        let got;
+        try {
+          got = await api.version();
+          offline.current?.(false);
+        } catch (e) {
+          // No answer at all, as opposed to an error dv sent.
+          if (e instanceof TypeError) offline.current?.(true);
+          throw e;
+        }
+        const { version, ...rest } = got;
         wait = Math.max(POLL_MS, (performance.now() - t0) * 5);
         notes.current(rest);
         if (version !== versionRef.current) {

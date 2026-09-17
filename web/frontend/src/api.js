@@ -11,6 +11,15 @@ async function req(path, opts = {}) {
   return data;
 }
 
+// follow reads a stream of JSON events until the returned func is called. It
+// reconnects on its own after a drop, and the first event after is a reset.
+function follow(path, onEvent, onDrop) {
+  const es = new EventSource(path);
+  es.onmessage = (e) => onEvent(JSON.parse(e.data));
+  es.onerror = () => onDrop?.();
+  return () => es.close();
+}
+
 const scopeQuery = (scope) => {
   const p = new URLSearchParams({ scope: scope.kind });
   if (scope.rev) p.set("rev", scope.rev);
@@ -87,51 +96,15 @@ export const api = {
 
   refreshSymbols: () => req("/api/symbols/refresh", { method: "POST" }),
 
-  askModels: () => req("/api/ask/models"),
-
-  // ask streams server-sent events from the `claude` CLI. It is a POST, so the
-  // stream is read off the fetch body rather than through EventSource.
-  ask: async (body, onEvent, signal) => {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      let msg = res.statusText;
-      try {
-        msg = JSON.parse(text).error || msg;
-      } catch {}
-      throw new Error(msg);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const chunk = buf.slice(0, i);
-        buf = buf.slice(i + 2);
-        for (const line of chunk.split("\n")) {
-          if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)));
-        }
-      }
-    }
-  },
-
-  // claudeRequests follows the Claude Code prompts waiting on the reader, as a
+  // claudeEvents follows the Claude Code prompts waiting on the reader, and what
+  // the open sessions are doing: { requests } or { sessions }, each whole, as a
   // stream rather than a poll so they still arrive while the tab is hidden.
-  claudeRequests: (onList) => {
+  claudeEvents: (on) => {
     const es = new EventSource("/api/claude/requests");
-    es.onmessage = (e) => onList(JSON.parse(e.data).requests || []);
-    // It reconnects on its own and is sent the list afresh; until then nothing
+    es.onmessage = (e) => on(JSON.parse(e.data));
+    // It reconnects on its own and is sent both afresh; until then nothing
     // shown could be answered.
-    es.onerror = () => onList([]);
+    es.onerror = () => on({ requests: [] });
     return () => es.close();
   },
 
@@ -139,6 +112,53 @@ export const api = {
   // suggestions to apply along with an allow.
   claudeAnswer: (id, answer) =>
     req(`/api/claude/requests/${id}`, { method: "POST", body: JSON.stringify(answer) }),
+
+  agentSessions: () => req("/api/agent/sessions"),
+  // agentCommands is the slash commands a session takes: { commands: [{ name, description, argumentHint }] }.
+  agentCommands: () => req("/api/agent/commands"),
+
+  // agentCreate makes a session to send a first message to; nothing runs yet.
+  agentCreate: () => req("/api/agent/sessions", { method: "POST", body: "{}" }),
+
+  // Open sessions are the ones whose permission prompts come up in the page.
+  agentOpen: (id, open) => req(`/api/agent/sessions/${id}/open`, { method: "POST", body: JSON.stringify({ open }) }),
+
+  // agentEvents follows a session: each update carries the items new or changed
+  // since the last (all of them when `reset`) and what the session is doing.
+  // from is where the conversation is shown from: "" for its latest compaction,
+  // the key of an earlier one, or "all".
+  agentEvents: (id, onUpdate, onDrop, from = "") =>
+    follow(`/api/agent/sessions/${id}/events${from ? `?from=${encodeURIComponent(from)}` : ""}`, onUpdate, onDrop),
+  // agentSubagentEvents is the same for the conversation of an agent that one
+  // of a session's calls started.
+  agentSubagentEvents: (id, call, onUpdate, onDrop) => follow(`/api/agent/sessions/${id}/agents/${call}/events`, onUpdate, onDrop),
+  // agentTaskOutput follows what a call left running in the background writes:
+  // { text, reset, cut } as it grows (cut: the start is left out), { gone } once
+  // Claude Code has cleared the file away.
+  agentTaskOutput: (id, tool, onChunk) => follow(`/api/agent/sessions/${id}/tools/${tool}/live`, onChunk),
+
+  // images: [{ mediaType, data }], data in base64. uuid is what the message is
+  // known by, in the transcript and in the session's queue.
+  agentSend: (id, text, uuid, images) =>
+    req(`/api/agent/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text, uuid, images }) }),
+  // agentPrompts is every message and command in a session, back to its start: { prompts: [item] }.
+  agentPrompts: (id) => req(`/api/agent/sessions/${id}/prompts`),
+  agentUnqueue: (id, message) => req(`/api/agent/sessions/${id}/messages/${message}/unqueue`, { method: "POST", body: "{}" }),
+  agentPromptImageURL: (id, message, n) => `/api/agent/sessions/${id}/messages/${message}/images/${n}`,
+
+  agentInterrupt: (id) => req(`/api/agent/sessions/${id}/interrupt`, { method: "POST", body: "{}" }),
+
+  // settings: { model } and/or { mode }.
+  agentSettings: (id, settings) => req(`/api/agent/sessions/${id}/settings`, { method: "POST", body: JSON.stringify(settings) }),
+  agentRename: (id, title) => req(`/api/agent/sessions/${id}/title`, { method: "POST", body: JSON.stringify({ title }) }),
+
+  // rewind: { prompt, before, conversation, code }. The id that comes back is
+  // a new session's when the rewind went past the first prompt.
+  agentRewind: (id, rewind) => req(`/api/agent/sessions/${id}/rewind`, { method: "POST", body: JSON.stringify(rewind) }),
+
+  agentEdit: (id, tool) => req(`/api/agent/sessions/${id}/edits/${encodeURIComponent(tool)}`),
+  agentOutput: (id, tool) => req(`/api/agent/sessions/${id}/tools/${encodeURIComponent(tool)}`),
+  agentImageURL: (id, tool) => `/api/agent/sessions/${id}/tools/${encodeURIComponent(tool)}/image`,
 
   search: (opts) => {
     const p = new URLSearchParams({ q: opts.query });

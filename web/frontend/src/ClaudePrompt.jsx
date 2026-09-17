@@ -6,8 +6,7 @@ import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { cx, isTyping, LRM, splitPath } from "./util.js";
 import { IconFile, IconSpark, IconX } from "./icons.jsx";
 
-const NO_THREADS = [];
-const noop = () => {};
+const NO_COMMENTS = [];
 const md = new MarkdownIt({ html: false, linkify: true });
 
 // Keys this soon after a request comes up were meant for whatever had the
@@ -15,20 +14,29 @@ const md = new MarkdownIt({ html: false, linkify: true });
 const ARM_MS = 400;
 
 // useClaudeRequests is the list of Claude Code prompts waiting on the reader.
-export function useClaudeRequests() {
+// useClaudeEvents is the requests waiting on the reader, and the open sessions'
+// activity, null until first heard.
+export function useClaudeEvents() {
   const [requests, setRequests] = useState([]);
-  useEffect(() => api.claudeRequests(setRequests), []);
-  return requests;
+  const [sessions, setSessions] = useState(null);
+  useEffect(
+    () =>
+      api.claudeEvents((e) => {
+        if (e.requests) setRequests(e.requests);
+        if (e.sessions) setSessions(e.sessions);
+      }),
+    [],
+  );
+  return { requests, sessions };
 }
 
-// ClaudePrompt asks what Claude Code is asking - an edit shown as the diff it
-// would make, anything else as the call itself - and takes the answer the way
-// the terminal does: arrows and Enter, a number, Tab for a note. The terminal
-// asks at the same time; whichever answers first wins, and the request leaves
-// here either way. Put away, it waits under the header's bell. It stays mounted
-// while anything waits, so a half-written note survives being put away.
+// ClaudePrompt is the window Claude Code's requests are answered in, over
+// whatever the reader is doing, opened from a request's notice or the header's
+// bell. The terminal asks at the same time; whichever answers first wins, and
+// the request leaves here either way. It stays mounted while anything waits, so
+// a half-written note survives being put away.
 export default function ClaudePrompt({
-  requests, open, focusId, view, contextLines, wrap, autoPop, onAutoPop, onClose, onSymbol, onOpenFile,
+  requests, open, focusId, view, contextLines, wrap, onClose, onSymbol, onOpenFile, onOpenSession,
 }) {
   const [shownId, setShownId] = useState(null);
   useEffect(() => {
@@ -36,39 +44,7 @@ export default function ClaudePrompt({
   }, [focusId]);
   const idx = Math.max(0, requests.findIndex((r) => r.id === shownId));
   const req = requests[idx];
-
-  const [notes, setNotes] = useState({}); // id -> draft
-  const note = notes[req.id] || "";
-  const [sel, setSel] = useState(0);
-  const selRef = useRef(sel);
-  selRef.current = sel;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null); // { id, message }
-  const listRef = useRef(null);
-  const noteRef = useRef(null);
-  const armed = useRef(0);
-
-  const what = describe(req);
-  const options = useMemo(() => optionsFor(req), [req]);
-  const modeOption = options.findIndex((o) => o.mode === "acceptEdits");
-
-  const choose = useCallback(
-    async (i) => {
-      const o = options[i];
-      if (!o || busy) return;
-      setSel(i);
-      setBusy(true);
-      setError(null);
-      try {
-        await api.claudeAnswer(req.id, { allow: o.allow, note, suggestion: o.suggestion });
-      } catch (e) {
-        setError({ id: req.id, message: e.message });
-      } finally {
-        setBusy(false);
-      }
-    },
-    [options, busy, req.id, note],
-  );
+  const [drafts, setDrafts] = useState({}); // id -> { note, comments }
 
   // Put away, the focus goes back to wherever the reader was.
   useEffect(() => {
@@ -79,60 +55,6 @@ export default function ClaudePrompt({
     };
   }, [open]);
 
-  // Each request is met at Yes, with the keys held off for a moment.
-  useEffect(() => {
-    if (!open) return;
-    setSel(0);
-    armed.current = Date.now() + ARM_MS;
-    listRef.current?.focus({ preventScroll: true });
-  }, [open, req.id]);
-
-  // On the window, ahead of the page's own shortcuts, so the diff behind does
-  // not act on keys meant for the request - however the focus has wandered
-  // after a click in the diff. Chords pass, so the palettes stay in reach.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => {
-      if (document.querySelector(".backdrop")) return; // a viewer opened over the request has the keys
-      if (e.metaKey || e.ctrlKey || e.altKey) {
-        if (e.key === "Enter" && !e.altKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          choose(selRef.current);
-        }
-        return;
-      }
-      const t = noteRef.current;
-      const inNote = e.target === t;
-      if (!inNote && isTyping(e.target)) return;
-      const move = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
-      // In the note the arrows still pick the answer, unless there is a line of
-      // the note that way to move to, or Shift is selecting text.
-      const inText = inNote && (e.shiftKey || (move < 0 ? t.value.slice(0, t.selectionStart) : t.value.slice(t.selectionEnd)).includes("\n"));
-      let handled = true;
-      if (Date.now() < armed.current) {
-        // dropped
-      } else if (move && !inText) setSel((s) => (s + move + options.length) % options.length);
-      else if (inNote) {
-        if (e.key === "Enter" && !e.shiftKey) choose(selRef.current);
-        else if (e.key === "Escape" || e.key === "Tab") listRef.current?.focus({ preventScroll: true });
-        else handled = false;
-      } else if (e.key === "Enter") choose(selRef.current);
-      else if (e.key === "Tab" && e.shiftKey && modeOption >= 0) choose(modeOption);
-      else if (e.key === "Tab") noteRef.current?.focus({ preventScroll: true });
-      else if (e.key === "Escape") onClose();
-      else if (/^[1-9]$/.test(e.key)) choose(Number(e.key) - 1);
-      else handled = e.key.length === 1; // a letter would reach the page's shortcuts
-      if (handled) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, options.length, modeOption, choose, onClose]);
-
-  const sessions = new Set(requests.map((r) => r.session)).size;
   const step = (d) => setShownId(requests[idx + d]?.id ?? req.id);
 
   // Built from the page's own parts: the overlays' shell and title bar, the
@@ -141,14 +63,10 @@ export default function ClaudePrompt({
     <div className="prompt-backdrop" hidden={!open} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal modal-wide prompt" role="dialog" aria-modal="true" aria-label="Claude Code is asking">
         <div className="viewer-head prompt-head">
-          <IconSpark size={14} className="ask-mark" />
-          <span className="prompt-title">Claude wants to {what.verb}</span>
-          {req.agent && <span className="tag-generated" title="A subagent is asking">{req.agent}</span>}
-          {sessions > 1 && (
-            <span className="tag-generated session" title={`Session ${req.session}`}>
-              {req.session.slice(0, 8)}
-            </span>
-          )}
+          <RequestTitle req={req} />
+          <button className="prompt-session" onClick={() => onOpenSession(req.session)} title="Answer it in the session, in the Agent view">
+            in {req.title || "a new session"}
+          </button>
           <span className="spacer" />
           {requests.length > 1 && (
             <span className="prompt-count">
@@ -165,12 +83,181 @@ export default function ClaudePrompt({
             <IconX size={13} />
           </button>
         </div>
+        <Request
+          key={req.id}
+          req={req}
+          active={open}
+          grab
+          draft={drafts[req.id]}
+          onDraft={(patch) => setDrafts((d) => ({ ...d, [req.id]: { ...d[req.id], ...patch } }))}
+          onLater={onClose}
+          view={view}
+          contextLines={contextLines}
+          wrap={wrap}
+          onSymbol={onSymbol}
+          onOpenFile={onOpenFile}
+        />
+      </section>
+    </div>
+  );
+}
 
-        <div className="prompt-body">
+// RequestTitle is what a request's title bar says.
+export function RequestTitle({ req }) {
+  return (
+    <>
+      <IconSpark size={14} className="spark" />
+      <span className="prompt-title">Claude wants to {headline(req)}</span>
+      {req.agent && (
+        <span className="tag-generated" title="A subagent is asking">
+          {req.agent}
+        </span>
+      )}
+    </>
+  );
+}
+
+// Request asks what Claude Code is asking - an edit shown as the diff it would
+// make, anything else as the call itself - and takes the answer the way the
+// terminal does: arrows and Enter, a number, Tab for a note. Comments left on
+// an edit's lines go with the answer too. It has the keys while active, unless
+// the window is up over it. grab takes the focus when the request comes up;
+// onLater, when given, is what Esc does. draft is the note and comments, kept
+// by the caller so they outlive the request being put away. children go at the
+// end of its foot.
+export function Request({
+  req, active, grab, draft, onDraft, onLater, view, contextLines, wrap, onSymbol, onOpenFile, children,
+}) {
+  const note = draft?.note || "";
+  const comments = draft?.comments || NO_COMMENTS;
+  const said = saidWith(note, comments);
+  const [sel, setSel] = useState(0);
+  const selRef = useRef(sel);
+  selRef.current = sel;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const bodyRef = useRef(null);
+  const listRef = useRef(null);
+  const noteRef = useRef(null);
+  const armed = useRef(0);
+
+  const what = describe(req);
+  const asking = req.tool === "AskUserQuestion";
+  const options = useMemo(() => optionsFor(req), [req]);
+  const modeOption = options.findIndex((o) => o.mode === "acceptEdits");
+
+  const answer = useCallback(
+    async (a) => {
+      if (busy) return;
+      setBusy(true);
+      setError("");
+      try {
+        await api.claudeAnswer(req.id, a);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, req.id],
+  );
+  useEffect(() => setError(""), [comments]);
+  const choose = useCallback(
+    (i) => {
+      const o = options[i];
+      if (!o) return;
+      setSel(i);
+      // A comment still being written would be left out of the answer.
+      const unsaved = bodyRef.current?.querySelector(".composer[data-draft] textarea");
+      if (unsaved) {
+        setError("Your comment is not saved yet: Ctrl+Enter saves it, Cancel drops it.");
+        unsaved.focus();
+        return;
+      }
+      answer({ allow: o.allow, note: withComments(note, comments, req.preview?.path), suggestion: o.suggestion });
+    },
+    [options, answer, note, comments, req.preview?.path],
+  );
+
+  // Each request is met at Yes, with the keys held off for a moment.
+  useEffect(() => {
+    if (!active) return;
+    setSel(0);
+    armed.current = Date.now() + ARM_MS;
+    const g = typeof grab === "function" ? grab() : grab;
+    if (g) listRef.current?.focus({ preventScroll: true });
+  }, [active, req.id]);
+
+  // On the window, ahead of the page's own shortcuts, so the page behind does
+  // not act on keys meant for the request - however the focus has wandered
+  // after a click in a diff. Chords pass, so the palettes stay in reach.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e) => {
+      if (document.querySelector(".backdrop")) return; // a viewer opened over the request has the keys
+      if (!listRef.current?.closest(".prompt-backdrop") && document.querySelector(".prompt-backdrop:not([hidden])")) return;
+      // A question is answered with the pointer and the text boxes it has.
+      if (asking) {
+        if (e.key === "Escape" && onLater && !isTyping(e.target)) onLater();
+        return;
+      }
+      // Any other text box has its own keys: a comment's Ctrl+Enter saves it.
+      const t = noteRef.current;
+      const inNote = e.target === t;
+      if (!inNote && isTyping(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        if (e.key === "Enter" && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          choose(selRef.current);
+        }
+        return;
+      }
+      const move = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      // In the note the arrows still pick the answer, unless there is a line of
+      // the note that way to move to, or Shift is selecting text.
+      const inText = inNote && (e.shiftKey || (move < 0 ? t.value.slice(0, t.selectionStart) : t.value.slice(t.selectionEnd)).includes("\n"));
+      let handled = true;
+      if (Date.now() < armed.current) {
+        // dropped
+      } else if (move && !inText) setSel((s) => (s + move + options.length) % options.length);
+      else if (inNote) {
+        if (e.key === "Enter" && !e.shiftKey) choose(selRef.current);
+        else if (e.key === "Escape" || e.key === "Tab") listRef.current?.focus({ preventScroll: true });
+        else handled = false;
+      } else if (e.key === "Enter") choose(selRef.current);
+      else if (e.key === "Tab" && e.shiftKey && modeOption >= 0) choose(modeOption);
+      else if (e.key === "Tab") noteRef.current?.focus({ preventScroll: true });
+      else if (e.key === "Escape") {
+        if (onLater) onLater();
+        else handled = false;
+      } else if (/^[1-9]$/.test(e.key)) choose(Number(e.key) - 1);
+      else if (e.key === "c" || e.key === "a") {
+        const cell = e.key === "c" && bodyRef.current?.querySelector("[data-line][data-side]:hover");
+        if (cell) cell.closest(".prompt-card").dispatchEvent(commentEvent(cell));
+        // Otherwise a request in the conversation leaves them to the edits there.
+        else handled = !!listRef.current?.closest(".prompt-backdrop");
+      } else handled = e.key.length === 1; // a letter would reach the page's shortcuts
+      if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [active, asking, options.length, modeOption, choose, onLater]);
+
+  return (
+    <>
+      {asking ? (
+        <Questions questions={req.input?.questions || []} busy={busy} onAnswer={answer} />
+      ) : (
+        <div className="prompt-body" ref={bodyRef}>
           <RequestCard
-            key={req.id}
             req={req}
             what={what}
+            comments={comments}
+            onComments={(next) => onDraft({ comments: next })}
             view={view}
             contextLines={contextLines}
             wrap={wrap}
@@ -178,75 +265,144 @@ export default function ClaudePrompt({
             onOpenFile={onOpenFile}
           />
         </div>
+      )}
 
-        <div className="prompt-answer">
-          <div className="prompt-question">{question(req, what)}</div>
+      <div className="prompt-answer" hidden={asking}>
+        <div className="prompt-question">{question(req, what)}</div>
+        <div className="prompt-list">
+          <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
+            {options.map((o, i) => {
+              const hint = optionHint(o, said);
+              return (
+                <button
+                  key={i}
+                  id={`opt-${req.id}-${i}`}
+                  role="option"
+                  aria-selected={i === sel}
+                  className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && "no")}
+                  disabled={busy}
+                  onMouseEnter={() => setSel(i)}
+                  onClick={() => choose(i)}
+                  title={o.title}
+                >
+                  <span className="badge">{i + 1}</span>
+                  <span className="label">{o.label}</span>
+                  {hint && <span className="hint">{hint}</span>}
+                  {i === modeOption && <kbd>Shift+Tab</kbd>}
+                </button>
+              );
+            })}
+          </div>
+          <label className="prompt-note">
+            <span className="badge" title="Tab">
+              ⇥
+            </span>
+            <textarea
+              ref={noteRef}
+              rows={1}
+              value={note}
+              placeholder={options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"}
+              onChange={(e) => onDraft({ note: e.target.value })}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="palette-foot prompt-foot">
+        {error ? (
+          <span className="prompt-error">{error}</span>
+        ) : (
+          <span className="prompt-keys">
+            <span>
+              <kbd>↑</kbd> <kbd>↓</kbd> choose
+            </span>
+            <span>
+              <kbd>Enter</kbd> answer
+            </span>
+            <span>
+              <kbd>Tab</kbd> note
+            </span>
+            {onLater && (
+              <span>
+                <kbd>Esc</kbd> later
+              </span>
+            )}
+            {/* In the conversation it goes without saying where Claude waits. */}
+            {(!req.dv || onLater) && (
+              <span className="also">
+                {req.dv ? "Claude is waiting in a session dv runs." : "The terminal is asking too; the first answer counts."}
+              </span>
+            )}
+          </span>
+        )}
+        <span className="spacer" />
+        {children}
+      </div>
+    </>
+  );
+}
+
+// Questions takes AskUserQuestion's answers: one or more of each question's
+// options, or something else written in. Only a session dv runs asks here; in
+// a terminal the terminal takes them.
+function Questions({ questions, busy, onAnswer }) {
+  const [picked, setPicked] = useState({}); // question -> labels
+  const [other, setOther] = useState({}); // question -> text
+  const pick = (q, label) =>
+    setPicked((p) => {
+      const had = p[q.question] || [];
+      const on = had.includes(label);
+      const next = q.multiSelect ? (on ? had.filter((l) => l !== label) : [...had, label]) : on ? [] : [label];
+      return { ...p, [q.question]: next };
+    });
+  const said = (q) => [...(picked[q.question] || []), (other[q.question] || "").trim()].filter(Boolean);
+  const ready = questions.length > 0 && questions.every((q) => said(q).length > 0);
+
+  return (
+    <div className="prompt-body prompt-questions">
+      {questions.map((q) => (
+        <div className="prompt-answer" key={q.question}>
+          <div className="prompt-question">
+            {q.header && <span className="tag-generated">{q.header}</span>} {q.question}
+            {q.multiSelect && <span className="dim"> (any that apply)</span>}
+          </div>
           <div className="prompt-list">
-            <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${sel}`}>
-              {options.map((o, i) => {
-                const hint = optionHint(o, note);
+            <div className="prompt-options">
+              {q.options.map((o, i) => {
+                const on = (picked[q.question] || []).includes(o.label);
                 return (
-                  <button
-                    key={i}
-                    id={`opt-${i}`}
-                    role="option"
-                    aria-selected={i === sel}
-                    className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && "no")}
-                    disabled={busy}
-                    onMouseEnter={() => setSel(i)}
-                    onClick={() => choose(i)}
-                    title={o.title}
-                  >
-                    <span className="badge">{i + 1}</span>
+                  <button key={o.label} className={cx("palette-row", "prompt-option", on && "on")} disabled={busy} onClick={() => pick(q, o.label)}>
+                    <span className="badge">{on ? "✓" : i + 1}</span>
                     <span className="label">{o.label}</span>
-                    {hint && <span className="hint">{hint}</span>}
-                    {i === modeOption && <kbd>Shift+Tab</kbd>}
+                    {o.description && <span className="hint">{o.description}</span>}
                   </button>
                 );
               })}
             </div>
             <label className="prompt-note">
-              <span className="badge" title="Tab">
-                ⇥
-              </span>
+              <span className="badge">…</span>
               <textarea
-                ref={noteRef}
                 rows={1}
-                value={note}
-                placeholder={options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"}
-                onChange={(e) => setNotes((n) => ({ ...n, [req.id]: e.target.value }))}
+                value={other[q.question] || ""}
+                placeholder="Something else"
+                onChange={(e) => setOther((o) => ({ ...o, [q.question]: e.target.value }))}
               />
             </label>
           </div>
         </div>
-
-        <div className="palette-foot prompt-foot">
-          {error?.id === req.id ? (
-            <span className="prompt-error">{error.message}</span>
-          ) : (
-            <span className="prompt-keys">
-              <span>
-                <kbd>↑</kbd> <kbd>↓</kbd> choose
-              </span>
-              <span>
-                <kbd>Enter</kbd> answer
-              </span>
-              <span>
-                <kbd>Tab</kbd> note
-              </span>
-              <span>
-                <kbd>Esc</kbd> later
-              </span>
-              <span className="also">The terminal is asking too; the first answer counts.</span>
-            </span>
-          )}
-          <span className="spacer" />
-          <label className="check" title="Off, a request only rings the bell in the header">
-            <input type="checkbox" checked={autoPop} onChange={(e) => onAutoPop(e.target.checked)} />
-            Pop up when Claude asks
-          </label>
-        </div>
-      </section>
+      ))}
+      <div className="prompt-question-actions">
+        <button className="ghost" disabled={busy} onClick={() => onAnswer({ allow: false })} title="Decline to answer, which stops Claude">
+          Skip
+        </button>
+        <button
+          className="primary"
+          disabled={!ready || busy}
+          onClick={() => onAnswer({ allow: true, answers: Object.fromEntries(questions.map((q) => [q.question, said(q).join(", ")])) })}
+        >
+          Answer
+        </button>
+      </div>
     </div>
   );
 }
@@ -254,13 +410,61 @@ export default function ClaudePrompt({
 // RequestCard shows what the request would do as a file in the review: an
 // edit's diff under its file header, anything else under a header naming the
 // tool. A div rather than the diff's section.file, which the page's scroll
-// anchoring looks for under the pointer and would find here instead. Keyed by
-// request, so context opened in one edit does not carry over to the next.
-function RequestCard({ req, what, view, contextLines, wrap, onSymbol, onOpenFile }) {
+// anchoring looks for under the pointer and would find here instead. The edit
+// is not in the review yet, so comments on it are only drawn here, until they
+// go with the answer.
+function RequestCard({ req, what, comments, onComments, view, contextLines, wrap, onSymbol, onOpenFile }) {
   const [expanded, setExpanded] = useState({});
+  const [selection, setSelection] = useState(null);
+  const [composing, setComposing] = useState(null);
   const [, force] = useState(0);
+  const ref = useRef(null);
   const p = req.preview;
   const fd = p?.diff;
+
+  const startComment = useCallback(
+    (side, start, end, selected) => {
+      const src = side === "old" ? fd?.oldLines : fd?.newLines;
+      setComposing({ side, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setSelection(null);
+    },
+    [fd],
+  );
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const on = (e) => startComment(e.detail.side, e.detail.line, e.detail.line);
+    el.addEventListener("dv:comment", on);
+    return () => el.removeEventListener("dv:comment", on);
+  }, [startComment]);
+  const threads = useMemo(
+    () =>
+      comments.map((c) => ({
+        id: c.id,
+        draft: true,
+        file: p?.path,
+        side: c.side,
+        startLine: c.startLine,
+        endLine: c.endLine,
+        quote: c.quote,
+        comments: [{ id: c.id, author: "you", body: c.body, createdAt: c.createdAt }],
+      })),
+    [comments, p?.path],
+  );
+  const comment = useCallback(
+    async ({ side, startLine, endLine, quote, body }) => {
+      const id = "draft-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      onComments([...comments, { id, side, startLine, endLine, quote, body, createdAt: new Date().toISOString() }]);
+    },
+    [comments, onComments],
+  );
+  const threadAction = useCallback(
+    async (a) => {
+      if (a.type === "deleteComment") onComments(comments.filter((c) => c.id !== a.commentId));
+      if (a.type === "editComment") onComments(comments.map((c) => (c.id === a.commentId ? { ...c, body: a.body } : c)));
+    },
+    [comments, onComments],
+  );
 
   useEffect(() => {
     if (fd?.lang) ensureLanguage(fd.lang, () => force((n) => n + 1));
@@ -291,7 +495,7 @@ function RequestCard({ req, what, view, contextLines, wrap, onSymbol, onOpenFile
   const [dir, name] = splitPath(p.path);
   const shown = fd && !fd.binary && !fd.tooLarge;
   return (
-    <div className="file prompt-card">
+    <div className="file prompt-card" ref={ref}>
       <header className="file-head">
         {fd && (
           <span className={cx("badge", "st-" + fd.status)} title={fd.status === "A" ? "a new file" : "changed"}>
@@ -337,22 +541,22 @@ function RequestCard({ req, what, view, contextLines, wrap, onSymbol, onOpenFile
           <DiffBody
             fd={fd}
             view={fd.status === "A" ? "unified" : view}
+            oneNumber={fd.status === "A" && view === "split"}
             contextLines={p.problem ? 99 : contextLines}
             expanded={expanded}
             onExpand={expand}
-            threads={NO_THREADS}
-            selection={null}
-            setSelection={noop}
-            composing={null}
-            setComposing={noop}
-            onStartComment={noop}
-            onComment={noop}
-            onThreadAction={noop}
+            threads={threads}
+            selection={selection}
+            setSelection={setSelection}
+            composing={composing}
+            setComposing={setComposing}
+            onStartComment={startComment}
+            onComment={comment}
+            onThreadAction={threadAction}
             onSymbol={onSymbol}
-            onAsk={noop}
             path={p.path}
             wrap={wrap}
-            readOnly
+            drawAll
           />
         )}
       </div>
@@ -436,10 +640,20 @@ function describe(req) {
       return { verb: "search the web for", target: input.query };
     case "ExitPlanMode":
       return { verb: "start on this plan", target: input.planFilePath, path: true };
+    case "AskUserQuestion":
+      return { verb: "ask you", target: "" };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(req.tool);
   if (mcp) return { verb: "use", target: `${mcp[1]}: ${mcp[2]}` };
   return { verb: "use", target: req.tool };
+}
+
+// headline finishes "Claude wants to" in the title bar: what, and to what.
+export function headline(req) {
+  const what = describe(req);
+  if (req.tool === "Bash" || req.tool === "PowerShell") return "run a command";
+  if (!what.target || req.tool === "ExitPlanMode") return what.verb;
+  return `${what.verb} ${what.path ? splitPath(what.target)[1] : what.target}`;
 }
 
 // question is the line the terminal would ask above its options.
@@ -496,12 +710,34 @@ function offer(s) {
   return {};
 }
 
-function optionHint(o, note) {
-  if (!o.allow) return note.trim() ? "sends your note as the reason" : "stops Claude";
+function optionHint(o, said) {
+  if (!o.allow) return said ? `sends ${said} as the reason` : "stops Claude";
   const parts = [];
   if (o.where) parts.push(o.where === "this session" ? "for this session" : `saved to ${o.where}`);
-  if (note.trim()) parts.push("with your note");
+  if (said) parts.push(`with ${said}`);
   return parts.join(" · ");
+}
+
+// saidWith names what goes with an answer.
+function saidWith(note, comments) {
+  const n = comments.length;
+  return [note.trim() && "your note", n === 1 ? "your comment" : n > 1 && `your ${n} comments`].filter(Boolean).join(" and ");
+}
+
+// withComments is the note with the comments on the edit after it, set out as
+// the Agent view sets out comments in a message.
+function withComments(note, comments, path) {
+  const parts = comments.map((c) => {
+    const lines = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
+    const quote = c.quote.map((l) => `> ${l}\n`).join("");
+    return `<comment path="${path}" lines="${lines}" side="${c.side}" on="your proposed edit">\n${quote}${c.body}\n</comment>`;
+  });
+  return [note.trim(), ...parts].filter(Boolean).join("\n\n");
+}
+
+// commentEvent asks the card a line is in to open a comment on it, for the c key.
+export function commentEvent(cell) {
+  return new CustomEvent("dv:comment", { detail: { side: cell.dataset.side, line: Number(cell.dataset.line) } });
 }
 
 // firstChange is the line of the file on disk where the edit begins.

@@ -36,18 +36,27 @@ type Comment struct {
 // was attached to; when the file later changes underneath, that text is what
 // lets a reader (or an agent) still find what was being discussed.
 type Thread struct {
-	ID        string    `json:"id"`
-	File      string    `json:"file"`
-	Side      string    `json:"side"`      // new | old | file
-	StartLine int       `json:"startLine"` // 1-based; 0 for a file-level thread
-	EndLine   int       `json:"endLine"`
-	Quote     []string  `json:"quote,omitempty"`
-	Scope     string    `json:"scope,omitempty"`   // scope label when it was written
-	BaseSHA   string    `json:"baseSha,omitempty"` // HEAD at the time, for provenance
-	Resolved  bool      `json:"resolved"`
+	ID        string   `json:"id"`
+	File      string   `json:"file"`
+	Side      string   `json:"side"`      // new | old | file
+	StartLine int      `json:"startLine"` // 1-based; 0 for a file-level thread
+	EndLine   int      `json:"endLine"`
+	Quote     []string `json:"quote,omitempty"`
+	Scope     string   `json:"scope,omitempty"`   // scope label when it was written
+	BaseSHA   string   `json:"baseSha,omitempty"` // HEAD at the time, for provenance
+	Resolved  bool     `json:"resolved"`
+	// Origin is set on a thread written on one of Claude's edits in a session,
+	// whose line numbers are the file's as that edit left it.
+	Origin    *Origin   `json:"origin,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Comments  []Comment `json:"comments"`
+}
+
+// Origin names the edit a thread was written on.
+type Origin struct {
+	Session string `json:"session"`
+	Tool    string `json:"tool"` // the edit's tool_use id
 }
 
 // File is the on-disk document.

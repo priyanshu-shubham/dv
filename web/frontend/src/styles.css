@@ -8,9 +8,9 @@
 
 /* Regions are told apart by shade, and lines are kept for the few edges a
    shade cannot draw. Four grounds: --bg is the editor and every list or well
-   inside a shell; --bg-panel is chrome (sidebar, file heads, gap rows, the ask
-   panel); --bg-bar is the top bar and status strips; --bg-shell and --bg-raised
-   are what floats (modals and menus, cards). In dark the last three coincide;
+   inside a shell; --bg-panel is chrome (sidebar, file heads, gap rows, the
+   agent's message box); --bg-bar is the top bar and status strips; --bg-shell
+   and --bg-raised are what floats (modals and menus, cards). In dark the last three coincide;
    in light a card wants to be lighter than the chrome it sits on while a shell
    wants to be darker than its well, which is why they are separate tokens.
    The hover, active and input fills are alpha so they read on any ground.
@@ -65,14 +65,17 @@
   --scroll: #333333;
   --scroll-hover: #4a4a4a;
 
-  --hl-keyword: #ff7bac;
-  --hl-string: #8ee08a;
-  --hl-number: #f0a868;
-  --hl-comment: #757575;
-  --hl-func: #79b8ff;
-  --hl-type: #7ee0d3;
-  --hl-attr: #d2a8ff;
-  --hl-meta: #a3a3a3;
+  /* Syntax is GitHub's (Primer's prettylights), the theme the diff's own
+     colours come from; the names are its roles. */
+  --hl-keyword: #ff7b72;
+  --hl-entity: #d2a8ff;
+  --hl-constant: #79c0ff;
+  --hl-string: #a5d6ff;
+  --hl-variable: #ffa657;
+  --hl-comment: #8b949e;
+  --hl-tag: #7ee787;
+  --hl-heading: #1f6feb;
+  --hl-list: #f2cc60;
 }
 
 :root[data-theme="light"] {
@@ -120,13 +123,14 @@
   --scroll-hover: #a9a9a9;
 
   --hl-keyword: #cf222e;
+  --hl-entity: #8250df;
+  --hl-constant: #0550ae;
   --hl-string: #0a3069;
-  --hl-number: #953800;
-  --hl-comment: #767676;
-  --hl-func: #8250df;
-  --hl-type: #0550ae;
-  --hl-attr: #116329;
-  --hl-meta: #5f5f5f;
+  --hl-variable: #953800;
+  --hl-comment: #6e7781;
+  --hl-tag: #116329;
+  --hl-heading: #0550ae;
+  --hl-list: #3b2300;
 }
 
 /* Theme-independent scales. Every control is one of two heights, every bar,
@@ -308,13 +312,12 @@ select:focus {
 .seg > button,
 button.ghost,
 .view-file,
-.ask-btn,
-.ask-mini,
+.attach-btn,
+.mini,
 .toggles > button,
 .scope-chips > button,
 .file-note.skipped button,
 .gap-side button,
-.ask-presets button,
 .file-collapse,
 .file-head .nav,
 .scope-button {
@@ -339,13 +342,12 @@ button.ghost,
 .seg > button:hover,
 button.ghost:hover,
 .view-file:hover,
-.ask-btn:hover,
-.ask-mini:hover,
+.attach-btn:hover,
+.mini:hover,
 .toggles > button:hover,
 .scope-chips > button:hover,
 .file-note.skipped button:hover,
 .gap-side button:hover,
-.ask-presets button:hover,
 .file-collapse:hover,
 .file-head .nav:hover:not(:disabled),
 .scope-button:hover {
@@ -355,14 +357,12 @@ button.ghost:hover,
 
 /* Chips: choices offered rather than actions, so they carry a fill at rest. */
 .scope-chips > button,
-.file-note.skipped button,
-.ask-presets button {
+.file-note.skipped button {
   background: var(--bg-active);
 }
 
 .scope-chips > button:hover,
-.file-note.skipped button:hover,
-.ask-presets button:hover {
+.file-note.skipped button:hover {
   background: var(--bg-active);
   color: var(--fg);
 }
@@ -381,13 +381,13 @@ button.ghost.on {
 }
 
 .file-head .view-file,
-.file-head .ask-btn,
+.file-head .attach-btn,
 .file-head .btn,
 .file-collapse,
 .file-head .nav,
 .gap-side button,
 .file-note.skipped button,
-.ask-mini {
+.mini {
   height: var(--ctl-h-sm);
   min-width: var(--ctl-h-sm);
   padding: 0 6px;
@@ -399,8 +399,7 @@ button.ghost.on {
   cursor: default;
 }
 
-.scope-chips > button,
-.ask-presets button {
+.scope-chips > button {
   border-radius: var(--r-md);
   padding: 0 8px;
 }
@@ -464,66 +463,72 @@ button.link:hover {
 
 /* ---------- top bar ---------- */
 
-/* Three zones: what you are looking at, how it is drawn, then tools. Its own
-   shade is what separates it from the panels below; there is no line. */
+/* The repository in the middle, held there by equal sides; how the page is
+   drawn and the tools on the right. Its own shade is what separates it from
+   the panels below; there is no line. */
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   height: var(--bar-h);
   padding: 0 8px;
   background: var(--bg-bar);
   white-space: nowrap;
-  /* Sideways only, so the scope menu can still drop below the bar. */
+  /* Sideways only, so the menus can still drop below the bar. */
   overflow-x: clip;
 }
 
-.topbar > * {
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.topbar-right {
+  justify-content: flex-end;
+}
+
+.topbar-right > * {
   flex: none;
 }
 
-.topbar > .spacer {
-  flex: 1;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 4px;
-}
-
 .logo {
+  padding: 0 4px;
   color: var(--fg);
   font: 700 var(--fs-md) / 1 var(--font-ui);
   letter-spacing: 0.02em;
 }
 
-.repo {
-  max-width: 16vw;
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.topbar-title .repo {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--fg-2);
-  font-weight: 500;
+  color: var(--fg);
+  font-weight: 600;
 }
 
 .topbar .headref {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: 0 1 auto;
+  gap: 5px;
   min-width: 0;
-  max-width: 28vw;
-  overflow: hidden;
   color: var(--fg-2);
-  font-size: var(--fs-sm);
 }
 
-.headref .subject {
-  min-width: 0;
+.headref > span {
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--fg-3);
 }
 
 .topbar .divider {
@@ -534,24 +539,37 @@ button.link:hover {
   opacity: 0.6;
 }
 
-.ctx {
+/* The mode, over the list it fills: a segmented control, a sunken track with
+   the mode you are in raised out of it. */
+.sidebar-modes {
+  padding: 8px 8px 2px;
+}
+
+.sidebar-modes .seg {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-sm);
-  color: var(--fg-3);
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
 }
 
-.ctx select {
-  padding: 0 2px 0 4px;
-  background: none;
+.sidebar-modes .seg > button {
+  flex: 1;
+  height: 26px;
+  border-radius: calc(var(--r-lg) - 2px);
   color: var(--fg-2);
-  font-weight: 500;
 }
 
-.ctx select:hover {
+.sidebar-modes .seg > button:hover {
   color: var(--fg);
   background: var(--bg-hover);
+}
+
+.sidebar-modes .seg > button.on {
+  color: var(--fg);
+  background: var(--bg-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--border);
 }
 
 /* ---------- scope picker ---------- */
@@ -574,17 +592,22 @@ button.link:hover {
   color: var(--fg-3);
 }
 
+/* On the bar's right, so they open leftwards. */
 .scope-menu {
   white-space: normal;
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   z-index: 40;
   width: 360px;
   padding: 4px;
   border-radius: var(--r-lg);
   background: var(--bg-raised);
   box-shadow: var(--shadow-pop);
+}
+
+.scope-menu.ctx-menu {
+  width: 220px;
 }
 
 .scope-item {
@@ -709,6 +732,36 @@ button.link:hover {
   min-height: 0;
 }
 
+.main.with-comments {
+  --comments-w: 340px;
+  grid-template-columns: min(var(--side-w), 50vw) minmax(0, 1fr) min(var(--comments-w), 40vw);
+}
+
+/* The review's comments, the sidebar's shade on the other edge. */
+.comments-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-soft);
+}
+
+.topbar .comments-toggle {
+  gap: 4px;
+}
+
+.comments-count {
+  color: var(--fg-2);
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.comments-toggle.on .comments-count {
+  color: var(--accent);
+}
+
 /* The one line on this edge: at the top the sidebar meets the first file's
    head, which is the same shade. */
 .sidebar {
@@ -720,13 +773,112 @@ button.link:hover {
   border-right: 1px solid var(--border-soft);
 }
 
-/* Flush: files run edge to edge between the sidebar and the window, told
-   apart by their heads. (Padding here would also inset the rectangle sticky
-   positions resolve against, pinning every header short of the top.) */
+/* Each file is a card on the page's ground, as edits are in the Agent view,
+   with a strip of that ground kept over whatever scrolls under the header; a
+   file's head pins below it. It is margins and a sticky strip, not padding:
+   padding here would inset the rectangle sticky positions resolve against.
+   --inset is FILE_INSET in App.jsx. */
+.content {
+  --inset: 12px;
+}
+
+.content::before {
+  content: "";
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: block;
+  height: var(--inset);
+  background: var(--bg);
+}
+
+.content .file-head {
+  top: var(--inset);
+}
+
+/* A card's edge is drawn on its parts rather than round it, so a head pinned
+   partway down is still the rounded top of a card: under its corners, a
+   backing of the page's ground hides the rows passing beneath, where the
+   card's own edge would have run straight past them. The card clips its parts
+   to its corners. */
+.content .file,
+.file.agent-edit {
+  --edge: var(--border-soft);
+  border-radius: var(--r-lg);
+}
+
+.content .file > .file-head,
+.file.agent-edit > .file-head {
+  background: none;
+}
+
+.content .file > .file-head::before,
+.content .file > .file-head::after,
+.file.agent-edit > .file-head::before,
+.file.agent-edit > .file-head::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* It reaches up under the strip the head pins below: at a fractional display
+   scale the two round to different device pixels, which left a row of code
+   showing between them. At the card's top the card clips it away. */
+.content .file > .file-head::before,
+.file.agent-edit > .file-head::before {
+  top: -14px;
+  z-index: -2;
+  background: var(--bg);
+}
+
+.content .file > .file-head::after,
+.file.agent-edit > .file-head::after {
+  z-index: -1;
+  border: 1px solid var(--edge);
+  border-bottom: 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--bg-panel);
+}
+
+/* Folded, the head is the whole card. */
+.content .file > .file-head:last-child::after,
+.file.agent-edit > .file-head:last-child::after {
+  border-bottom: 1px solid var(--edge);
+  border-radius: var(--r-lg);
+}
+
+.content .file > :not(.file-head),
+.file.agent-edit > :not(.file-head) {
+  border: 0 solid var(--edge);
+  border-width: 0 1px;
+}
+
+.content .file > :last-child:not(.file-head),
+.file.agent-edit > :last-child:not(.file-head) {
+  border-bottom-width: 1px;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  overflow: clip;
+}
+
+.file-section,
+.code-pane > .file {
+  margin: 0 12px;
+}
+
+.file-section + .file-section {
+  margin-top: 12px;
+}
+
+.code-pane > .file {
+  margin-bottom: 12px;
+}
+
 .content {
   overflow-y: auto;
   overscroll-behavior-x: contain;
   scroll-behavior: smooth;
+  background: var(--bg);
 }
 
 /* The tail that lets the last file scroll up to the top of the window, and its
@@ -748,50 +900,10 @@ button.link:hover {
 
 /* ---------- sidebar ---------- */
 
-/* Panel titles, as an editor labels its side panels: small caps, the open one
-   underlined in the text colour. */
-.tabs {
-  display: flex;
-  gap: 2px;
-  height: var(--file-head-h);
-  padding: 0 6px;
-}
-
-.tabs button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-  padding: 0 6px;
-  color: var(--fg-3);
-  border-bottom: 1px solid transparent;
-  font: 600 var(--fs-xs) / 1 var(--font-ui);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.tabs button:hover {
-  color: var(--fg);
-}
-
-.tabs button.on {
-  color: var(--fg);
-  border-bottom-color: var(--fg);
-}
-
-.tabs button svg {
-  color: inherit;
-}
-
 .count {
   color: var(--fg-3);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-}
-
-.tabs .count {
-  letter-spacing: 0;
-  font-weight: 500;
 }
 
 /* A comment count: glyph and number in text colour, so it never outshouts the
@@ -891,11 +1003,15 @@ button.link:hover {
   font-weight: 500;
 }
 
+/* Every scroller is filled: on a screen at 100% Chrome scrolls a see-through
+   one by painting it again each frame, and repainting anything means laying
+   out the whole page's layers again - a long conversation's or review's worth. */
 .file-list,
 .comment-list {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  background: var(--bg-panel);
 }
 
 .comment-list {
@@ -911,7 +1027,8 @@ button.link:hover {
   height: var(--row-h);
   padding: 0 8px 0 calc(6px + var(--depth, 0) * 12px);
   text-align: left;
-  font-size: var(--fs-md);
+  /* A step under the code's size: the list is a way into the code. */
+  font-size: var(--fs-sm);
   line-height: 1;
 }
 
@@ -977,9 +1094,9 @@ button.link:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* A changed file is marked the same way in both modes, as VS Code does: its
-   name in the status colour and the status letter at the end of the row. The
-   letter means the status never rests on colour alone. */
+/* A changed file is marked the same way in both modes: its status letter at
+   the end of the row, in the status colour. The name stays plain - in Diff
+   every file is changed, and in Code the letter and a folder's dot say which. */
 .file-row.st-M,
 .file-row.st-T {
   --st: var(--mod);
@@ -998,16 +1115,8 @@ button.link:hover {
   --st: var(--del);
 }
 
-.file-row:not(.dir-row)[class*=" st-"] .name,
 .st-letter {
   color: var(--st);
-}
-
-.file-row:not(.dir-row).st-D .name {
-  text-decoration: line-through;
-}
-
-.st-letter {
   width: 14px;
   flex: none;
   text-align: center;
@@ -1016,8 +1125,7 @@ button.link:hover {
 
 /* Viewed: the name steps back to the third text tier; its letter keeps its
    colour so the status still reads. */
-.file-row.seen .name,
-.file-row.seen:not(.dir-row)[class*=" st-"] .name {
+.file-row.seen .name {
   color: var(--fg-3);
 }
 
@@ -1069,6 +1177,8 @@ button.link:hover {
   color: var(--fg-2);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  container: foot / inline-size;
 }
 
 .sidebar-foot .saved-to {
@@ -1153,15 +1263,9 @@ button.link:hover {
      for every row in the review on every frame. */
   content-visibility: auto;
   contain-intrinsic-size: auto 400px;
-  /* The header lays itself out against the file's width, which the ask panel
+  /* The header lays itself out against the file's width, which the sidebar
      and the window both change. */
   container: file / inline-size;
-}
-
-/* The file you are on carries the same accent rail as its row in the tree. */
-.file-active > .file-head,
-.code-file > .file-head {
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* A tab strip over the code: one line, whatever the width, and the path is
@@ -1325,19 +1429,12 @@ button.link:hover {
   position: relative;
 }
 
-/* Only files whose lines actually overflow carry a transform. A transform on
-   every line of every file is thousands of extra nodes to build and composite
-   while scrolling, for a horizontal offset that is almost always zero. */
-.hscroll.diff-split .cell[data-side="old"] .code {
-  transform: translate3d(var(--sx-old, 0px), 0, 0);
-}
-
-.hscroll.diff-split .cell[data-side="new"] .code {
-  transform: translate3d(var(--sx-new, 0px), 0, 0);
-}
-
-.hscroll.diff-unified .code {
-  transform: translate3d(var(--sx-new, 0px), 0, 0);
+/* Only files whose lines actually overflow carry a transform, from a rule of
+   their own (shiftSheet in FileDiff.jsx). It is 2D: a 3D one made each line a
+   compositor layer, and every repaint anywhere - a menu opening - sorted them
+   all again. A finger drags it sideways, and up and down stay the page's. */
+.hscroll {
+  touch-action: pan-y pinch-zoom;
 }
 
 .file-body.wrap .code {
@@ -1347,16 +1444,16 @@ button.link:hover {
 }
 
 /* One scrollbar per side, stuck to the bottom of the view so it is reachable
-   from anywhere in a long file rather than only at its end. It hangs over the
-   last rows, as an editor's does: a strip of its own read as a gap before the
-   next file. */
+   from anywhere in a long file rather than only at its end. Up the file it
+   hangs over the rows, as an editor's does; at the end it sits below the last
+   one, which it would otherwise cut. With no fill of its own it reads as part
+   of the file, not as a gap before the next. */
 .hbars {
   position: sticky;
   bottom: 0;
   z-index: 6;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  margin-top: -10px;
 }
 
 .diff-unified .hbars {
@@ -1441,12 +1538,16 @@ button.link:hover {
   background: var(--tint, none);
 }
 
+/* The shade says added or deleted; the text keeps its own colours, not the
+   green and red .add and .del give the line counts. */
 .cell.add {
   --tint: var(--add-bg);
+  color: var(--fg);
 }
 
 .cell.del {
   --tint: var(--del-bg);
+  color: var(--fg);
 }
 
 .cell.sel,
@@ -1491,11 +1592,10 @@ button.link:hover {
   font-size: var(--fs-xs);
 }
 
-/* The comment affordance and the +/- sign are pseudo-elements: on a large diff
-   they would otherwise be five extra DOM nodes per line. Both are laid out up
-   front and revealed by toggling visibility, so hovering a line repaints rather
-   than relayouts — which is what kept scrolling smooth with the cursor over the
-   diff. */
+/* The comment affordance is a pseudo-element: on a large diff it would
+   otherwise be extra DOM nodes per line. It is laid out up front and revealed
+   by toggling visibility, so hovering a line repaints rather than relayouts —
+   which is what kept scrolling smooth with the cursor over the diff. */
 .gutter::after {
   content: "+";
   position: absolute;
@@ -1518,22 +1618,12 @@ button.link:hover {
   visibility: visible;
 }
 
+/* The space between number and code. An added or deleted line says so by its
+   shade and its numbers alone: a +/- beside the shade says it twice. */
 .code::before {
   content: "\00a0";
   display: inline-block;
   width: 12px;
-  text-align: center;
-  color: var(--fg-4);
-}
-
-.cell.add .code::before {
-  content: "+";
-  color: var(--add);
-}
-
-.cell.del .code::before {
-  content: "-";
-  color: var(--del);
 }
 
 .code {
@@ -1897,17 +1987,8 @@ button.link:hover {
 }
 
 /* What the diff changed, marked the way an editor marks it: a bar between the
-   line number and the code of added and modified lines, with a faint tint so
-   the change still shows with the gutter out of sight, and a notch where lines
-   were deleted. */
-.diff-code .cell.mk-add {
-  --tint: var(--add-bg);
-}
-
-.diff-code .cell.mk-mod {
-  --tint: var(--mod-bg);
-}
-
+   line number and the code of added and modified lines, and a notch where
+   lines were deleted. The code itself is left unshaded, to read as the file. */
 .diff-code .cell.sel,
 .diff-code .cell.hit {
   --tint: var(--accent-soft);
@@ -1958,6 +2039,11 @@ button.link:hover {
   justify-content: center;
   padding: 8vh 16px 16px;
   background: var(--backdrop);
+}
+
+.backdrop.centred {
+  align-items: center;
+  padding: 16px;
 }
 
 /* A shell around a well: the strips at the top and bottom are the shell's
@@ -2039,7 +2125,7 @@ button.link:hover {
 
 .find-bar {
   position: absolute;
-  top: calc(var(--file-head-h) + 6px);
+  top: calc(var(--inset, 0px) + var(--file-head-h) + 6px);
   right: 12px;
   display: flex;
   align-items: center;
@@ -2179,13 +2265,13 @@ button.link:hover {
 
 .kind-func,
 .kind-method {
-  color: var(--hl-func);
+  color: var(--hl-entity);
 }
 
 .kind-type,
 .kind-class,
 .kind-module {
-  color: var(--hl-type);
+  color: var(--hl-variable);
 }
 
 .palette-foot {
@@ -2387,66 +2473,72 @@ kbd {
 
 /* ---------- syntax highlighting ---------- */
 
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-literal,
+/* highlight.js's GitHub themes, rule for rule. */
 .hljs-doctag,
-.hljs-name {
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
   color: var(--hl-keyword);
 }
 
-.hljs-string,
-.hljs-regexp,
-.hljs-addition,
-.hljs-template-variable,
-.hljs-quote {
-  color: var(--hl-string);
-}
-
-.hljs-number,
-.hljs-symbol,
-.hljs-bullet {
-  color: var(--hl-number);
-}
-
-.hljs-comment {
-  color: var(--hl-comment);
-  font-style: italic;
-}
-
 .hljs-title,
-.hljs-title.function_,
-.hljs-section {
-  color: var(--hl-func);
-}
-
 .hljs-title.class_,
-.hljs-type,
-.hljs-built_in,
-.hljs-class .hljs-title {
-  color: var(--hl-type);
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+  color: var(--hl-entity);
 }
 
 .hljs-attr,
 .hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
 .hljs-variable,
-.hljs-property,
 .hljs-selector-attr,
 .hljs-selector-class,
 .hljs-selector-id {
-  color: var(--hl-attr);
+  color: var(--hl-constant);
 }
 
-.hljs-meta,
-.hljs-meta .hljs-keyword,
-.hljs-params,
-.hljs-tag,
-.hljs-punctuation {
-  color: var(--hl-meta);
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: var(--hl-string);
 }
 
-.hljs-deletion {
-  color: var(--del);
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--hl-variable);
+}
+
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+  color: var(--hl-comment);
+}
+
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: var(--hl-tag);
+}
+
+.hljs-subst {
+  color: var(--fg);
+}
+
+.hljs-section {
+  color: var(--hl-heading);
+  font-weight: 600;
+}
+
+.hljs-bullet {
+  color: var(--hl-list);
 }
 
 .hljs-emphasis {
@@ -2457,75 +2549,51 @@ kbd {
   font-weight: 600;
 }
 
-/* ---------- ask panel ---------- */
-
-/* The third track sizes itself to the panel, so the panel's own width - which
-   it owns and persists - is the only thing a drag has to change. */
-.main.with-ask {
-  grid-template-columns: min(var(--side-w), 50vw) minmax(0, 1fr) auto;
+.hljs-addition {
+  color: var(--add);
 }
 
-/* The sidebar's mirror: the same shade, and the same one line where its head
-   meets a file head at the top. */
-.ask {
-  position: relative;
-  width: var(--ask-w, 430px);
-  /* The panel is resizable, so its own width - not the window's - is what the
-     header has to lay itself out against. */
-  container-type: inline-size;
-  display: grid;
-  /* Exactly the panel's width. Left auto, the column grew to fit the header's
-     full text, and nothing inside could shrink below it. */
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: 0;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border-soft);
+.hljs-deletion {
+  color: var(--del);
 }
 
-/* Sits inside the panel rather than straddling its border, so it never steals
-   clicks from the diff's scrollbar right next to it. */
-.ask-resize,
+/* ---------- resizing ---------- */
+
+/* Sits mostly outside the sidebar, so it never takes the edge of its
+   scrollbar; the line it shows sits on the sidebar's border. */
 .side-resize {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  right: -5px;
   width: 6px;
   z-index: 20;
   cursor: col-resize;
   touch-action: none;
 }
 
-.ask-resize::after,
 .side-resize::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -1px;
+  left: 4px;
   width: 2px;
   background: var(--accent);
   opacity: 0;
   transition: opacity 0.12s ease;
 }
 
-/* Mostly outside the sidebar, so it never takes the edge of its scrollbar;
-   the line it shows sits on the sidebar's border. */
-.side-resize {
-  left: auto;
-  right: -5px;
-}
-
-.side-resize::after {
-  left: 4px;
-}
-
-.ask-resize:hover::after,
 .side-resize:hover::after,
-body.resizing-ask .ask-resize::after,
-body.resizing-side .side-resize::after {
+body.resizing-side .sidebar > .side-resize::after,
+body.resizing-comments .comments-resize::after {
   opacity: 1;
+}
+
+/* The comments' handle is on their left edge. */
+.side-resize.comments-resize {
+  right: auto;
+  left: -5px;
 }
 
 body.resizing {
@@ -2536,61 +2604,9 @@ body.resizing * {
   cursor: col-resize !important;
 }
 
-.ask-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--bar-h);
-  padding: 0 8px 0 10px;
-}
-
-/* Every control keeps its own line; the target chip is the only thing allowed
-   to give, and it ellipsizes rather than wrapping. Without this the wordmark
-   and the model name both fold onto a second line in a narrow panel and the
-   header grows from 44px to 62px. */
-.ask-head > strong {
-  white-space: nowrap;
-  flex: none;
-  font-weight: 600;
-}
-
-.ask-head .ask-target {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.ask-head .model-menu > button {
-  white-space: nowrap;
-}
-
-/* Narrow enough and the wordmark is the first thing to go - the spark icon
-   already says which panel this is, whereas the model in use and the way out
-   are not guessable from anything else on screen. */
-@container (max-width: 400px) {
-  .ask-head > strong {
-    display: none;
-  }
-}
-
-.ask-mark {
+.spark {
   color: var(--accent);
   flex: none;
-}
-
-.ask-target {
-  height: 20px;
-  line-height: 18px;
-  font: var(--fs-xs) / 20px var(--font-mono);
-  color: var(--fg-2);
-  background: var(--bg-active);
-  border-radius: var(--r-sm);
-  padding: 0 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 45%;
-  direction: rtl;
-  text-align: left;
 }
 
 .model-menu {
@@ -2604,11 +2620,19 @@ body.resizing * {
   right: 0;
   z-index: 40;
   width: 220px;
-  max-width: calc(100cqw - 20px);
   background: var(--bg-raised);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-pop);
   padding: 4px;
+}
+
+/* In the message box, at the foot of the window, the list opens upwards. */
+.model-list.up {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 4px);
+  left: 0;
+  width: 260px;
 }
 
 .model-list button {
@@ -2634,250 +2658,1798 @@ body.resizing * {
   font-weight: 600;
 }
 
-.model-list .dim {
+/* Add to agent, and beside it the session it adds to. */
+.attach-split {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.attach-split > .attach-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.attach-split > .attach-btn.attach-to {
+  min-width: 0;
+  padding: 0 4px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* A session's name can be long; the button gives way before the file's path. */
+.attach-split .btn-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-list.attach-menu {
+  position: fixed;
+  z-index: 60;
+  width: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.attach-menu .model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-label {
+  padding: 4px 8px 2px;
+  color: var(--fg-3);
+  font: 600 var(--fs-tag) / 1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.model-tag {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--fg-3);
+}
+
+.model-note {
+  color: var(--fg-3);
+}
+
+/* Working: a thinking orb (thinking-orbs), whose motion is the kind of work. */
+.orb {
+  flex: none;
+  --fade-from: scale(0.85);
+  --fade-to: scale(1.1);
+}
+
+.agent-working-label {
+  min-width: 0;
+  --fade-from: translateY(4px);
+  --fade-to: translateY(-4px);
+}
+
+/* Layers of one place, the old leaving as the new arrives. */
+.fade {
+  display: grid;
+}
+
+.fade-layer {
+  grid-area: 1 / 1;
+  animation: fade-in 600ms ease both;
+}
+
+.fade-layer.leaving {
+  animation-name: fade-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: var(--fade-from);
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+    transform: var(--fade-to);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-layer {
+    animation: none;
+  }
+
+  .fade-layer.leaving {
+    display: none;
+  }
+}
+
+.agent-working {
+  margin: 4px 0;
+}
+
+.agent-working .orb {
+  margin-left: -4px;
+}
+
+/* ---------- agent view ---------- */
+
+/* The session's strip, the conversation on the page's ground like the diff,
+   anything Claude is waiting on, and the box to write in. */
+.agent-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.agent-pane > * {
+  flex: none;
+}
+
+.agent-pane[hidden] {
+  display: none;
+}
+
+/* The session's tools, on the conversation's own ground: the list's card is
+   what names it. */
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--file-head-h);
+  padding: 0 8px 0 12px;
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+/* Room between the header and what scrolls under it, which a file's head
+   pinned in the conversation keeps below. */
+.agent-log {
+  --agent-inset: 10px;
+}
+
+.agent-log::before {
+  content: "";
+  position: sticky;
+  top: 0;
+  z-index: 7;
+  flex: none;
+  height: var(--agent-inset);
+  margin: 0 calc(-1 * var(--log-pad)) -4px;
+  background: var(--bg);
+}
+
+.agent-log .file-head {
+  top: var(--agent-inset);
+}
+
+.session-rename {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  margin: -2px 0 -2px -4px;
+  padding: 0 4px;
+  font-size: var(--fs-md);
+}
+
+/* A thin bar with the number beside it: context in the header, the plan's
+   limits under the sessions. Amber past three quarters, red past nine tenths. */
+.meter {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-active);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--fg-3);
+}
+
+/* Where Claude Code compacts. */
+.meter > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--fg);
+}
+
+.agent-context-left {
+  color: var(--mod);
+  font-family: var(--font-ui);
+}
+
+.agent-context-left .short {
+  display: none;
+}
+
+/* Where to compact from: the meter, as it reads. */
+button.ghost.agent-context {
+  gap: 6px;
+  height: var(--ctl-h-sm);
+  font: var(--fs-xs) var(--font-mono);
+  color: var(--fg-3);
+}
+
+.agent-head .model-list {
+  white-space: normal;
+}
+
+.high .agent-context-left {
+  color: var(--del);
+}
+
+.warn .meter > span {
+  background: var(--mod);
+}
+
+.high .meter > span {
+  background: var(--del);
+}
+
+.agent-context,
+.plan-limit {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-3);
+  font: var(--fs-xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-limit + .plan-limit {
+  margin-left: 4px;
+}
+
+/* A narrow sidebar keeps the usage on one line: the bars give way down to a
+   stub, then the count of sessions goes, which the list already shows. */
+.plan-limit .meter {
+  flex: 0 1 36px;
+  min-width: 12px;
+}
+
+@container foot (max-width: 228px) {
+  .session-count {
+    display: none;
+  }
+}
+
+.agent-cost {
+  font: var(--fs-xs) var(--font-mono);
+}
+
+/* In the header, the message of yours the conversation is under, once it is
+   scrolled out of sight; the header's other parts give it the room they can. */
+.agent-under {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 80px;
+  max-width: 45%;
+  height: 22px;
+  padding: 0 2px 0 0;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+}
+
+.agent-under-text {
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
   font-size: var(--fs-xs);
 }
 
-/* ---------- transcript ---------- */
-
-.ask-scroll {
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
-  /* Grid and flex children are min-width:auto by default, so one long
-     identifier in an answer would widen this box past the panel and the
-     overflow would be clipped with no way to scroll to it. */
-  min-width: 0;
-  padding: 4px 0 10px;
+.agent-under > button.ghost {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
 }
 
-/* The panel is resizable down to a narrow column, so an answer has to be able
-   to give. Prose, links and inline code wrap at any character rather than run
-   off the edge; the two things that genuinely cannot wrap - code blocks and
-   tables - scroll inside their own box instead of pushing the panel wider. */
-.turn,
-.turn-q,
-.turn-a,
-.turn-a .markdown {
-  min-width: 0;
+.agent-pane > .agent-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The view holds its own place (Agent.jsx); the browser's would add to it. */
+  overflow-anchor: none;
+  background: var(--bg);
+}
+
+/* Kept at the foot of the view while there is more below. */
+.agent-jump {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+}
+
+.agent-jump > button {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 12px 0 9px;
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-pop);
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  transform: translateX(-50%);
+}
+
+.agent-jump > button:hover {
+  color: var(--fg);
+}
+
+/* The way to what came before the compaction the conversation is shown from. */
+.agent-earlier {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+  font-size: var(--fs-xs);
+}
+
+.agent-earlier > button {
+  gap: 5px;
+  border-radius: var(--r-pill);
+  background: var(--bg-panel);
+}
+
+/* dv is out of reach: what is on screen is as it last was, and holds still. */
+.app.offline *,
+.agent-log.lost * {
+  animation: none !important;
+}
+
+.agent-readonly.agent-lost {
+  color: var(--mod);
+}
+
+/* Wide enough for a split diff; prose keeps to a reading measure inside it. */
+.agent-log {
+  --log-pad: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 8px var(--log-pad) 32px;
+}
+
+/* Shown only if the wait is long enough to notice. */
+.agent-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 80%;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  animation: fade-in 400ms 200ms ease both;
+  --fade-from: none;
+}
+
+/* Nothing said yet: a question, the box to answer it in, and places to start. */
+.agent-start {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px 20px 12vh;
+  overflow-y: auto;
+}
+
+.agent-start-title {
+  margin: 0 0 6px;
+  color: var(--fg);
+  font: 500 26px / 1.3 var(--font-ui);
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.agent-start > .agent-composer {
+  width: 100%;
+  max-width: 720px;
+  padding: 0;
+}
+
+.agent-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 720px;
+}
+
+.agent-suggestions > button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.agent-suggestions > button:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* What you said sits to the right, a shaded bubble above what came of it. */
+.agent-prompt {
+  position: relative;
+  align-self: flex-end;
+  max-width: min(78%, 760px);
+  margin-top: 14px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-active);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+.agent-prompt:first-child {
+  margin-top: 0;
+}
+
+.agent-prompt-text {
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.turn-a .markdown pre,
-.turn-a .markdown table {
-  max-width: 100%;
-  overflow-x: auto;
+.agent-prompt.command .agent-prompt-text {
+  color: var(--fg-2);
+  font: var(--fs-sm) var(--font-mono);
 }
 
-.turn-a .markdown table {
+.agent-prompt.pending .agent-prompt-text,
+.agent-prompt.pending .agent-prompt-images {
+  opacity: 0.6;
+}
+
+.agent-prompt-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 6px;
+}
+
+.agent-prompt .agent-image {
+  margin: 0;
+}
+
+.agent-prompt .agent-image img {
+  max-width: 240px;
+  max-height: 160px;
+}
+
+.agent-prompt-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+}
+
+.agent-prompt-hint {
+  color: var(--fg-3);
+}
+
+/* Beside the bubble, out of the way of what it says. */
+.agent-rewind {
+  position: absolute;
+  top: 4px;
+  right: calc(100% + 4px);
+  visibility: hidden;
+}
+
+.agent-prompt:hover .agent-rewind,
+.agent-rewind:focus-visible {
+  visibility: visible;
+}
+
+.agent-chips,
+.agent-attached {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-chips {
+  margin-top: 6px;
+}
+
+.agent-attached {
+  margin-bottom: 6px;
+}
+
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  color: var(--fg);
+  font: var(--fs-xs) / 20px var(--font-mono);
+  overflow: hidden;
+}
+
+/* A comment takes the colour files that changed are marked with. */
+.agent-chip.comment {
+  box-shadow: inset 2px 0 0 var(--mod);
+}
+
+.agent-chip-label {
+  max-width: 320px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+}
+
+.agent-chip-label:disabled {
+  cursor: default;
+}
+
+.agent-chip-label:not(:disabled):hover {
+  color: var(--accent);
+}
+
+.agent-chip-x {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 20px;
+  color: var(--fg-3);
+}
+
+.agent-chip-x:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+/* A narrow pane still has to show every word, so prose wraps anywhere; code
+   blocks and tables, which cannot, scroll inside their own box. */
+.agent-text {
+  max-width: 820px;
+  min-width: 0;
+  font-size: var(--fs-md);
+  line-height: 1.62;
+  overflow-wrap: anywhere;
+}
+
+.agent-text p {
+  margin: 0 0 8px;
+}
+
+.agent-text h1,
+.agent-text h2,
+.agent-text h3 {
+  margin: 12px 0 4px;
+  color: var(--fg);
+  font-size: var(--fs-md);
+}
+
+.agent-text li {
+  margin-bottom: 3px;
+}
+
+.agent-text pre,
+.agent-text table {
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.agent-text table {
   display: block;
   width: max-content;
   border-collapse: collapse;
 }
 
-.turn-a .markdown th,
-.turn-a .markdown td {
-  border: 1px solid var(--border-soft);
+.agent-text th,
+.agent-text td {
   padding: 3px 7px;
+  border: 1px solid var(--border-soft);
   text-align: left;
 }
 
-.ask-empty {
-  padding: 20px 14px;
-  color: var(--fg-2);
-  font-size: var(--fs-md);
-  line-height: 1.6;
-}
-
-.ask-empty p {
-  margin: 0 0 8px;
-}
-
-.ask-empty-lead {
-  color: var(--fg);
-  font-weight: 600;
-}
-
-.ask-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 14px;
-}
-
-.ask-presets button {
-  height: var(--ctl-h);
-  font-size: var(--fs-xs);
-}
-
-.turn {
-  padding: 12px 12px 6px;
-}
-
-.turn + .turn {
-  padding-top: 4px;
-}
-
-/* The question reads as something you said: a quiet block above its answer,
-   kept in view so a scrolled-back transcript still makes sense. */
-.turn-q {
-  font-size: var(--fs-md);
-  line-height: 1.5;
-  color: var(--fg);
-  background: var(--bg-active);
+/* What a command printed: Claude Code's words rather than Claude's, in a card. */
+.agent-output {
+  align-self: flex-start;
+  padding: 8px 12px;
   border-radius: var(--r-lg);
-  padding: 7px 10px;
-  margin-bottom: 10px;
+  background: var(--bg-panel);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.agent-output > :first-child {
+  margin-top: 0;
+}
+
+.agent-output > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-output.error {
+  background: var(--del-bg);
+  color: var(--del);
+}
+
+/* Claude's thinking, set back from what it says. */
+.agent-thinking {
+  margin: 2px 0 4px 5px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
 }
 
-.turn-a {
-  font-size: var(--fs-md);
-  line-height: 1.62;
-}
-
-.turn-error {
-  color: var(--del);
-  background: var(--del-bg);
-  border-radius: var(--r-md);
-  padding: 8px 10px;
-  font-size: var(--fs-sm);
-}
-
-.turn-note {
+.agent-note {
+  align-self: center;
+  padding: 2px 0;
+  color: var(--fg-3);
   font-size: var(--fs-xs);
-  margin-top: 4px;
+  text-align: center;
+  white-space: pre-wrap;
 }
 
-.turn-a .markdown h1,
-.turn-a .markdown h2,
-.turn-a .markdown h3 {
-  font-size: var(--fs-md);
-  margin: 12px 0 4px;
-  color: var(--fg);
-}
-
-.turn-a .markdown p {
-  margin: 0 0 8px;
-}
-
-.turn-a .markdown pre {
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-}
-
-.turn-a .markdown li {
-  margin-bottom: 3px;
-}
-
-/* Still streaming: a pulse, not a cursor - nothing here can be typed into. */
-.caret {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-left: 4px;
-  border-radius: 50%;
-  background: var(--fg-3);
-  vertical-align: middle;
-  animation: pulse 1.1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-
-.turn-foot {
+.agent-compacted-line,
+.agent-mode-line {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding-top: 4px;
-  font-size: var(--fs-xs);
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-
-.turn:hover .turn-foot,
-.turn:focus-within .turn-foot {
-  opacity: 1;
-}
-
-.turn-foot button {
+  gap: 6px;
+  width: 100%;
+  padding: 4px 0;
   color: var(--fg-3);
   font-size: var(--fs-xs);
 }
 
-.turn-foot button:hover:not(:disabled) {
-  color: var(--accent);
+.agent-compacted-line::before,
+.agent-compacted-line::after,
+.agent-mode-line::before,
+.agent-mode-line::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 
-.turn-foot button:disabled {
-  color: var(--add);
+.agent-compacted-line::before,
+.agent-mode-line::before {
+  margin-right: 4px;
+}
+
+.agent-compacted-line::after,
+.agent-mode-line::after {
+  margin-left: 4px;
+}
+
+.agent-compacted-line:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.agent-compacted-line:disabled {
   cursor: default;
 }
 
-/* ---------- composer ---------- */
-
-.ask-composer {
-  padding: 6px 10px 10px;
+.agent-compacted-tokens {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.ask-composer textarea {
-  width: 100%;
-  resize: none;
-  font-size: var(--fs-md);
-  line-height: 1.5;
-  min-height: 46px;
-  max-height: 160px;
+.agent-compacted-text {
+  max-height: 480px;
+  margin: 2px 0 6px;
+  padding: 8px 14px;
+  overflow: auto;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  font-size: var(--fs-sm);
 }
 
-.ask-composer-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.ask-composer-bar .hint {
-  font-size: var(--fs-xs);
-}
-
-/* Narrow enough and the keys hint would take three lines; Send says enough. */
-@container (max-width: 280px) {
-  .ask-composer-bar .hint {
-    display: none;
-  }
-}
-
-.ask-stop {
-  display: inline-flex;
-  align-items: center;
-  height: var(--ctl-h);
-  padding: 0 12px;
+.agent-note.error {
+  align-self: stretch;
+  padding: 8px 10px;
   border-radius: var(--r-md);
   background: var(--del-bg);
   color: var(--del);
-  font: 600 var(--fs-sm) / 1 var(--font-ui);
+  font-size: var(--fs-sm);
+  text-align: left;
 }
 
-.ask-stop:hover {
-  filter: brightness(1.15);
+.agent-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+}
+
+/* A tool call is one line - what it did, to what, and what came of it - that
+   opens on the call and what came back. The dot is how it went. */
+.agent-tool-row {
+  display: flex;
+  align-items: center;
+  height: var(--row-h);
+  border-radius: var(--r-md);
+  color: var(--fg-2);
+}
+
+.agent-tool-row:hover,
+.agent-tool.open > .agent-tool-row {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.agent-tool-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 6px;
+  color: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.agent-tool-sum {
+  flex: none;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+/* Only on the line being pointed at: a session reads dozens of files. */
+.agent-tool-row .view-file {
+  height: calc(var(--row-h) - 4px);
+  margin-right: 2px;
+  visibility: hidden;
+}
+
+.agent-tool-row:hover .view-file,
+.agent-tool-row:focus-within .view-file {
+  visibility: visible;
+}
+
+/* A run of calls: its line's chevron sits where a call's dot does, and the
+   calls open under it, set in. */
+.agent-tools > .agent-tool-row svg {
+  flex: none;
+  margin: 0 -2px 0 -3px;
+  color: var(--fg-3);
+}
+
+.agent-tools > .agent-tool-row .agent-tool-what {
+  color: var(--fg);
+}
+
+.agent-tool-sum.failed {
+  color: var(--del);
+}
+
+.agent-tools-list {
+  margin: 2px 0 4px 11px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.agent-tool-state {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-4);
+}
+
+.agent-tool-state.done {
+  background: var(--add);
+}
+
+.agent-tool-state.failed {
+  background: var(--del);
+}
+
+/* Still: the orb below the conversation is what moves. */
+.agent-tool-state.running {
+  background: var(--accent);
+}
+
+/* Still going, but Claude has moved on: a ring rather than a dot. */
+.agent-tool-state.background {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.agent-tool-state.stopped {
+  background: var(--fg-3);
+}
+
+.agent-tool-name {
+  flex: none;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.agent-tool-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-tool-what.mono {
+  font: var(--fs-xs) / var(--row-h) var(--font-mono);
+}
+
+.agent-tool-body {
+  margin: 2px 0 6px 20px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.agent-result {
+  max-height: 320px;
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-2);
+  font: 12px/18px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-result:first-child {
+  border-top: 0;
+}
+
+/* A command's output as it runs, the whole view to itself. */
+.agent-task-output {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  color: var(--fg-2);
+  font: 12px/18px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* What Claude left at work, in line with the message box under it, which
+   takes over the fade the conversation goes under. */
+.agent-at-work {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 1060px;
+  width: 100%;
+  margin-inline: auto;
+  padding: 0 20px 8px;
+  box-sizing: content-box;
+  background: var(--bg);
+}
+
+.agent-pane > .agent-at-work::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none;
+}
+
+.agent-pane > .agent-at-work + .agent-composer::before {
+  content: none;
+}
+
+.agent-at-work-call {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 340px;
+  height: var(--ctl-h);
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+}
+
+.agent-at-work-call:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.agent-at-work-call.on {
+  background: var(--bg-active);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.agent-at-work-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: at-work 1.6s ease-in-out infinite;
+}
+
+@keyframes at-work {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.agent-at-work-kind {
+  flex: none;
+  color: var(--fg-3);
+}
+
+.agent-at-work-what,
+.agent-peek-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* In the header, the call open in place of the conversation. */
+.agent-peek-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.agent-peek-title > .ghost {
+  margin-left: -6px;
+}
+
+.agent-peek-kind {
+  flex: none;
+  color: var(--fg-3);
+}
+
+.agent-peek-title .agent-tool-state {
+  flex: none;
+}
+
+.agent-peek-title .dim {
+  flex: none;
+  font-size: var(--fs-xs);
+}
+
+.agent-result.error,
+.agent-result.stderr {
+  color: var(--del);
+}
+
+.agent-lines pre {
+  margin: 0;
+  font: inherit;
+  white-space: inherit;
+}
+
+.agent-more {
+  display: block;
+  padding: 4px 12px 8px;
+  font-size: var(--fs-xs);
+}
+
+/* What a Read was given, at its own line numbers, each one a way into the file. */
+.agent-code {
+  max-height: 420px;
+  padding: 6px 0;
+  overflow: auto;
+  font: 12px/18px var(--font-mono);
+}
+
+.agent-code-line {
+  display: flex;
+  min-width: max-content;
+}
+
+.agent-code-line .n,
+.agent-found-line .n {
+  flex: none;
+  width: 52px;
+  padding-right: 12px;
+  color: var(--fg-4);
+  font: inherit;
+  text-align: right;
+}
+
+.agent-code-line button.n:hover {
+  color: var(--accent);
+}
+
+.agent-code-line code {
+  white-space: pre;
+}
+
+.agent-found {
+  max-height: 420px;
+  padding: 4px 0;
+  overflow: auto;
+  font: 12px/18px var(--font-mono);
+}
+
+.agent-found-path,
+.agent-found-line {
+  display: flex;
+  width: 100%;
+  padding: 0 12px 0 0;
+  text-align: left;
+  font: inherit;
+}
+
+.agent-found-path {
+  padding-left: 12px;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.agent-found-line {
+  color: var(--fg-2);
+}
+
+.agent-found-line code {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-found-path:hover:not(:disabled),
+.agent-found-line:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.agent-found-path:disabled,
+.agent-found-line:disabled {
+  cursor: default;
+}
+
+.agent-found-text {
+  padding: 0 12px;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+}
+
+.agent-page {
+  max-height: 420px;
+  padding: 8px 14px;
+  overflow: auto;
+}
+
+.agent-links {
+  margin: 0;
+  padding: 6px 12px;
+  list-style: none;
+  font-size: var(--fs-sm);
+}
+
+.agent-links li {
+  display: flex;
+  gap: 8px;
+  line-height: 22px;
+}
+
+/* A picture Claude was shown opens under its line, small, and from there full size. */
+.agent-image {
+  display: block;
+  width: fit-content;
+  margin: 2px 0 6px 20px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.agent-image img {
+  display: block;
+  max-width: min(100%, 480px);
+  max-height: 280px;
+  width: auto;
+  height: auto;
+}
+
+/* As wide as the picture, up to the wide modal's width. */
+.modal.image-view {
+  width: fit-content;
+  min-width: 360px;
+}
+
+.image-view-body {
+  overflow: auto;
+  background: var(--bg);
+}
+
+.image-view-body img {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.agent-plan {
+  padding: 10px 14px;
+}
+
+.agent-todos {
+  margin: 0 0 4px 20px;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.agent-todos li {
+  display: flex;
+  gap: 6px;
+  line-height: 20px;
+}
+
+.agent-todos li.completed {
+  color: var(--fg-3);
+  text-decoration: line-through;
+}
+
+.agent-todos li.in_progress {
+  color: var(--fg);
+}
+
+.agent-todo-mark {
+  flex: none;
+  width: 12px;
+  color: var(--fg-3);
+  text-align: center;
+}
+
+/* An edit is a file of the review, framed so each reads as one change. Always
+   drawn: the skipping that spares a long review would only cost here. */
+.agent-edit {
+  margin: 6px 0;
+  content-visibility: visible;
+}
+
+/* A gap in an edit the transcript kept only the hunks of: nothing to open. */
+.gap.unknown,
+.gap.unknown:hover {
+  cursor: default;
+  background: color-mix(in srgb, var(--bg-panel) 55%, var(--bg));
+  color: var(--fg-3);
+}
+
+/* A request in the conversation: a line saying what, the edit as a card like
+   the ones Claude has made, and the answers under it - no shell around them. */
+.agent-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.agent-ask-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-ask .prompt-body {
+  overflow: visible;
+  background: none;
+}
+
+.agent-ask .prompt-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.agent-ask .prompt-answer {
+  padding: 4px 0 0;
+}
+
+.agent-ask .prompt-foot {
+  padding: 2px 0 0;
+}
+
+.agent-readonly {
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+/* The message box: a card on the page's ground, in line with the
+   conversation above it, which fades out behind its top edge. */
+.agent-composer {
+  position: relative;
+  padding: 0 20px 14px;
+  background: var(--bg);
+}
+
+.agent-pane > .agent-composer::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none;
+}
+
+.composer-card {
+  position: relative;
+  max-width: 1060px;
+  margin-inline: auto;
+  padding: 10px 10px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-panel);
+}
+
+.composer-card:focus-within {
+  border-color: var(--border-strong);
+}
+
+.composer-card.dropping {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+/* A slash command: written as the conversation shows one, named under it. */
+.composer-card.command textarea {
+  font-family: var(--font-mono);
+}
+
+.composer-command {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 4px 0 2px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.composer-command-name {
+  flex: none;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.composer-command-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What a command leaves in the box, for the message after it. */
+.agent-attached.held > :not(.agent-attached-held) {
+  opacity: 0.45;
+}
+
+.agent-attached-held {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+/* The commands the box could be the start of, as wide as it. */
+.model-list.command-menu {
+  right: 0;
+  width: auto;
+  max-height: min(320px, 45vh);
+  overflow-y: auto;
+}
+
+.command-menu .model-name {
+  font: 500 var(--fs-sm) var(--font-mono);
+}
+
+.command-args {
+  color: var(--fg-3);
+  font-weight: 400;
+}
+
+.command-menu .model-note {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-composer textarea,
+.agent-composer textarea:focus {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  resize: none;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 0 0 -6px;
+}
+
+button.ghost.composer-add {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.composer-effort {
+  color: var(--fg-3);
+}
+
+/* Filled like the terminal's cursor: the one solid thing in the box. */
+.composer-send {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.composer-send:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.composer-send:disabled {
+  background: var(--bg-active);
+  color: var(--fg-4);
+  cursor: default;
+}
+
+.composer-send svg {
+  display: block;
+}
+
+/* Effort under the models, as a row of its levels. */
+.model-efforts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 6px 4px 2px 8px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.model-list .model-efforts .seg > button {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  height: var(--ctl-h-sm);
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+}
+
+.agent-image-chip {
+  position: relative;
+  display: inline-block;
+  height: 48px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.agent-image-chip img {
+  display: block;
+  height: 100%;
+  max-width: 96px;
+  object-fit: cover;
+}
+
+.agent-image-chip .agent-chip-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+}
+
+.agent-readonly {
+  padding: 10px 14px;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* ---------- sessions ---------- */
+
+.session-group {
+  padding: 12px 12px 4px;
+  color: var(--fg-3);
+  font: 600 var(--fs-tag) / 1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* A small card per session, shaded rather than outlined; the one on screen
+   is ringed, which follows the corners where a rail would bend round them. */
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 8px 8px;
+  padding: 8px 8px 8px 10px;
+  border-radius: var(--r-lg);
+  background: var(--bg-hover);
+  cursor: pointer;
+}
+
+.session-row:hover {
+  background: var(--bg-active);
+}
+
+.session-row.on {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.session-row-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 18px;
+}
+
+/* A title, not a path: it gives way at its end. */
+.session-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-last {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.session-you {
+  color: var(--fg-2);
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.session-added {
+  color: var(--accent);
+}
+
+.session-id {
+  margin: 0 -3px;
+  padding: 0 3px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+}
+
+.session-id:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.session-id.copied {
+  color: var(--accent);
+}
+
+.session-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-close {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: -2px -2px -2px 0;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--fg-3);
+}
+
+.session-close > svg {
+  display: block;
+}
+
+.notify-toggle.on {
+  color: var(--accent);
+}
+
+.session-row:hover .session-close {
+  display: inline-grid;
+}
+
+.session-close:hover {
+  color: var(--fg);
+  background: var(--bg-active);
+}
+
+/* Hollow: nothing has it open. Filled: dv runs it. A ring: a terminal has it.
+   Blue: working. */
+.session-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--fg-4);
+}
+
+.session-dot.live-dv {
+  background: var(--fg-2);
+  box-shadow: none;
+}
+
+.session-dot.live-terminal {
+  box-shadow: inset 0 0 0 1.5px var(--fg-2);
+}
+
+/* Held still: the conversation's orb is what moves. */
+.session-dot.busy {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+
+/* What waits to go with the next message, on the Agent tab of the header. */
+.attached-count {
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent-fill);
+  color: var(--accent-fg);
+  font: 700 10px/16px var(--font-ui);
+  text-align: center;
+  animation: count-in 0.3s ease-out;
+}
+
+@keyframes count-in {
+  from {
+    transform: scale(1.4);
+  }
+}
+
+.rewind-title {
+  font-weight: 600;
+}
+
+.rewind-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  outline: none;
+  background: var(--bg);
+}
+
+.rewind-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rewind-quote {
+  max-height: 96px;
+  overflow: auto;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+}
+
+.prompt-questions .prompt-answer {
+  padding-bottom: 6px;
+}
+
+.prompt-question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .attached-count {
+    animation: none;
+  }
+}
+
+/* ---------- notices ---------- */
+
+/* A toast (sonner places and stacks them; the look is the page's): a request
+   from a session not on screen, a turn that ended, a word from the page. */
+.notice {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  width: 340px;
+  padding: 10px 32px 10px 12px;
+  border-radius: var(--r-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-pop);
+  color: var(--fg);
+  font: var(--fs-sm) / 1.4 var(--font-ui);
+}
+
+.notice-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--fg-2);
+}
+
+.notice.ask .notice-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.notice.done .notice-icon {
+  background: var(--add-bg);
+  color: var(--add);
+}
+
+.notice-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notice-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.notice-detail {
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice-last {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.notice-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.notice-actions > button {
+  height: 24px;
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+}
+
+.notice-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--fg-3);
+}
+
+.notice-close:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 
 /* ---------- Claude's requests ---------- */
 
 /* The overlays' backdrop, but under them (100), so a definition opened from a
-   request comes up over it and Esc returns to the request. */
+   request comes up over it and Esc returns to the request. Centred, where the
+   palettes hang from the top: a dialog, not a list that grows as you type. */
 .prompt-backdrop {
   position: fixed;
   inset: 0;
   z-index: 90;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 8vh 16px 16px;
+  padding: 16px;
   background: var(--backdrop);
 }
 
@@ -2897,15 +4469,32 @@ body.resizing * {
   flex: 1;
 }
 
+.prompt-head .prompt-title,
+.prompt-head .prompt-session {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .prompt-title {
   font: 600 var(--fs-md) var(--font-ui);
 }
 
-/* A session id, which uppercase would make harder to match against the terminal. */
-.prompt-head .session {
-  font: 500 var(--fs-xs) / 1 var(--font-mono);
-  text-transform: none;
-  letter-spacing: 0;
+/* Gives way before what Claude wants to do. */
+.prompt-head .prompt-session {
+  flex-shrink: 100;
+  max-width: 45%;
+  padding: 2px 6px;
+  border-radius: var(--r-md);
+  color: var(--fg-2);
+  font: var(--fs-sm) var(--font-ui);
+}
+
+.prompt-session:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
 }
 
 .prompt-count {
@@ -2963,15 +4552,6 @@ body.resizing * {
   font-weight: 600;
 }
 
-/* A proposed edit is not in the review yet, so there is nothing to comment on. */
-.read-only .gutter {
-  cursor: default;
-}
-
-.read-only .gutter::after {
-  content: none;
-}
-
 .prompt-command {
   display: flex;
   flex-direction: column;
@@ -3011,8 +4591,8 @@ body.resizing * {
 }
 
 /* The terminal's question, laid out as it is there: a numbered list with the
-   answer Enter would give marked. The note is the list's last row, since it
-   goes out with whichever answer is chosen. */
+   answer Enter would give marked by a fill alone. The note is the list's last
+   row, since it goes out with whichever answer is chosen. */
 .prompt-answer {
   flex: none;
   padding: 10px 12px 0;
@@ -3023,11 +4603,9 @@ body.resizing * {
   font-weight: 600;
 }
 
-/* A well in the shell, like the request above it. */
 .prompt-list {
-  border-radius: var(--r-lg);
-  background: var(--bg);
-  overflow: clip;
+  display: grid;
+  gap: 1px;
 }
 
 .prompt-options {
@@ -3036,7 +4614,8 @@ body.resizing * {
 }
 
 .prompt-option {
-  padding: 3px 10px;
+  padding: 3px 8px;
+  border-radius: var(--r-md);
   color: var(--fg-2);
 }
 
@@ -3082,6 +4661,7 @@ body.resizing * {
 
 .prompt-option.on {
   color: var(--fg);
+  box-shadow: none;
 }
 
 .prompt-option.on .badge {
@@ -3091,7 +4671,6 @@ body.resizing * {
 
 .prompt-option.no.on {
   background: var(--del-bg);
-  box-shadow: inset 2px 0 0 var(--del);
 }
 
 .prompt-option.no.on .badge {
@@ -3107,8 +4686,8 @@ body.resizing * {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding-left: 10px;
-  border-top: 1px solid var(--border-soft);
+  padding-left: 8px;
+  border-radius: var(--r-md);
   cursor: text;
 }
 
@@ -3131,9 +4710,8 @@ body.resizing * {
   box-shadow: none;
 }
 
-/* Typing here shows as the selection's rail on this row, not a second fill. */
 .prompt-note:focus-within {
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--bg-active);
 }
 
 .prompt-note:focus-within .badge {
@@ -3242,50 +4820,211 @@ button.ghost.back {
 
 /* ---------- narrow windows ---------- */
 
-@media (max-width: 1180px) {
-  .headref .subject {
-    display: none;
-  }
-}
-
 @media (max-width: 1100px) {
   .main {
     --side-w: 240px;
   }
 }
 
-/* No room for three columns: the ask panel floats over the diff rather than
-   squeezing it to nothing, and never runs past the window. Keep the width in
-   step with DRAWER in AskPanel.jsx. */
-@media (max-width: 900px) {
-  .main {
-    position: relative;
-  }
-
-  .main.with-ask {
-    grid-template-columns: min(var(--side-w), 50vw) minmax(0, 1fr);
-  }
-
-  .ask {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 30;
-    width: min(var(--ask-w, 430px), 100%);
-    box-shadow: var(--shadow-modal);
-  }
-}
-
-@media (max-width: 960px) {
-  .ctx {
-    display: none;
-  }
-}
-
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .topbar .headref {
     display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .topbar-title {
+    display: none;
+  }
+}
+
+.topbar .menu-toggle {
+  display: none;
+}
+
+/* A phone: one column, and the sidebar and the comments over it, one at a
+   time, sliding in from their edges. PHONE in App.jsx. */
+@media (max-width: 760px) {
+  /* Room for a finger. */
+  :root {
+    --bar-h: 44px;
+  }
+
+  .topbar {
+    --ctl-h: 36px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px;
+    padding: 0 4px;
+  }
+
+  .topbar .wide-only {
+    display: none;
+  }
+
+  .topbar .menu-toggle {
+    display: inline-flex;
+  }
+
+  .topbar-right > .scope {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .topbar-right .scope-button {
+    max-width: 100%;
+  }
+
+  .topbar-right .scope-button > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Across the screen under the bar, wherever its button is. */
+  .topbar .scope-menu {
+    position: fixed;
+    top: calc(var(--bar-h) + 4px);
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100% - var(--bar-h) - 16px);
+    overflow-y: auto;
+  }
+
+  .main,
+  .main.with-comments {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main > .sidebar,
+  .main > .comments-panel {
+    position: fixed;
+    top: var(--bar-h);
+    bottom: 0;
+    z-index: 60;
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* Drawn while it is away, on a layer of its own, so opening it only moves
+     it; the list is inert until then (Sidebar.jsx). */
+  .main > .sidebar {
+    --row-h: 34px;
+    left: 0;
+    width: min(86vw, 340px);
+    transform: translateX(calc(-100% - 16px));
+    transition: transform 180ms ease;
+    will-change: transform;
+  }
+
+  .main.side-open > .sidebar {
+    transform: none;
+  }
+
+  .main > .comments-panel {
+    right: 0;
+    width: min(90vw, 380px);
+    animation: panel-in 180ms ease;
+  }
+
+  .side-resize {
+    display: none;
+  }
+
+  /* Always there, on a layer of its own, and only faded: put in and taken out,
+     it had the whole diff under it painted again each time. */
+  .panel-backdrop {
+    position: fixed;
+    inset: var(--bar-h) 0 0;
+    z-index: 59;
+    background: var(--backdrop);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    will-change: opacity;
+  }
+
+  .panel-backdrop.on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .agent-log {
+    --log-pad: 12px;
+  }
+
+  .agent-composer,
+  .agent-at-work {
+    padding-inline: 12px;
+  }
+
+  /* How full the context is, as the percent alone, and near compacting, how
+     near. */
+  .agent-context .meter,
+  .agent-context-tokens,
+  .agent-context-left .until {
+    display: none;
+  }
+
+  .agent-context-left .short {
+    display: inline;
+  }
+
+  /* A phone has no keys to press, and no room to set a comment in under the
+     code column. */
+  .composer-actions .hint {
+    display: none;
+  }
+
+  .thread-slot {
+    padding: 0 8px;
+  }
+
+  .composer-actions {
+    flex-wrap: wrap;
+  }
+
+  /* One number, the line's own, and no slot for the "+" there is no pointer
+     to hover it with: a line is commented on by tapping its number. */
+  .gutter {
+    padding: 0 4px 0 2px;
+  }
+
+  .gutter::after {
+    content: none;
+  }
+
+  .ln {
+    min-width: 22px;
+  }
+
+  .gutter .ln:first-child:not(:only-child),
+  .cell.del .gutter .ln + .ln {
+    display: none;
+  }
+
+  .cell.del .gutter .ln:first-child {
+    display: inline-block;
+  }
+
+  .code::before {
+    width: 8px;
+  }
+
+  .code {
+    padding-right: 8px;
+  }
+}
+
+@keyframes panel-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+/* No pointer to hover with: what shows on pointing shows always. */
+@media (hover: none) {
+  .agent-tool-row .view-file,
+  .comment-actions {
+    visibility: visible;
   }
 }
 

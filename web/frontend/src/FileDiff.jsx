@@ -2,10 +2,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { charWidth, cx, LRM, searchSeed, splitPath, statusLabel, statusLetter, useElementWidth, visualLength } from "./util.js";
-import { ThreadList, Composer } from "./Threads.jsx";
+import { charWidth, cx, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useElementWidth, useMedia, visualLength } from "./util.js";
+import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "./icons.jsx";
-import { AskButton } from "./AskPanel.jsx";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
 // once the section has been scrolled near, so a 500-file diff still opens
@@ -15,7 +14,7 @@ import { AskButton } from "./AskPanel.jsx";
 function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
-  isActive, composing, setComposing, onAsk, onSearch, onView, reveal, generatedHidden, onShowGenerated,
+  composing, setComposing, onAttach, onSearch, onView, reveal, generatedHidden, onShowGenerated,
   onBody, found, foundAt, foundHead,
 }) {
   const [expanded, setExpanded] = useState({});
@@ -55,7 +54,7 @@ function FileDiff({
 
   return (
     <section
-      className={cx("file", isActive && "file-active")}
+      className="file"
       id={`file-${cssId(entry.path)}`}
       data-path={entry.path}
       data-pending={pending || undefined}
@@ -102,7 +101,7 @@ function FileDiff({
           <IconFile size={12} />
           <span className="btn-label">File</span>
         </button>
-        <AskButton onClick={() => onAsk({ file: entry.path })} title="Ask Claude about this file's diff" />
+        <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} title="Add this file to your next message to Claude" />
         <button
           className={cx("btn", "outline", "viewed", viewed && "on")}
           aria-pressed={viewed}
@@ -140,6 +139,7 @@ function FileDiff({
             <DiffBody
               fd={fd}
               view={oneSided && view === "split" ? "unified" : view}
+              oneNumber={oneSided && view === "split"}
               contextLines={contextLines}
               expanded={expanded}
               onExpand={expand}
@@ -152,7 +152,7 @@ function FileDiff({
               onComment={onComment}
               onThreadAction={onThreadAction}
               onSymbol={onSymbol}
-              onAsk={onAsk}
+              onAttach={onAttach}
               onSearch={onSearch}
               path={entry.path}
               wrap={wrap}
@@ -202,20 +202,55 @@ const ROW_HEIGHT = 20;
 // The code cell's +/- slot and its padding-right, from styles.css.
 const SIGN_PX = 12;
 const TRAIL_PX = 16;
+const TAP_SLOP_PX = 6;
+const GLIDE_DECAY = 0.996; // of a fling's speed, per millisecond
 
-// Code mode renders a file through the same rows as a diff - one column, every
-// line, in runs this long so virtualisation still has blocks to let go of.
-const CODE_BLOCK = 200;
+// Rows are rendered in runs no longer than this, so virtualisation has blocks to
+// let go of: Code mode's every line, and a diff's long hunks - a new file is one.
+// Short, because what is mounted is what a sideways scroll moves.
+const ROW_BLOCK = 60;
+
+// Sideways shifts, a rule per file that has one. A rule rather than a variable
+// set on the file: a variable is inherited, so changing it restyled every
+// element in the file, each token of each line, on every step of a scroll.
+const shiftSheet = new CSSStyleSheet();
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, shiftSheet];
+let shifts = 0;
+
+// chunk cuts a diff's long runs of rows. Split view cuts only at unchanged
+// lines, which keeps a deletion and the addition it pairs with in one block.
+function chunk(blocks, split) {
+  const out = [];
+  for (const b of blocks) {
+    if (b.kind !== "rows" || b.lines.length <= ROW_BLOCK) {
+      out.push(b);
+      continue;
+    }
+    let start = 0;
+    for (let i = ROW_BLOCK; i < b.lines.length; i++) {
+      if (i - start >= ROW_BLOCK && (!split || b.lines[i].t === "e")) {
+        out.push({ kind: "rows", lines: b.lines.slice(start, i) });
+        start = i;
+      }
+    }
+    out.push({ kind: "rows", lines: b.lines.slice(start) });
+  }
+  return out;
+}
 
 // DiffBody renders a file's rows. view "code" is Code mode: just `side` of the
-// file, whole, with changes marked in the gutter. readOnly takes the comment
-// affordances away, for an edit Claude has only proposed. onBody hears the rows
-// it lays out, which find in page searches; `found` marks the matches on them,
-// by "side:line", and `foundAt` is the one the find bar is on.
+// file, whole, with changes marked in the gutter. drawAll keeps every row
+// mounted, for a request's preview, which the browser's own find searches. `unknown` is a diff
+// whose unchanged lines were never kept, so its gaps say so and do not open.
+// onBody hears the rows it lays out, which find in page searches; `found` marks
+// the matches on them, by "side:line", and `foundAt` is the one the find bar is on.
+// oneNumber is for a file with one side shown in one column among split ones:
+// its gutter keeps to the one number a split side has, so its code lines up
+// with theirs.
 export function DiffBody({
-  fd, view, side, contextLines, expanded, onExpand, threads, selection, setSelection,
-  composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAsk, onSearch, path, wrap,
-  reveal, hit = 0, readOnly = false, onBody, found, foundAt,
+  fd, view, oneNumber, side, contextLines, expanded, onExpand, threads, selection, setSelection,
+  composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, wrap,
+  reveal, hit = 0, drawAll = false, unknown = false, onBody, found, foundAt,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
@@ -224,10 +259,10 @@ export function DiffBody({
     return out;
   }, [threads, composing]);
   const blocks = useMemo(() => {
-    if (view !== "code") return buildBlocks(fd, contextLines, expanded, anchors);
+    if (view !== "code") return chunk(buildBlocks(fd, contextLines, expanded, anchors), view === "split");
     const lines = codeLines(fd, side);
     const out = [];
-    for (let i = 0; i < lines.length; i += CODE_BLOCK) out.push({ kind: "rows", lines: lines.slice(i, i + CODE_BLOCK) });
+    for (let i = 0; i < lines.length; i += ROW_BLOCK) out.push({ kind: "rows", lines: lines.slice(i, i + ROW_BLOCK) });
     return out;
   }, [fd, view, side, contextLines, expanded, anchors]);
   useEffect(() => {
@@ -293,11 +328,7 @@ export function DiffBody({
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    const onMouseUp = (e) => {
-      if (drag.current) return; // the gutter drag has already claimed this
-      if (e.detail === 2) return; // a double-click is go-to-definition
-      if (e.target.closest?.(".row-threads")) return; // selecting inside a comment
-
+    const commentOnSelection = () => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.rangeCount) return;
       const from = cellOf(sel.anchorNode);
@@ -311,22 +342,57 @@ export function DiffBody({
       const b = Number(to.dataset.line);
       onStartComment(from.dataset.side, Math.min(a, b), Math.max(a, b), searchSeed(sel.toString()));
     };
+    const onMouseUp = (e) => {
+      if (drag.current) return; // the gutter drag has already claimed this
+      if (e.detail === 2) return; // a double-click is go-to-definition
+      if (e.target.closest?.(".row-threads")) return; // selecting inside a comment
+      commentOnSelection();
+    };
+    // A touch selection has no mouseup: its handles are dragged until they
+    // rest, and a double tap is a search, not a selection to comment on.
+    let settle = 0;
+    let lastTap = null;
+    const onSelection = () => {
+      clearTimeout(settle);
+      if (lastPointer === "touch") settle = setTimeout(commentOnSelection, SELECTION_SETTLE_MS);
+    };
+    const onPointerUp = (e) => {
+      if (e.pointerType !== "touch" || !e.target.closest?.(".code")) return;
+      const now = performance.now();
+      if (lastTap && now - lastTap.at < DOUBLE_TAP_MS && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24) {
+        lastTap = null;
+        const word = identifierAt(e.clientX, e.clientY);
+        if (!word) return;
+        clearTimeout(settle);
+        window.getSelection()?.removeAllRanges();
+        onSymbol?.(word, path);
+      } else {
+        lastTap = { at: now, x: e.clientX, y: e.clientY };
+      }
+    };
     root.addEventListener("mouseup", onMouseUp);
-    return () => root.removeEventListener("mouseup", onMouseUp);
-  }, [onStartComment]);
+    root.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("selectionchange", onSelection);
+    return () => {
+      clearTimeout(settle);
+      root.removeEventListener("mouseup", onMouseUp);
+      root.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("selectionchange", onSelection);
+    };
+  }, [onStartComment, onSymbol, path]);
 
   // The row blocks below are memoised on this object, so it must be stable
   // across renders that changed nothing they depend on.
   const ctx = useMemo(
     () => ({
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, onSearch, path, hit, readOnly,
-      found, foundAt,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, hit,
+      found, foundAt, oneNumber,
     }),
     [
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
-      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAsk, onSearch, path, hit, readOnly,
-      found, foundAt,
+      onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, hit,
+      found, foundAt, oneNumber,
     ],
   );
 
@@ -352,8 +418,10 @@ export function DiffBody({
   }, [fd]);
 
   const split = view === "split";
-  // What the gutter occupies: one line number in split and code, two in unified.
-  const gutter = view === "unified" ? 96 : 60;
+  // What the gutter occupies: one line number in split and code, two in
+  // unified; on a phone, one number and no room for the "+".
+  const phone = useMedia(PHONE);
+  const gutter = phone ? 32 : view === "unified" ? 96 : 60;
 
   // What a rendered row is actually as wide as, gutter included, reported by
   // the blocks on screen. It only ever grows, so the scroll range does not
@@ -379,10 +447,23 @@ export function DiffBody({
   const fits = (px) => px - TRAIL_PX <= paneWidth;
   const overflows = !wrap && widthPx > 0 && (split ? !fits(need.old) || !fits(need.new) : !fits(need.both));
 
-  // Pre-negated: the stylesheet uses the variable straight, so scrolling does
-  // not re-evaluate a calc() on every code element in the file.
+  // This file's rules in shiftSheet, while it overflows: in one column both
+  // sides move together.
+  const shiftClass = useMemo(() => `sx${shifts++}`, []);
+  const shiftRules = useRef(null);
+  useEffect(() => {
+    if (!overflows) return;
+    const add = (sel) => shiftSheet.cssRules[shiftSheet.insertRule(`${sel} { transform: translate(0px, 0) }`, shiftSheet.cssRules.length)];
+    const at = `.diff.hscroll.${shiftClass} .cell`;
+    const rules = { old: add(`${at}[data-side="old"] .code`), new: add(`${at}[data-side="new"] .code`) };
+    shiftRules.current = rules;
+    return () => {
+      shiftRules.current = null;
+      for (const r of [rules.old, rules.new]) shiftSheet.deleteRule([...shiftSheet.cssRules].indexOf(r));
+    };
+  }, [overflows, shiftClass]);
   const shift = useCallback((side, px) => {
-    rootRef.current?.style.setProperty(side === "old" ? "--sx-old" : "--sx-new", `${-px}px`);
+    shiftRules.current?.[side].style.setProperty("transform", `translate(${-px}px, 0)`);
   }, []);
 
   // Wrapping (or a window wide enough to fit everything) removes the overflow,
@@ -440,8 +521,59 @@ export function DiffBody({
       e.preventDefault();
       bar.scrollLeft += dx;
     };
+    // A finger drags the side it is on, and let go moving, the code carries on
+    // and slows. Up and down are the browser's (touch-action: pan-y), which
+    // cancels the pointer when it takes a drag as a scroll.
+    let pan = null;
+    let glide = 0;
+    const onDown = (e) => {
+      cancelAnimationFrame(glide);
+      const cell = e.pointerType === "touch" && e.target.closest?.("[data-side]");
+      const bar = cell && (!split || cell.dataset.side === "old" ? barOld.current : barNew.current);
+      pan = bar ? { id: e.pointerId, bar, x: e.clientX, from: e.clientX, at: e.timeStamp, v: 0 } : null;
+    };
+    const onMove = (e) => {
+      if (pan?.id !== e.pointerId) return;
+      // Within a few pixels a tap is still a tap.
+      if (!pan.moving && Math.abs(e.clientX - pan.from) < TAP_SLOP_PX) return;
+      pan.moving = true;
+      const dx = e.clientX - pan.x;
+      pan.bar.scrollLeft -= dx;
+      pan.v = -dx / Math.max(1, e.timeStamp - pan.at);
+      pan.x = e.clientX;
+      pan.at = e.timeStamp;
+    };
+    const onUp = (e) => {
+      if (pan?.id !== e.pointerId) return;
+      const { bar, moving } = pan;
+      let v = pan.v;
+      pan = null;
+      if (!moving || Math.abs(v) < 0.05) return;
+      let last = performance.now();
+      const step = (now) => {
+        bar.scrollLeft += v * (now - last);
+        v *= Math.pow(GLIDE_DECAY, now - last);
+        last = now;
+        if (Math.abs(v) > 0.02) glide = requestAnimationFrame(step);
+      };
+      glide = requestAnimationFrame(step);
+    };
+    const onCancel = (e) => {
+      if (pan?.id === e.pointerId) pan = null;
+    };
     root.addEventListener("wheel", onWheel, { passive: false });
-    return () => root.removeEventListener("wheel", onWheel);
+    root.addEventListener("pointerdown", onDown);
+    root.addEventListener("pointermove", onMove);
+    root.addEventListener("pointerup", onUp);
+    root.addEventListener("pointercancel", onCancel);
+    return () => {
+      cancelAnimationFrame(glide);
+      root.removeEventListener("wheel", onWheel);
+      root.removeEventListener("pointerdown", onDown);
+      root.removeEventListener("pointermove", onMove);
+      root.removeEventListener("pointerup", onUp);
+      root.removeEventListener("pointercancel", onCancel);
+    };
   }, [overflows, split]);
 
   return (
@@ -450,14 +582,13 @@ export function DiffBody({
       // them - must not pay for a transform node on every line they render.
       // Code mode is one column, so it scrolls sideways the way unified does.
       className={cx(
-        "diff", split ? "diff-split" : "diff-unified", view === "code" && "diff-code", overflows && "hscroll",
-        readOnly && "read-only",
+        "diff", split ? "diff-split" : "diff-unified", view === "code" && "diff-code", overflows && "hscroll", shiftClass,
       )}
       ref={rootRef}
     >
       {blocks.map((b, i) =>
         b.kind === "gap" ? (
-          <GapRow key={b.id + i} gap={b} onExpand={onExpand} />
+          <GapRow key={b.id + i} gap={b} onExpand={unknown ? null : onExpand} />
         ) : (
           <Block
             key={`${i}:${view}:${wrap}`}
@@ -468,7 +599,7 @@ export function DiffBody({
             onMeasure={onMeasure}
             // A proposed edit sits in a modal that is hidden and shown again, which
             // the visibility observer has been seen to miss; it is small, so drawn whole.
-            force={readOnly || holdsLine(b.lines, reveal)}
+            force={drawAll || holdsLine(b.lines, reveal)}
           />
         ),
       )}
@@ -547,7 +678,11 @@ function Block({ lines, view, wrap, ctx, onMeasure, force }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { rootMargin: OVERSCAN });
+    // Observed against the pane that scrolls: against the window, the pane
+    // clips the block before the margin is applied, so nothing off screen is
+    // ever near.
+    const root = el.closest(".content, .agent-scroll");
+    const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { root, rootMargin: OVERSCAN });
     io.observe(el);
     return () => io.disconnect();
   }, []);
@@ -615,6 +750,17 @@ function Block({ lines, view, wrap, ctx, onMeasure, force }) {
 }
 
 function GapRow({ gap, onExpand }) {
+  if (!onExpand) {
+    return (
+      <div className="gap unknown">
+        <div className="gap-side gap-left">
+          <span className="gap-label">
+            {gap.hidden} line{gap.hidden === 1 ? "" : "s"} not kept in the transcript
+          </span>
+        </div>
+      </div>
+    );
+  }
   const actions = (
     <>
       <button
@@ -756,10 +902,15 @@ function anchorNodes(anchor, ctx, key) {
           <Composer
           title={c.start === c.end ? `Line ${c.end}` : `Lines ${c.start}-${c.end}`}
           aside={
-            <AskButton
-              onClick={() => ctx.onAsk({ file: ctx.path, side: c.side, startLine: c.start, endLine: c.end })}
-              title="Ask Claude about these lines instead"
-            />
+            ctx.onAttach && (
+              <AttachButton
+                onClick={(to) => {
+                  ctx.onAttach({ kind: "lines", file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote }, to);
+                  ctx.setComposing(null);
+                }}
+                title="Add these lines to your next message to Claude instead"
+              />
+            )
           }
           autoFocus
           selected={c.selected}
@@ -808,7 +959,7 @@ function UnifiedCell({ line, ctx, ranges }) {
       html={html}
       ranges={ranges}
       mark={isDel ? "del" : line.t === "i" ? "add" : ""}
-      dualGutter
+      dualGutter={!ctx.oneNumber}
     />
   );
 }
@@ -826,15 +977,15 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
 
   return (
     <div className={cx("cell", mark, selected && "sel", ctx.hit === no && "hit")} data-side={side} data-line={no}>
-      {/* The gutter's "+" affordance and the +/- sign are both CSS
-          pseudo-elements. As real nodes they were five extra elements on every
-          line, and a large review renders tens of thousands of lines. Clicking
-          the gutter opens the composer for this line; dragging selects a range. */}
+      {/* The gutter's "+" affordance is a CSS pseudo-element: as real nodes,
+          such things were extra elements on every line, and a large review
+          renders tens of thousands of lines. Clicking the gutter opens the
+          composer for this line; dragging selects a range. */}
       <div
         className="gutter"
-        title={ctx.readOnly ? undefined : "Click to comment on this line, drag for a range"}
-        onMouseDown={ctx.readOnly ? undefined : ctx.onGutterDown(side, no)}
-        onMouseEnter={ctx.readOnly ? undefined : ctx.onGutterEnter(side, no)}
+        title="Click to comment on this line, drag for a range"
+        onMouseDown={ctx.onGutterDown(side, no)}
+        onMouseEnter={ctx.onGutterEnter(side, no)}
       >
         {dualGutter ? (
           <>
@@ -848,6 +999,7 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
       <code
         className="code"
         onDoubleClick={() => {
+          if (lastPointer === "touch") return; // DiffBody's double tap
           const word = selectedIdentifier();
           if (word) ctx.onSymbol(word, ctx.path);
         }}
@@ -868,5 +1020,28 @@ function cellOf(node) {
 function selectedIdentifier() {
   const sel = window.getSelection();
   const text = sel ? sel.toString().trim() : "";
-  return /^[A-Za-z_$][\w$]*$/.test(text) ? text : "";
+  return IDENTIFIER.test(text) ? text : "";
+}
+
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+const SELECTION_SETTLE_MS = 800;
+const DOUBLE_TAP_MS = 350;
+
+// lastPointer is what the page was last pressed with. A finger's selection and
+// double tap raise none of the mouse's events these views listen for.
+let lastPointer = "mouse";
+window.addEventListener("pointerdown", (e) => (lastPointer = e.pointerType), true);
+
+// identifierAt is the word under a point, as a double tap names it.
+function identifierAt(x, y) {
+  const range = document.caretRangeFromPoint?.(x, y);
+  const node = range?.startContainer;
+  if (node?.nodeType !== Node.TEXT_NODE) return "";
+  const text = node.textContent;
+  let start = range.startOffset;
+  let end = start;
+  while (start > 0 && /[\w$]/.test(text[start - 1])) start--;
+  while (end < text.length && /[\w$]/.test(text[end])) end++;
+  const word = text.slice(start, end);
+  return IDENTIFIER.test(word) ? word : "";
 }

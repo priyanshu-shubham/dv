@@ -3,7 +3,8 @@
 // the request to the dv serving that repository and waits for the reader. The
 // terminal shows the same prompt meanwhile and whichever is answered first
 // wins: a no there kills the hook, and a yes is heard when the tool reports
-// that it ran.
+// that it ran. A session dv runs itself has no terminal; its prompts come over
+// the session's own channel and are put to the reader through Put.
 package permit
 
 import (
@@ -25,6 +26,8 @@ type Request struct {
 	Agent   string          `json:"agent,omitempty"` // set when a subagent is asking
 	Tool    string          `json:"tool"`
 	Input   json.RawMessage `json:"input"`
+	// DV marks a session dv runs, where no terminal is asking alongside.
+	DV bool `json:"dv,omitempty"`
 	// Suggestions are the terminal's "Yes, and don't ask again" options, in the
 	// form a hook hands back to apply one.
 	Suggestions []json.RawMessage `json:"suggestions,omitempty"`
@@ -38,6 +41,9 @@ type Answer struct {
 	Note  string `json:"note"`
 	// Suggestion indexes the suggestion to apply along with an allow.
 	Suggestion *int `json:"suggestion"`
+	// Answers are AskUserQuestion's, by question: the labels picked, or what
+	// the reader wrote instead.
+	Answers map[string]string `json:"answers,omitempty"`
 }
 
 // hookInput is the part of a hook's stdin dv reads.
@@ -59,6 +65,7 @@ type Broker struct {
 	waiting []*waiter
 	notes   []*note
 	watch   map[chan struct{}]bool
+	owned   func(session string) bool
 }
 
 type waiter struct {
@@ -85,6 +92,14 @@ func New(root string) *Broker {
 	return &Broker{root: root, watch: map[chan struct{}]bool{}}
 }
 
+// SetOwned names the sessions dv runs. The hook leaves their prompts alone, so
+// Claude Code puts them to dv over the session's own channel instead.
+func (b *Broker) SetOwned(owned func(session string) bool) {
+	b.mu.Lock()
+	b.owned = owned
+	b.mu.Unlock()
+}
+
 // Hook serves one run of `dv claude hook`, returning what it should print.
 // Nothing leaves Claude Code carrying on as though dv were not there.
 func (b *Broker) Hook(ctx context.Context, body []byte) ([]byte, error) {
@@ -95,7 +110,7 @@ func (b *Broker) Hook(ctx context.Context, body []byte) ([]byte, error) {
 	switch in.Event {
 	case "PermissionRequest":
 		// A question for the user wants answers, which only the terminal takes.
-		if in.Tool == "AskUserQuestion" {
+		if in.Tool == "AskUserQuestion" || b.isOwned(in.Session) {
 			return nil, nil
 		}
 		return b.ask(ctx, &in), nil
@@ -106,14 +121,6 @@ func (b *Broker) Hook(ctx context.Context, body []byte) ([]byte, error) {
 }
 
 func (b *Broker) ask(ctx context.Context, in *hookInput) []byte {
-	w := &waiter{
-		req: &Request{
-			ID: newID(), Session: in.Session, Agent: in.Agent, Tool: in.Tool, Input: in.Input,
-			Suggestions: in.Suggestions, At: time.Now(), Preview: preview(b.root, in.Tool, in.Input),
-		},
-		thread: in.AgentID,
-		answer: make(chan *Answer, 1),
-	}
 	// Claude Code asks one thing at a time per agent, so an older request from
 	// this one was answered in the terminal - by a yes on a call still running,
 	// or one whose report dv never matched. Left, it would wait out the timeout.
@@ -124,6 +131,27 @@ func (b *Broker) ask(ctx context.Context, in *hookInput) []byte {
 		}
 		old.answer <- nil
 	}
+	req := &Request{
+		ID: newID(), Session: in.Session, Agent: in.Agent, Tool: in.Tool, Input: in.Input,
+		Suggestions: in.Suggestions, At: time.Now(), Preview: preview(b.root, in.Tool, in.Input),
+	}
+	a := b.put(ctx, req, in.AgentID)
+	if a == nil {
+		return nil
+	}
+	return output("PermissionRequest", "decision", b.Decision(req, a))
+}
+
+// Put asks the reader about a request from a session dv runs, and waits. Nil
+// means nobody answered: ctx ended first.
+func (b *Broker) Put(ctx context.Context, req *Request) *Answer {
+	req.ID, req.At, req.DV = newID(), time.Now(), true
+	req.Preview = preview(b.root, req.Tool, req.Input)
+	return b.put(ctx, req, "")
+}
+
+func (b *Broker) put(ctx context.Context, req *Request, thread string) *Answer {
+	w := &waiter{req: req, thread: thread, answer: make(chan *Answer, 1)}
 	b.mu.Lock()
 	b.waiting = append(b.waiting, w)
 	b.mu.Unlock()
@@ -131,12 +159,9 @@ func (b *Broker) ask(ctx context.Context, in *hookInput) []byte {
 
 	select {
 	case a := <-w.answer:
-		if a == nil {
-			return nil
-		}
-		return b.decide(in, w.req, a)
+		return a
 	case <-ctx.Done():
-		// The hook is gone: the terminal said no, or Claude Code stopped waiting.
+		// Whoever asked is gone: the terminal said no, or Claude Code stopped waiting.
 		if b.remove(func(x *waiter) bool { return x == w }) != nil {
 			b.changed()
 		}
@@ -144,7 +169,9 @@ func (b *Broker) ask(ctx context.Context, in *hookInput) []byte {
 	}
 }
 
-func (b *Broker) decide(in *hookInput, req *Request, a *Answer) []byte {
+// Decision is the answer as Claude Code takes it, from a hook or over a
+// session's channel.
+func (b *Broker) Decision(req *Request, a *Answer) map[string]any {
 	text := strings.TrimSpace(a.Note)
 	d := map[string]any{"behavior": "allow"}
 	switch {
@@ -155,7 +182,7 @@ func (b *Broker) decide(in *hookInput, req *Request, a *Answer) []byte {
 		// Held before the allow goes out, so it is there when the call reports back.
 		if text != "" {
 			b.mu.Lock()
-			b.notes = append(b.notes, &note{in.Session, in.Tool, in.Input, text, time.Now().Add(noteTTL)})
+			b.notes = append(b.notes, &note{req.Session, req.Tool, req.Input, text, time.Now().Add(noteTTL)})
 			b.mu.Unlock()
 		}
 	case text != "":
@@ -165,38 +192,46 @@ func (b *Broker) decide(in *hookInput, req *Request, a *Answer) []byte {
 		// it to guess at another way round.
 		d = map[string]any{"behavior": "deny", "message": "The user declined this in dv.", "interrupt": true}
 	}
-	return output("PermissionRequest", "decision", d)
+	return d
 }
 
 // ran hears that a tool call finished. A request still waiting on it was
 // answered in the terminal; a note left for it goes to Claude now.
 func (b *Broker) ran(in *hookInput) []byte {
-	same := func(session, tool string, input json.RawMessage) bool {
-		return session == in.Session && tool == in.Tool && sameCall(input, in.Input)
-	}
-	if w := b.remove(func(w *waiter) bool { return same(w.req.Session, w.req.Tool, w.req.Input) }); w != nil {
+	if w := b.remove(func(w *waiter) bool {
+		return w.req.Session == in.Session && w.req.Tool == in.Tool && sameCall(w.req.Input, in.Input)
+	}); w != nil {
 		w.answer <- nil
 		b.changed()
 	}
+	text := b.TakeNote(in.Session, in.Tool, in.Input)
+	if text == "" {
+		return nil
+	}
+	return output(in.Event, "additionalContext", text)
+}
 
+// TakeNote returns what the reader wrote when allowing this call, worded for
+// Claude, and forgets it; "" when there is none.
+func (b *Broker) TakeNote(session, tool string, input json.RawMessage) string {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	text, now := "", time.Now()
 	kept := b.notes[:0]
 	for _, n := range b.notes {
 		switch {
 		case now.After(n.until):
-		case text == "" && same(n.session, n.tool, n.input):
+		case text == "" && n.session == session && n.tool == tool && sameCall(n.input, input):
 			text = n.text
 		default:
 			kept = append(kept, n)
 		}
 	}
 	b.notes = kept
-	b.mu.Unlock()
 	if text == "" {
-		return nil
+		return ""
 	}
-	return output(in.Event, "additionalContext", "The user allowed this "+in.Tool+" call in dv, with a note: "+text)
+	return "The user allowed this " + tool + " call in dv, with a note: " + text
 }
 
 // Answer settles request id with the reader's decision. False means it is no
@@ -234,6 +269,17 @@ func (b *Broker) Watch() (<-chan struct{}, func()) {
 		delete(b.watch, ch)
 		b.mu.Unlock()
 	}
+}
+
+// Notify tells the watchers the list may read differently, as it does when
+// the sessions the page shows prompts for change.
+func (b *Broker) Notify() { b.changed() }
+
+func (b *Broker) isOwned(session string) bool {
+	b.mu.Lock()
+	owned := b.owned
+	b.mu.Unlock()
+	return owned != nil && owned(session)
 }
 
 func (b *Broker) changed() {

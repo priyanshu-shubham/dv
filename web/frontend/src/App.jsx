@@ -2,21 +2,25 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
 import Header, { AUTO } from "./Header.jsx";
-import Sidebar from "./Sidebar.jsx";
+import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel } from "./Overlays.jsx";
-import AskPanel from "./AskPanel.jsx";
-import ClaudePrompt, { useClaudeRequests } from "./ClaudePrompt.jsx";
+import AgentView from "./Agent.jsx";
+import ClaudePrompt, { useClaudeEvents } from "./ClaudePrompt.jsx";
+import { Notices, say, useNotices } from "./Notices.jsx";
+import { AttachTarget } from "./Threads.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
 import { mapLine, newLineFor } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
 import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
-import { cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, searchSeed, useDebounced, usePersisted } from "./util.js";
+import { cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
 
-// Shared empty list so files without comments keep a stable `threads` prop.
+// Shared empty lists so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
+const NO_ATTACHED = [];
+const MODES = ["diff", "code", "agent"];
 const NO_FILTER = { include: "", exclude: "" };
 
 export default function App() {
@@ -26,11 +30,17 @@ export default function App() {
   const [diff, setDiff] = useState(null);
   const [threads, setThreads] = useState([]);
   const [error, setError] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
 
-  const [view, setView] = usePersisted("view", "split");
+  // A phone has room for one side of a diff, and wraps by default, with its own
+  // setting; it shows one panel at a time, over the page: "side", "comments" or null.
+  const phone = useMedia(PHONE);
+  const [panel, setPanel] = useState(null);
+  const [viewPicked, setView] = usePersisted("view", "split");
+  const view = phone ? "unified" : viewPicked;
   const [contextLines, setContextLines] = usePersisted("context", 3);
-  const [wrap, setWrap] = usePersisted("wrap", false);
+  const [wrapWide, setWrapWide] = usePersisted("wrap", false);
+  const [wrapPhone, setWrapPhone] = usePersisted("wrapPhone", true);
+  const [wrap, setWrap] = phone ? [wrapPhone, setWrapPhone] : [wrapWide, setWrapWide];
   const [theme, setTheme] = usePersisted("theme", "dark");
   const [hideGenerated, setHideGenerated] = usePersisted("hideGenerated", false);
   const [pathFilter, setPathFilter] = usePersisted("pathFilter", NO_FILTER);
@@ -59,7 +69,17 @@ export default function App() {
   const [stack, setStack] = useState([]);
   const overlay = stack[stack.length - 1] || null;
   const behind = stack[stack.length - 2] || null;
-  const [ask, setAsk] = useState(null); // { file, side, startLine, endLine }
+  // Agent mode: the session on screen, the sessions to list, and what goes
+  // with the next message - code, files and comments added from anywhere.
+  const [agentId, setAgentId] = usePersisted("agentSession", "");
+  const [agent, setAgent] = useState({ available: true, sessions: [], models: [], modes: [] });
+  // By session, "" being the one the next new session starts as.
+  const [attachedBy, setAttachedBy] = usePersisted("agentAttachedBy", {});
+  const [attachPick, setAttachPick] = usePersisted("agentAttachTo", null);
+  const [agentReveal, setAgentReveal] = useState(null);
+  const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false);
+  const showComments = phone ? panel === "comments" : commentsOpen;
+  const [commentsWidth, setCommentsWidth] = usePersisted("commentsWidth", 0); // 0: the stylesheet's default
 
   const hovered = useRef(null); // { path, side, line } under the cursor
   const scrollRef = useRef(null);
@@ -71,6 +91,10 @@ export default function App() {
   const [mode, setMode] = usePersisted("mode", "diff");
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  // Once opened, the Agent view stays, hidden in the other modes like they are
+  // in it: drawing a long conversation again takes a second.
+  const [agentVisited, setAgentVisited] = useState(mode === "agent");
+  if (mode === "agent" && !agentVisited) setAgentVisited(true);
   const codeRef = useRef(null);
   const [lastCode, setLastCode] = usePersisted("codePath", "");
   const [codeNav, setCodeNav] = useState(() => ({ stack: lastCode ? [{ path: lastCode }] : [], at: lastCode ? 0 : -1 }));
@@ -83,13 +107,14 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  // Claude Code's prompts waiting on the reader. A new one pops up unless the
-  // reader turned that off, when it only lights the bell.
-  const requests = useClaudeRequests();
+  // Claude Code's prompts waiting on the reader. The session on screen in the
+  // Agent view asks in its conversation; the rest are told of in notices, and
+  // answered in a window over the page opened from one or from the bell.
+  const { requests, sessions: activity } = useClaudeEvents();
+  const windowed = useMemo(() => requests.filter((r) => mode !== "agent" || r.session !== agentId), [requests, mode, agentId]);
   const [promptOpen, setPromptOpen] = useState(false);
   const promptRef = useRef(false);
-  promptRef.current = promptOpen && requests.length > 0;
-  const [autoPop, setAutoPop] = usePersisted("claudePopup", true);
+  promptRef.current = promptOpen && windowed.length > 0;
   const [promptFocus, setPromptFocus] = useState(null);
   const seenRequests = useRef(new Set());
   const [arrived, setArrived] = useState(0);
@@ -97,22 +122,10 @@ export default function App() {
     const fresh = requests.filter((r) => !seenRequests.current.has(r.id));
     for (const r of fresh) seenRequests.current.add(r.id);
     if (fresh.length) setArrived((n) => n + fresh.length);
-    if (!requests.length) setPromptOpen(false);
-    else if (fresh.length && autoPop) {
-      setPromptFocus(fresh[fresh.length - 1].id);
-      setPromptOpen(true);
-    }
-  }, [requests, autoPop]);
+    if (!windowed.length) setPromptOpen(false);
+  }, [requests, windowed]);
   const closePrompt = useCallback(() => setPromptOpen(false), []);
-
-  // The waiting note trails so a narrow tab still shows which repository it
-  // is; the count up front is enough to catch the eye. The path is for
-  // checkouts that share a name.
-  useEffect(() => {
-    const n = requests.length;
-    const repo = meta ? `dv - ${meta.repo} (${meta.place})` : "dv";
-    document.title = [n ? `(${n}) ${repo}` : repo, n > 0 && "Claude is waiting"].filter(Boolean).join(" - ");
-  }, [requests.length, meta]);
+  const [desktopNotices, setDesktopNotices] = usePersisted("desktopNotices", false);
 
   useEffect(() => {
     api.meta().then(setMeta).catch((e) => setError(e.message));
@@ -260,7 +273,6 @@ export default function App() {
     async (opts = {}) => {
       const gen = ++loadGen.current;
       held.current.clear();
-      setRefreshing(true);
       try {
         const d = await api.diffList(scope);
         if (gen !== loadGen.current) return;
@@ -268,16 +280,14 @@ export default function App() {
         versionRef.current = d.version;
         setDiff(d);
         setError("");
-        // Dropping cached file bodies is what makes the refresh button honest:
-        // each visible section refetches against the new working tree.
+        // Dropping cached file bodies is what makes a reload (r) honest: each
+        // visible section refetches against the new working tree.
         setFileData({});
         if (!opts.keepActive) setActivePath(d.files[0]?.path ?? null);
       } catch (e) {
         if (gen !== loadGen.current) return;
         setError(e.message);
         setDiff(null);
-      } finally {
-        if (gen === loadGen.current) setRefreshing(false);
       }
     },
     [scope],
@@ -378,7 +388,8 @@ export default function App() {
     }
   }, [scope, loadDiff, applyInPlace, fetchFile]);
 
-  useVersionPoll(versionRef, liveUpdate, onNotes);
+  const [offline, setOffline] = useState(false);
+  useVersionPoll(versionRef, liveUpdate, onNotes, setOffline);
 
   // A file that changed while a comment was being written there catches up
   // once the composer closes. Deferred a tick, because the swap renders
@@ -427,6 +438,9 @@ export default function App() {
   const threadsByFile = useMemo(() => {
     const m = new Map();
     for (const t of threads) {
+      // The old side of Claude's edit is the file before that edit, which no
+      // comparison here shows.
+      if (t.origin && t.side === "old") continue;
       if (!m.has(t.file)) m.set(t.file, []);
       m.get(t.file).push(t);
     }
@@ -697,7 +711,7 @@ export default function App() {
   // find stays: those draw every line.
   useEffect(() => {
     const onKey = (e) => {
-      if (promptRef.current || document.querySelector(".backdrop")) return;
+      if (promptRef.current || document.querySelector(".backdrop") || modeRef.current === "agent") return;
       if (isFindKey(e)) {
         e.preventDefault();
         if (e.target.closest?.(".find-bar")) return openFind("");
@@ -737,6 +751,7 @@ export default function App() {
     (next) => {
       const from = modeRef.current;
       if (next === from) return;
+      if (next === "agent" || from === "agent") return setMode(next);
       const a = captureAnchor(from === "diff" ? scrollRef.current : codeRef.current);
       if (next === "code") {
         const path = a?.path || activePath;
@@ -824,8 +839,9 @@ export default function App() {
 
   const createComment = useCallback(
     async (payload) => {
-      await api.createThread({ ...payload, scope: diff?.scope?.label || scope.kind });
+      const t = await api.createThread({ scope: diff?.scope?.label || scope.kind, ...payload });
       loadThreads();
+      return t;
     },
     [diff, scope, loadThreads],
   );
@@ -834,6 +850,11 @@ export default function App() {
     async (action) => {
       const { type, thread } = action;
       if (type === "jump") {
+        if (thread.origin) {
+          setMode("agent");
+          setAgentId(thread.origin.session);
+          return setAgentReveal({ tool: thread.origin.tool });
+        }
         // A comment on a file outside the diff can only be shown in Code mode.
         const entry = diffRef.current?.files.find((f) => f.path === thread.file);
         if (modeRef.current === "diff" && entry) return jumpToFile(thread.file, thread.endLine);
@@ -853,7 +874,7 @@ export default function App() {
       }
       loadThreads();
     },
-    [jumpToFile, loadThreads, openCode, setMode],
+    [jumpToFile, loadThreads, openCode, setMode, setAgentId],
   );
 
   // Opening an overlay from the diff starts a fresh trail; following a symbol
@@ -932,14 +953,171 @@ export default function App() {
     [pushOverlay, openCode],
   );
 
-  // Asking follows the cursor: the hovered line if there is one, otherwise the
-  // file being read, otherwise the comparison as a whole.
-  const askHere = useCallback(() => {
+  const loadSessions = useCallback(() => {
+    api.agentSessions().then(setAgent).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (mode !== "agent") return;
+    loadSessions();
+    const t = setInterval(() => document.hidden || loadSessions(), 2500);
+    return () => clearInterval(t);
+  }, [mode, loadSessions]);
+  // The models come from asking Claude Code, which the first load sets off.
+  useEffect(() => {
+    if (mode !== "agent" || !agent.available || agent.models?.length) return;
+    const t = setTimeout(loadSessions, 500);
+    return () => clearTimeout(t);
+  }, [mode, agent, loadSessions]);
+
+  // Opening a session is what brings its prompts into the page, which only
+  // matters for one that is running; a past one opens when it is sent to.
+  const selectSession = useCallback(
+    (id) => {
+      setAgentId(id);
+      const row = agent.sessions.find((x) => x.id === id);
+      if (row?.running && !row.open) api.agentOpen(id, true).then(loadSessions, () => {});
+    },
+    [agent.sessions, setAgentId, loadSessions],
+  );
+  // A session is made when its first message is sent; until then it is the
+  // page's blank one.
+  const newSession = useCallback(async () => {
+    const { id } = await api.agentCreate();
+    setAgentId(id);
+    loadSessions();
+    return id;
+  }, [setAgentId, loadSessions]);
+  const startSession = useCallback(() => {
+    setAgentId("");
+    requestAnimationFrame(() => document.querySelector(".agent-composer textarea")?.focus());
+  }, [setAgentId]);
+  const closeSession = useCallback(
+    async (id) => {
+      const row = agent.sessions.find((x) => x.id === id);
+      if (row?.running === "dv" && row.busy && !confirm("Claude is still working in this session. Stop it and close?")) return;
+      await api.agentOpen(id, false).catch(() => {});
+      if (id === agentId) setAgentId("");
+      loadSessions();
+    },
+    [agent.sessions, agentId, setAgentId, loadSessions],
+  );
+
+  const ended = useNotices({
+    requests,
+    sessions: activity,
+    looking: mode === "agent" ? agentId : null,
+    desktop: desktopNotices,
+    review: (id) => {
+      setPromptFocus(id);
+      setPromptOpen(true);
+    },
+    open: (id) => {
+      setPromptOpen(false);
+      selectSession(id);
+      switchMode("agent");
+    },
+  });
+  // Desktop notifications are the browser's to allow, asked when turned on.
+  const toggleDesktopNotices = useCallback(async () => {
+    if (desktopNotices || typeof Notification === "undefined") return setDesktopNotices(false);
+    const allowed = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+    setDesktopNotices(allowed === "granted");
+    if (allowed === "denied") say("Notifications are blocked", "The browser blocks them for this page; allow them in its site settings.");
+  }, [desktopNotices, setDesktopNotices]);
+
+  // The waiting note trails so a narrow tab still shows which repository it
+  // is; the count up front is enough to catch the eye. The path is for
+  // checkouts that share a name.
+  useEffect(() => {
+    const n = requests.length;
+    const repo = meta ? `dv - ${meta.repo} (${meta.place})` : "dv";
+    const note = n > 0 ? "Claude is waiting" : ended > 0 && "Claude finished";
+    document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
+  }, [requests.length, ended, meta]);
+
+  // Shift+Up and Down go through the open sessions in the order the list has
+  // them. The message box keeps them for selecting text, unless it is empty.
+  // Captured, because the box stops the keys it handles from bubbling.
+  useEffect(() => {
+    if (mode !== "agent") return;
+    const onKey = (e) => {
+      if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      if (isTyping(e.target) && !(e.target.matches(".agent-composer textarea") && !e.target.value)) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      const open = agent.sessions.filter((s) => s.open || s.running === "dv");
+      if (!open.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const i = open.findIndex((s) => s.id === agentId);
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      selectSession(open[i < 0 ? (step > 0 ? 0 : open.length - 1) : (i + step + open.length) % open.length].id);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [mode, agent.sessions, agentId, selectSession]);
+
+  // What is added from Diff and Code goes to a session that can be written to:
+  // the one picked while it stays open, else the first in the list. The open
+  // sessions come with the requests, in every mode.
+  const attachChoices = useMemo(
+    () => [
+      ...(activity || []).filter((s) => s.running !== "terminal").map((s) => ({ id: s.id, label: s.title || "New session" })),
+      { id: "", label: "A new session" },
+    ],
+    [activity],
+  );
+  const attachTo = attachChoices.some((c) => c.id === attachPick) ? attachPick : attachChoices[0].id;
+  const attachTarget = useMemo(() => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick }), [attachChoices, attachTo, setAttachPick]);
+
+  // attach adds to what goes with a session's next message. Code is taken as
+  // it reads on screen, so it says which version that was.
+  const attach = useCallback(
+    (a, to = attachTo) => {
+      const sc = diffRef.current?.scope;
+      const newAt = sc?.newAt === "index" ? "staged" : sc?.newAt || "working tree";
+      const at = a.kind !== "lines" ? "" : a.at || (a.side === "old" && modeRef.current !== "code" ? sc?.oldAt || "HEAD" : newAt);
+      const key = JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId]);
+      setAttachedBy((by) => {
+        const list = by[to] || [];
+        return list.some((x) => x.key === key) ? by : { ...by, [to]: [...list, { ...a, at, key }] };
+      });
+    },
+    [attachTo, setAttachedBy],
+  );
+  const attachedFor = useCallback(
+    (to, change) =>
+      setAttachedBy((by) => {
+        const { [to]: list = [], ...rest } = by;
+        const next = change(list);
+        return next.length ? { ...rest, [to]: next } : rest;
+      }),
+    [setAttachedBy],
+  );
+  // A comment added and since deleted goes with nothing, so nothing counts it.
+  const attachedLive = useMemo(() => {
+    const ids = new Set(threads.map((t) => t.id));
+    const out = {};
+    for (const [to, list] of Object.entries(attachedBy)) {
+      const kept = list.filter((a) => a.kind !== "thread" || ids.has(a.threadId));
+      if (kept.length) out[to] = kept.length === list.length ? list : kept;
+    }
+    return out;
+  }, [attachedBy, threads]);
+  const attachedHere = attachedLive[agentId] || NO_ATTACHED;
+  // Only what a session still open would send.
+  const attachedCount = attachChoices.reduce((n, c) => n + (attachedLive[c.id]?.length || 0), 0);
+
+  // attachHere is `a`: the line under the pointer, else the file being read.
+  const attachHere = useCallback(() => {
     const h = hovered.current;
-    if (h) setAsk({ file: h.path, side: h.side, startLine: h.line, endLine: h.line });
-    else if (activePath) setAsk({ file: activePath });
-    else setAsk({});
-  }, [activePath]);
+    const fd = h && (fileDataRef.current[h.path]?.fd || (plain?.path === h.path ? plain.fd : null));
+    if (fd) {
+      const src = h.side === "old" ? fd.oldLines : fd.newLines;
+      return attach({ kind: "lines", file: h.path, side: h.side, start: h.line, end: h.line, quote: [src[h.line - 1]] });
+    }
+    const path = modeRef.current === "code" ? codePath : activePath;
+    if (path) attach({ kind: "file", file: path });
+  }, [attach, plain, codePath, activePath]);
 
   const startCommentAtCursor = useCallback(() => {
     const h = hovered.current;
@@ -1006,8 +1184,18 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (isTyping(e.target)) return;
       const mod = e.metaKey || e.ctrlKey;
+      // Round the modes in the order the sidebar has them. The Agent view's
+      // message box nearly always has focus, so an empty one lets these by.
+      if (e.shiftKey && !mod && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        if (!isTyping(e.target) || (e.target.closest(".agent-composer") && !e.target.value)) {
+          e.preventDefault();
+          const i = MODES.indexOf(mode) + (e.key === "ArrowRight" ? 1 : -1);
+          switchMode(MODES[(i + MODES.length) % MODES.length]);
+          return;
+        }
+      }
+      if (isTyping(e.target)) return;
 
       if (isSearchKey(e)) {
         e.preventDefault();
@@ -1026,6 +1214,8 @@ export default function App() {
         return;
       }
       if (mod || e.altKey) return;
+      // The Agent view has keys of its own; these few mean the same there.
+      if (mode === "agent" && !["?", "u", "w"].includes(e.key)) return;
 
       // A step between files goes through the changed ones. In Code mode it
       // starts from the open file, which need not be one of them.
@@ -1050,7 +1240,6 @@ export default function App() {
           // Keys typed in a composer stop there, so one reached from here is
           // unfocused and its draft is read off the page.
           if (!document.querySelector(".composer[data-draft]")) setComposing(null);
-          setAsk(null);
           break;
         case "?":
           openOverlay({ type: "help" });
@@ -1072,16 +1261,13 @@ export default function App() {
           else stepChange(code ? codeRef.current : scrollRef.current, dir, needFile);
           break;
         }
-        case "m":
-          switchMode(code ? "diff" : "code");
-          break;
         case "c":
           e.preventDefault();
           startCommentAtCursor();
           break;
         case "a":
           e.preventDefault();
-          askHere();
+          attachHere();
           break;
         case "f": {
           if (code) break; // Code mode is already the whole file
@@ -1113,7 +1299,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     files, activePath, view, wrap, jumpToFile, toggleViewed, setView, setWrap,
-    loadDiff, loadThreads, startCommentAtCursor, askHere, openOverlay, openSearch, closeOverlay, closeFind, needFile, viewFile,
+    loadDiff, loadThreads, startCommentAtCursor, attachHere, openOverlay, openSearch, closeOverlay, closeFind, needFile, viewFile,
     mode, codePath, openCode, stepCode, switchMode,
   ]);
 
@@ -1130,7 +1316,10 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app">
+    <AttachTarget.Provider value={attachTarget}>
+    {/* Out of the page's grid, whose rows are the header's and the rest's. */}
+    <Notices />
+    <div className={cx("app", offline && "offline")}>
       <Header
         meta={meta}
         mode={mode}
@@ -1146,32 +1335,36 @@ export default function App() {
         onContext={setContextLines}
         theme={theme}
         onTheme={setTheme}
-        refreshing={refreshing}
-        onRefresh={() => {
-          loadDiff({ keepActive: true });
-          loadThreads();
-        }}
         onSearch={() => openOverlay({ type: "search" })}
         onHelp={() => openOverlay({ type: "help" })}
-        onAsk={() => setAsk((a) => (a ? null : { file: (mode === "code" ? codePath : activePath) || "" }))}
-        askOn={!!ask}
         waiting={requests.length}
         arrived={arrived}
-        onBell={() => setPromptOpen((o) => !o)}
+        onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
         bellOn={promptOpen}
+        comments={threads.filter((t) => !t.resolved).length}
+        commentsOn={showComments}
+        onComments={() => (phone ? setPanel((p) => (p === "comments" ? null : "comments")) : setCommentsOpen((o) => !o))}
+        sideOn={phone && panel === "side"}
+        onSide={() => setPanel((p) => (p === "side" ? null : "side"))}
       />
 
-      <div className={cx("main", ask && "with-ask")} style={sideWidth ? { "--side-w": sideWidth + "px" } : undefined}>
+      <div
+        className={cx("main", showComments && "with-comments", phone && panel === "side" && "side-open")}
+        style={{ ...(sideWidth && { "--side-w": sideWidth + "px" }), ...(commentsWidth && { "--comments-w": commentsWidth + "px" }) }}
+      >
+        {phone && <div className={cx("panel-backdrop", panel && "on")} onClick={() => setPanel(null)} />}
         <Sidebar
           mode={mode}
+          onMode={switchMode}
+          attached={attachedCount}
           files={mode === "code" ? explorer : files}
           threads={threads}
           activePath={mode === "code" ? codePath : activePath}
           viewed={viewed}
-          onSelect={mode === "code" ? openCode : jumpToFile}
-          onThreadAction={onThreadAction}
-          onJump={(thread) => onThreadAction({ type: "jump", thread })}
-          commentsPath={meta?.commentsPath || ""}
+          onSelect={(...a) => {
+            if (phone) setPanel(null);
+            (mode === "code" ? openCode : jumpToFile)(...a);
+          }}
           generatedCount={generatedCount}
           hideGenerated={hideGenerated}
           onHideGenerated={changeHideGenerated}
@@ -1182,6 +1375,25 @@ export default function App() {
           filtersPaused={filtersPaused}
           onPauseFilters={setFiltersPaused}
           onReset={resetReview}
+          agent={{
+            sessions: agent.sessions,
+            available: agent.available,
+            usage: agent.usage,
+            notify: desktopNotices,
+            onNotify: toggleDesktopNotices,
+            activeId: agentId,
+            added: attachedLive,
+            onSelect: (id) => {
+              if (phone) setPanel(null);
+              selectSession(id);
+            },
+            onNew: () => {
+              if (phone) setPanel(null);
+              startSession();
+            },
+            onClose: closeSession,
+            onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
+          }}
           onWidth={setSideWidth}
         />
 
@@ -1224,10 +1436,9 @@ export default function App() {
               onComment={createComment}
               onThreadAction={onThreadAction}
               onSymbol={onSymbol}
-              onAsk={setAsk}
+              onAttach={attach}
               onSearch={openSearch}
               onView={viewFile}
-              isActive={activePath === entry.path}
               reveal={reveal?.path === entry.path ? reveal.line : 0}
               onBody={onBody.diff}
               found={(mode === "diff" && found?.byFile.get(entry.path)) || null}
@@ -1255,7 +1466,7 @@ export default function App() {
               onComment={createComment}
               onThreadAction={onThreadAction}
               onSymbol={onSymbol}
-              onAsk={setAsk}
+              onAttach={attach}
               onSearch={openSearch}
               onBody={onBody.code}
               found={(mode === "code" && found?.byFile.get(codePath)) || null}
@@ -1280,29 +1491,70 @@ export default function App() {
           )}
         </div>
 
-        {ask && (
-          <AskPanel
-            target={ask}
-            scope={scope}
-            onClose={() => setAsk(null)}
-            onSaveComment={createComment}
+        {agentVisited && (
+          <AgentView
+            active={mode === "agent"}
+            id={agentId}
+            session={agent.sessions.find((x) => x.id === agentId)}
+            available={agent.available}
+            models={agent.models || []}
+            modes={agent.modes}
+            defaultMode={agent.mode}
+            root={meta?.root || ""}
+            view={view}
+            contextLines={contextLines}
+            wrap={wrap}
+            threads={threads}
+            attached={attachedHere}
+            onAttach={(a) => attach(a, agentId)}
+            onDetach={(key) => attachedFor(agentId, (list) => list.filter((x) => x.key !== key))}
+            onClearAttached={() => attachedFor(agentId, () => [])}
+            onRestoreAttached={(to, back) => attachedFor(to, (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list])}
+            onJump={(a) => (a.kind === "thread" ? onThreadAction({ type: "jump", thread: threads.find((t) => t.id === a.threadId) }) : goTo(a.file, a.start || 0))}
+            onComment={createComment}
+            onThreadAction={onThreadAction}
+            onSymbol={onSymbol}
+            onOpenFile={goTo}
+            requests={requests}
+            onSelect={selectSession}
+            onNew={newSession}
+            onStart={startSession}
+            onClose={closeSession}
+            onChanged={loadSessions}
+            reveal={agentReveal}
+            offline={offline}
+          />
+        )}
+        {showComments && (
+          <CommentsPanel
+            threads={threads}
+            commentsPath={meta?.commentsPath || ""}
+            onJump={(thread) => {
+              if (phone) setPanel(null);
+              onThreadAction({ type: "jump", thread });
+            }}
+            onThreadAction={onThreadAction}
+            onWidth={setCommentsWidth}
           />
         )}
       </div>
 
-      {requests.length > 0 && (
+      {windowed.length > 0 && (
         <ClaudePrompt
-          requests={requests}
+          requests={windowed}
           open={promptOpen}
           focusId={promptFocus}
           view={view}
           contextLines={contextLines}
           wrap={wrap}
-          autoPop={autoPop}
-          onAutoPop={setAutoPop}
           onClose={closePrompt}
           onSymbol={onSymbol}
           onOpenFile={goTo}
+          onOpenSession={(id) => {
+            setPromptOpen(false);
+            selectSession(id);
+            switchMode("agent");
+          }}
         />
       )}
 
@@ -1348,6 +1600,7 @@ export default function App() {
       )}
       {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
     </div>
+    </AttachTarget.Provider>
   );
 }
 
@@ -1372,14 +1625,15 @@ const FileSection = memo(function FileSection({ entry, state, onNeed, ...rest })
           io.disconnect();
         }
       },
-      { rootMargin: "800px 0px" },
+      // Against the pane that scrolls, or the margin never reaches past it.
+      { root: el.closest(".content"), rootMargin: "800px 0px" },
     );
     io.observe(el);
     return () => io.disconnect();
   }, [entry.path, onNeed, state, hidden]);
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className="file-section">
       <FileDiff
         entry={entry}
         fd={state?.fd}
@@ -1405,7 +1659,7 @@ const UNRENDERED = ".block[data-changes]:empty, section.file[data-pending]";
 // it had just shown and never moved.)
 function stepChange(root, dir, need) {
   if (!root) return;
-  const lead = (root.querySelector(".file-head")?.offsetHeight ?? 40) + 60;
+  const lead = FILE_INSET + (root.querySelector(".file-head")?.offsetHeight ?? 40) + 60;
   const line = () => root.getBoundingClientRect().top + lead;
   // Every place a step can land, in page order: the first row of each rendered
   // run of changes, and - standing in for runs not rendered yet - blocks that
@@ -1533,8 +1787,12 @@ const INTERRUPTS = ["wheel", "touchstart", "keydown", "mousedown"];
 const yOf = (root, el, offset) =>
   root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - offset;
 
+// The strip of ground kept over the diff and Code, which a file's header pins
+// below (--inset in styles.css).
+const FILE_INSET = 12;
+
 // A file lands with its header where it will stay pinned.
-const FILE_TOP = 0;
+const FILE_TOP = FILE_INSET;
 
 // Batches of file diffs find in page asks for at once.
 const FILES_PER_REQUEST = 50;
@@ -1611,7 +1869,7 @@ function lineOnScreen(root, path) {
   if (!root || !section) return null;
   let cell = section.querySelector("[data-line][data-side]:hover");
   if (!cell) {
-    const below = root.getBoundingClientRect().top + (section.querySelector(".file-head")?.offsetHeight ?? 0);
+    const below = root.getBoundingClientRect().top + FILE_INSET + (section.querySelector(".file-head")?.offsetHeight ?? 0);
     cell = [...section.querySelectorAll("[data-line][data-side]")].find((c) => c.getBoundingClientRect().bottom > below);
   }
   return cell ? { side: cell.dataset.side, line: Number(cell.dataset.line) } : null;

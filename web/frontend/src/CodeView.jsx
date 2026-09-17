@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DiffBody } from "./FileDiff.jsx";
-import { AskButton } from "./AskPanel.jsx";
+import { AttachButton } from "./Threads.jsx";
 import { newLineFor } from "./hunks.js";
 import { ensureLanguage } from "./highlight.js";
 import { cx, LRM, splitPath, statusLabel, statusLetter } from "./util.js";
@@ -14,7 +14,7 @@ const noop = () => {};
 // rows, so commenting, selecting, go-to-definition and n/p work as they do there.
 export default function CodeView({
   path, entry, fd, error, at, threads, wrap, reveal, hit, composing, setComposing,
-  onComment, onThreadAction, onSymbol, onAsk, onSearch, onDiff, onBack, onForward, onBody, found, foundAt,
+  onComment, onThreadAction, onSymbol, onAttach, onSearch, onDiff, onBack, onForward, onBody, found, foundAt,
 }) {
   const [selection, setSelection] = useState(null);
   const [, force] = useState(0);
@@ -84,7 +84,7 @@ export default function CodeView({
             </button>
           </>
         )}
-        <AskButton onClick={() => onAsk({ file: path })} title="Ask Claude about this file" />
+        <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} title="Add this file to your next message to Claude" />
       </header>
       <div className={cx("file-body", wrap && "wrap")}>
         {error && <div className="file-note error">{error}</div>}
@@ -108,7 +108,7 @@ export default function CodeView({
             onComment={onComment}
             onThreadAction={onThreadAction}
             onSymbol={onSymbol}
-            onAsk={onAsk}
+            onAttach={onAttach}
             onSearch={onSearch}
             onBody={onBody}
             found={found}

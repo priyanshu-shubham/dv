@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"dv/internal/permit"
 )
@@ -33,9 +34,11 @@ func (s *Server) handleClaudeHook(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleClaudeRequests streams the waiting requests, the whole list each time
-// it changes. A stream rather than a poll, because the page has to hear of a
-// request while its tab is hidden - the usual case, with the reader in the
-// terminal - and polling stops then.
+// it changes, and what the open sessions are doing, each time that does. A
+// stream rather than a poll, because the page has to hear of a request, or of
+// Claude finishing, while its tab is hidden - the usual case, with the reader
+// in the terminal - and polling stops then. Only sessions open in the Agent
+// view, or run by dv, are told of: the rest are the terminal's business.
 func (s *Server) handleClaudeRequests(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -47,15 +50,41 @@ func (s *Server) handleClaudeRequests(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	for {
-		b, err := json.Marshal(map[string]any{"requests": s.permit.Waiting()})
+	// The session's name comes along, for a request shown away from it.
+	type shown struct {
+		*permit.Request
+		Title string `json:"title,omitempty"`
+	}
+	// A terminal's busy and idle are only in its process record, so they are
+	// looked at on a tick; each part goes out only when it moved.
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	sent := map[string]string{}
+	send := func(key string, v any) bool {
+		b, err := json.Marshal(map[string]any{key: v})
 		if err != nil {
+			return false
+		}
+		if sent[key] != string(b) {
+			sent[key] = string(b)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		}
+		return true
+	}
+	for {
+		requests := []shown{}
+		for _, r := range s.permit.Waiting() {
+			if s.agent.Visible(r.Session) {
+				requests = append(requests, shown{r, s.agent.Title(r.Session)})
+			}
+		}
+		if !send("requests", requests) || !send("sessions", s.agent.Activity()) {
 			return
 		}
-		fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
 		select {
 		case <-changed:
+		case <-tick.C:
 		case <-r.Context().Done():
 			return
 		}

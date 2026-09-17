@@ -30,7 +30,8 @@ export const IconPlus = svg(<path d="M8 3.5v9M3.5 8h9" />, { stroke: true });
 export const IconExpand = svg(<path d="M5 6.5L8 3.5l3 3M5 9.5l3 3 3-3" />, { stroke: true });
 export const IconCollapse = svg(<path d="M5 3.5l3 3 3-3M5 12.5l3-3 3 3" />, { stroke: true });
 export const IconFilter = svg(<path d="M2.5 3h11L9.2 8.3V13l-2.4-1.2V8.3z" />, { stroke: true });
-export const IconSplit = svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" /></>, { stroke: true });
+export const IconMenu = svg(<path d="M2.5 4h11M2.5 8h11M2.5 12h11" />, { stroke: true });
+export const IconSplit =svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" /></>, { stroke: true });
 export const IconUnified = svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M2 8h12" /></>, { stroke: true });
 export const IconBranch = svg(<><circle cx="4" cy="3.5" r="1.8" /><circle cx="4" cy="12.5" r="1.8" /><circle cx="12" cy="6" r="1.8" /><path d="M4 5.3v5.4M12 7.8c0 2-1.5 2.9-4 3.2" /></>, { stroke: true });
 export const IconDots = svg(<><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></>);
@@ -40,5 +41,7 @@ export const IconSpark = svg(<path d="M8 1.5l1.5 4L13.5 7 9.5 8.5 8 12.5 6.5 8.5
 export const IconKeyboard = svg(<><rect x="1.5" y="4" width="13" height="8" rx="1.5" /><path d="M4.5 7h.01M7 7h.01M9.5 7h.01M12 7h.01M5 9.5h6" /></>, { stroke: true });
 export const IconWrap = svg(<path d="M3 4h9a2 2 0 0 1 0 4H6M8 6l-2 2 2 2M3 12h6" />, { stroke: true });
 export const IconPin = svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { stroke: true });
+export const IconArrowUp = svg(<path d="M8 13V3.5M3.5 8L8 3.5 12.5 8" />, { stroke: true });
+export const IconStop = svg(<rect x="4" y="4" width="8" height="8" rx="1.5" />);
 export const IconUndo = svg(<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2v3.5H6" />, { stroke: true });
 export const IconBell = svg(<path d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1.2 1.2H2.8zM6.5 14.2a1.6 1.6 0 0 0 3 0" />, { stroke: true });
