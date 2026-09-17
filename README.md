@@ -2,7 +2,13 @@
 
 A local diff reviewer. Run `dv` in a git repository and it prints a URL; the page
 shows the diff, lets you comment on any line, and keeps those comments in a file
-inside the repository that git never sees.
+inside the repository that git never sees. Run it in a folder outside git and
+it opens the same page on the folder's files, without the diff.
+
+It works with Claude Code too. Start or resume sessions beside the diff, and
+read each edit Claude makes as a diff you can comment on: the comments go to
+Claude with your next message. Claude's permission prompts come up in the page,
+whether dv runs the session or your terminal does.
 
 ```
 $ cd ~/code/my-project
@@ -14,6 +20,22 @@ $ dv
 
   ctrl-c to stop
 ```
+
+## Install
+
+```
+curl -fsSL https://raw.githubusercontent.com/priyanshu-shubham/dv/main/install.sh | sh
+```
+
+That fetches the latest release for your machine — Linux or macOS, x86-64 or
+ARM — checks it against the release's checksums, and puts `dv` in
+`~/.local/bin`. `DV_VERSION=v0.2.0` pins a release and `DV_INSTALL_DIR` picks
+another directory. On Windows, take the zip from the
+[releases page](https://github.com/priyanshu-shubham/dv/releases).
+
+dv needs `git` for the diff. `rg` is used for text search when present, with a
+built-in scanner as the fallback. If you use Claude Code, run
+`dv claude install` once. To build it yourself, see [From source](#from-source).
 
 ## What it does
 
@@ -92,6 +114,11 @@ remembered. While either is on the funnel lights up, and a note above the list
 says how many files are hidden and why. *Show all* pauses the filters rather
 than clearing them: *Resume*, or editing one, turns them back on as they were.
 
+The box above the list, in Diff and Files, only narrows the list, and takes a
+piece of a path (`handlers`) or a glob read the same way (`*.go`,
+`internal/**/*.ts`). Several go comma-separated, and one starting with `!`
+hides what it matches: `*.go, !*_test.go`.
+
 **Find in page.** `Ctrl/Cmd+F` opens dv's own find bar rather than the
 browser's, which could only see the rows near the screen: the diff loads files
 as you reach them and draws only what is close by. dv's searches every row the
@@ -99,7 +126,7 @@ diff shows at the current context, loading the files it has not got yet, and
 the path in every file's header, so the count covers the whole review.
 `Enter` / `Shift+Enter` (or `F3`) step through the matches, bringing each into
 view. As on screen, folded context is left out, and a file marked viewed or a
-hidden generated file is found by its header alone. In Code mode it searches
+hidden generated file is found by its header alone. In Files mode it searches
 the open file's lines, as an editor's find does; `Ctrl/Cmd+P` is the way to a
 file by name. It starts from the selection, like search, and has the same case,
 whole word and regex toggles.
@@ -129,7 +156,7 @@ Java, Kotlin, Scala, C#, C, C++, Objective-C, PHP, shell, SQL, Protocol Buffers
 (messages, enums and their values, services, rpcs), Terraform and HCL, CSS,
 Elixir, Lua and Swift, plus Makefile targets and Markdown headings.
 
-**Code mode.** *Code*, at the top of the sidebar (or `Shift+→`), switches to reading the
+**Files mode.** *Files*, at the top of the sidebar (or `Shift+→`), switches to reading the
 repository rather than the change. The tree becomes every file, marked the way
 the diff's list is — `M`, `A`, `U`, `D` or `R` in its colour at the end of a
 changed file's row — plus a dot
@@ -142,6 +169,39 @@ as it does in the diff: comments on any line, go-to-definition (now in place,
 with `Alt+←` / `Alt+→` and the header arrows to retrace), `n` / `p` through the
 marked changes and `[` / `]` through the changed files. Switching keeps your
 place: the line at the top of one view is put at the same height in the other.
+
+**Markdown.** A Markdown file has *Preview* on its header, which shows it
+rendered, as a repository host would: tables, task lists, highlighted code
+blocks, front matter as a block of YAML, and the HTML a README leans on (centred
+logos, `<details>`) with scripts, styles and event handlers stripped out. Images
+and links written relative to the file resolve in the repository, and a link to
+another file opens it in dv. In Files mode the choice holds for every Markdown
+file and toggling keeps your place; `Ctrl/Cmd+F` over a preview is the
+browser's own find, since the whole page is drawn. The same button is on a
+Markdown file's card in the diff, on Claude's edit to one in the Agent view, and
+on an edit Claude asks permission for, showing the file as the change leaves it.
+An edit whose transcript kept only the changed lines has no preview: those alone
+would not render. An SVG has *Preview* too, which draws it (before and after, in
+the diff).
+
+**Images, video, sound and PDFs.** These show as themselves wherever a file
+does: in Files mode, in the window *File* and `Ctrl/Cmd+P` open, and in the
+diff, where a changed one is shown before and after, side by side. An image
+sits on a checkerboard so its transparent edges show, with its size under it; a
+video or sound plays, with its length, and seeks without being read whole. A PDF
+opens in the browser's own viewer, with a link to open it in a tab of its own,
+which is the way to one on a phone. What is shown follows the file as it
+changes. PNG, JPEG, GIF, WebP, AVIF, BMP and ICO; MP4, WebM, MOV and Ogg video;
+MP3, WAV, Ogg, Opus, M4A and FLAC - as far as the browser can play them.
+
+**Outside git.** In a folder that is not a git repository there is no diff, so
+the sidebar offers Files and Agent and the page opens on the files. The rest
+works as in a repository: comments, search and go-to-definition, find, Markdown
+previews, the Agent view, Claude Code's prompts, and live updates as files
+change. The listing leaves out `node_modules`, `.venv`, `__pycache__`, `.cache`
+and version control's directories, and stops at 50,000 files. The notes go in
+`.dv/` in the folder; with no `.git/info/exclude` to add it to, it is left for
+you to ignore.
 
 **Whole files.** *File* on a file's header, or `f`, opens the whole file at the
 line you are on — the one under the pointer, or the first one showing. It is
@@ -161,7 +221,7 @@ an edit Claude made is a diff card, highlighted and split or unified like the
 rest. You can comment on those cards as on any diff. The comment goes into the
 review and onto your next message, so Claude sees what you said about its edit.
 To give Claude something to look at, press `a` on a line, or use *Add to …* on a
-file or selection, in Diff or Code; the button names the session it adds to. It
+file or selection, in Diff or Files; the button names the session it adds to. It
 turns into a chip on that session's message box, to go with the next message you
 send: the first open session's, or the one picked in the menu beside the button,
 which stays picked. The session's card says how much is waiting there, and the
@@ -297,22 +357,7 @@ behaves as it always has wherever dv is not open. `PermissionRequest` is the
 question; the two `PostToolUse` hooks are how dv hears that the terminal
 answered first, and how a Yes's note reaches Claude.
 
-## Install
-
-```
-curl -fsSL https://raw.githubusercontent.com/priyanshu-shubham/dv/main/install.sh | sh
-```
-
-That fetches the latest release for your machine — Linux or macOS, x86-64 or
-ARM — checks it against the release's checksums, and puts `dv` in
-`~/.local/bin`. `DV_VERSION=v0.2.0` pins a release and `DV_INSTALL_DIR` picks
-another directory. On Windows, take the zip from the
-[releases page](https://github.com/priyanshu-shubham/dv/releases).
-
-dv needs `git`. `rg` is used for text search when present, with a built-in
-scanner as the fallback. If you use Claude Code, run `dv claude install` once.
-
-### From source
+## From source
 
 ```
 make install     # builds the UI bundle and the binary, installs to ~/.local/bin
@@ -374,11 +419,11 @@ over https or on localhost, and elsewhere `+` picks a photo or file.
 | `[` / `]` | previous / next file (also `Shift+P` / `Shift+N`) |
 | `n` / `p` | next / previous change, into the next file when this one runs out |
 | `f` | view the whole file at the line you are on |
-| `Shift+←` / `Shift+→` | previous / next mode: Diff, Code, Agent (in the Agent view too, while the message box is empty) |
+| `Shift+←` / `Shift+→` | previous / next mode: Diff, Files, Agent (in the Agent view too, while the message box is empty) |
 | `c` | comment on the line under the cursor |
 | `Esc` | dismiss a composer with nothing typed in it, step back a definition, or close an overlay |
 | `Shift+Esc` | close an overlay outright, however deep the trail |
-| `Alt+←` / `Alt+→` | back to the previous definition; in Code mode, back and forward through files |
+| `Alt+←` / `Alt+→` | back to the previous definition; in Files mode, back and forward through files |
 | `a` | add the line under the cursor, or the file, to your next message to Claude |
 | `Esc` `Esc` | in the Agent view, rewind the session to before one of your messages |
 | `Esc` | in the Agent view, take back a queued message or one sent in the last five seconds; otherwise stop Claude |
@@ -427,7 +472,7 @@ to hand to an agent along with "address these".
 
 ```
 main.go              CLI entry point: open the repo, start the server, print the URL; dv reset, dv claude
-internal/gitx        git plumbing, scope resolution, and the diff algorithm
+internal/gitx        git plumbing, scope resolution, the diff algorithm, and folders outside git
 internal/store       .dv/comments.json, .dv/viewed.json, .dv/agent.json, .dv/server.json and the .git/info/exclude registration
 internal/symindex    regex symbol index + ripgrep-backed text search
 internal/server      JSON API, SSE session and prompt endpoints, embedded UI assets

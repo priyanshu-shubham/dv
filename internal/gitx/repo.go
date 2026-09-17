@@ -18,21 +18,33 @@ import (
 	"time"
 )
 
-// Repo is a handle on one git working copy.
+// Repo is a handle on one git working copy, or on a plain folder, which has
+// the files and none of the history: see folder.go.
 type Repo struct {
 	Root   string // absolute path to the working tree root
-	GitDir string // absolute path to .git (or the real dir for worktrees)
+	GitDir string // absolute path to .git (or the real dir for worktrees); empty for a plain folder
 }
 
-// Open finds the repository containing dir and returns a handle to it.
+// Open finds the repository containing dir and returns a handle to it. Outside
+// any repository, or without git installed, the handle is on dir itself.
 func Open(dir string) (*Repo, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
+	if fi, err := os.Stat(abs); err != nil {
+		return nil, err
+	} else if !fi.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", abs)
+	}
 	root, err := gitOutput(abs, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %s", abs)
+		// Any other failure, such as git refusing a repository it deems
+		// unsafe, would otherwise open that repository with no diff to show.
+		if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "not a git repository") {
+			return &Repo{Root: abs}, nil
+		}
+		return nil, err
 	}
 	gitDir, err := gitOutput(abs, "rev-parse", "--absolute-git-dir")
 	if err != nil {
@@ -40,6 +52,9 @@ func Open(dir string) (*Repo, error) {
 	}
 	return &Repo{Root: strings.TrimSpace(root), GitDir: strings.TrimSpace(gitDir)}, nil
 }
+
+// IsGit is false for a plain folder.
+func (r *Repo) IsGit() bool { return r.GitDir != "" }
 
 // Name is the repository's directory name, used for window titles.
 func (r *Repo) Name() string { return filepath.Base(r.Root) }
@@ -104,6 +119,9 @@ type HeadRef struct {
 
 func (r *Repo) Head() HeadRef {
 	h := HeadRef{}
+	if !r.IsGit() {
+		return h
+	}
 	if b, err := r.run("rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		if b = strings.TrimSpace(b); b != "HEAD" {
 			h.Branch = b
@@ -122,6 +140,9 @@ func (r *Repo) Head() HeadRef {
 // and the content of each changed or untracked file - so a client can poll it
 // to learn that the diff it is showing has gone stale. It is one `git status`.
 func (r *Repo) Version() (string, error) {
+	if !r.IsGit() {
+		return r.folderVersion()
+	}
 	// Plain status refreshes the index under index.lock; polled, that makes the
 	// user's own commits fail now and then on the lock.
 	out, err := r.run("--no-optional-locks", "status", "--porcelain=v2", "-z",
@@ -174,6 +195,9 @@ func statusPaths(z string) []string {
 // DefaultBranch guesses the repository's trunk, used by the "branch" scope. It
 // prefers the remote's HEAD, then the conventional names, then gives up.
 func (r *Repo) DefaultBranch() string {
+	if !r.IsGit() {
+		return ""
+	}
 	if out, err := r.run("symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
 		if name := strings.TrimPrefix(strings.TrimSpace(out), "origin/"); name != "" {
 			return name
@@ -190,6 +214,9 @@ func (r *Repo) DefaultBranch() string {
 // Branches lists local branches, most recently committed first, so the scope
 // picker can offer them without the user typing a revspec.
 func (r *Repo) Branches() []string {
+	if !r.IsGit() {
+		return nil
+	}
 	out, err := r.run("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads")
 	if err != nil {
 		return nil
@@ -213,6 +240,9 @@ type Commit struct {
 }
 
 func (r *Repo) RecentCommits(n int) []Commit {
+	if !r.IsGit() {
+		return nil
+	}
 	out, err := r.run("log", fmt.Sprintf("-%d", n), "--pretty=%H%x1f%h%x1f%s%x1f%an%x1f%ar")
 	if err != nil {
 		return nil
@@ -260,6 +290,9 @@ func (r *Repo) worktreeFile(path string) ([]byte, bool, error) {
 // TrackedFiles lists every file git knows about plus untracked-but-not-ignored
 // ones. It is the corpus for the symbol index and repo-wide search.
 func (r *Repo) TrackedFiles() ([]string, error) {
+	if !r.IsGit() {
+		return r.folderFiles()
+	}
 	return r.paths("ls-files", "--cached", "--others", "--exclude-standard", "-z")
 }
 

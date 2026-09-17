@@ -30,13 +30,17 @@ func Announce(root, url string) (func(), error) {
 	}, nil
 }
 
-// FindServer returns the dv announced for the repository holding dir. The walk
-// stops at the first directory with a .git in it, so a nested repository never
-// reaches its parent's dv.
+// FindServer returns the dv announced for the repository or folder holding
+// dir. The walk stops at the first directory with a .git in it, so a nested
+// repository never reaches its parent's dv.
 func FindServer(dir string) (Server, bool) {
 	for dir != "" {
+		// A dv on a folder outside git announces itself where it runs.
+		if s, ok := readServer(filepath.Join(dir, dirName, serverName)); ok {
+			return s, true
+		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return readServer(filepath.Join(dir, dirName, serverName))
+			return Server{}, false
 		}
 		up := filepath.Dir(dir)
 		if up == dir {

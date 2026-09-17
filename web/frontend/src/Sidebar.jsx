@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cx, LRM, statusLabel, statusLetter } from "./util.js";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { cx, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, visibleRows } from "./tree.js";
 import { ThreadList } from "./Threads.jsx";
 import { SessionList } from "./Agent.jsx";
@@ -9,6 +9,8 @@ import {
 } from "./icons.jsx";
 
 const MIN_WIDTH = 180;
+// Rows drawn beyond each edge of the list's view, so a scroll does not show a gap.
+const ROW_MARGIN = 20;
 const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.innerWidth / 2)));
 
 // The left rail: the mode, over what it lists. In the diff that is the changed
@@ -18,7 +20,7 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 export default function Sidebar({
   mode, files, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
-  filtersPaused, onPauseFilters, onReset, agent, onWidth, onMode, attached,
+  filtersPaused, onPauseFilters, onReset, agent, onWidth, modes, onMode, attached,
 }) {
   const code = mode === "code";
   const [filter, setFilter] = useState("");
@@ -37,11 +39,13 @@ export default function Sidebar({
     return m;
   }, [threads]);
 
-  const q = filter.trim().toLowerCase();
-  const shown = useMemo(
-    () => (q ? files.filter((f) => f.path.toLowerCase().includes(q)) : files),
-    [files, q],
-  );
+  // Deferred, so what is typed shows at once and the list catches up after:
+  // filtering and building the tree for a large folder takes a moment.
+  const q = useDeferredValue(filter.trim());
+  const shown = useMemo(() => {
+    const keep = listFilter(q);
+    return keep ? files.filter((f) => keep(f.path)) : files;
+  }, [files, q]);
   const tree = useMemo(() => buildTree(shown), [shown]);
   const treeKind = q ? "filter" : code ? "code" : "diff";
   const startsOpen = treeKind !== "code";
@@ -72,20 +76,46 @@ export default function Sidebar({
     revealing.current = activePath;
   }, [activePath, mode, treeReady]);
 
-  // After every render: scroll once the row a reveal is waiting for exists. It
-  // falls back to a folded folder only when that folder is not about to open.
+  // The list draws only the rows in view, plus a margin: a filter opens every
+  // folder, and a button apiece for a folder of 40,000 files took seconds to
+  // lay out. Rows are all one height, which the stylesheet sets.
+  const [win, setWin] = useState({ top: 0, height: 0, row: 24 });
+  const listMounted = mode !== "agent";
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const measure = () =>
+      setWin({
+        top: list.scrollTop,
+        height: list.clientHeight,
+        row: parseFloat(getComputedStyle(list).getPropertyValue("--row-h")) || 24,
+      });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(list);
+    list.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      ro.disconnect();
+      list.removeEventListener("scroll", measure);
+    };
+  }, [listMounted]);
+  const first = Math.max(0, Math.floor(win.top / win.row) - ROW_MARGIN);
+  const last = Math.min(rows.length, Math.ceil((win.top + win.height) / win.row) + ROW_MARGIN);
+
+  // After every render: scroll once the row a reveal is waiting for is in the
+  // list. It falls back to a folded folder only when that folder is not about
+  // to open.
   useEffect(() => {
     const path = revealing.current;
     const list = listRef.current;
     if (!path || !list) return;
-    const el = list.querySelector(".file-row.on") || list.querySelector(".file-row.holds-active");
-    if (!el?.classList.contains("on") && ancestorsOf(tree, path).some((p) => !isOpen(p))) return;
+    const i = rows.findIndex(({ node }) => node.path === path || (node.dir && !isOpen(node.path) && path.startsWith(node.path + "/")));
+    if (rows[i]?.node.path !== path && ancestorsOf(tree, path).some((p) => !isOpen(p))) return;
     revealing.current = null;
-    if (!el) return;
-    const box = list.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
+    if (i < 0) return;
+    const top = i * win.row - list.scrollTop;
     // A row's worth of margin, so it does not sit flush against the edge.
-    const off = r.top < box.top ? r.top - box.top - r.height : r.bottom > box.bottom ? r.bottom - box.bottom + r.height : 0;
+    const off = top < 0 ? top - win.row : top + win.row > list.clientHeight ? top + 2 * win.row - list.clientHeight : 0;
     if (off) list.scrollTo({ top: list.scrollTop + off, behavior: "smooth" });
   });
 
@@ -144,7 +174,7 @@ export default function Sidebar({
         }}
       />
       <div className="sidebar-modes">
-        <ModeSwitch mode={mode} onMode={onMode} attached={attached} />
+        <ModeSwitch mode={mode} modes={modes} onMode={onMode} attached={attached} />
       </div>
       {mode === "agent" ? (
         <SessionList {...agent} />
@@ -153,7 +183,8 @@ export default function Sidebar({
           <div className="sidebar-filter">
             <input
               value={filter}
-              placeholder="Filter files"
+              placeholder="Filter files or globs"
+              title="Part of a path, or a glob: *.go, src/**/*.ts. Separate several with commas; start one with ! to hide what it matches."
               onChange={(e) => {
                 setFilter(e.target.value);
                 setFlips((f) => ({ ...f, filter: new Set() }));
@@ -225,7 +256,8 @@ export default function Sidebar({
             </div>
           )}
           <div className="file-list" ref={listRef}>
-            {rows.map(({ node, depth }) => {
+            <div style={{ height: rows.length * win.row, paddingTop: first * win.row, boxSizing: "border-box" }}>
+            {rows.slice(first, last).map(({ node, depth }) => {
               if (node.dir) {
                 const expanded = isOpen(node.path);
                 // A folded folder stands in for everything inside it: its
@@ -288,12 +320,14 @@ export default function Sidebar({
                 </button>
               );
             })}
+            </div>
             {shown.length === 0 && <div className="empty">No files match.</div>}
           </div>
           <div className="sidebar-foot">
             {code ? (
               <span className="dim">
-                {statusOf.size} changed of {files.length.toLocaleString()} files
+                {modes.includes("diff") && `${statusOf.size} changed of `}
+                {files.length.toLocaleString()} files
               </span>
             ) : (
               <>
@@ -354,7 +388,7 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
       />
       <div className="comment-list">
         {threads.length === 0 ? (
-          <div className="empty">No comments yet. Drag across line numbers in the diff, or hover a line and hit +.</div>
+          <div className="empty">No comments yet. Drag across line numbers, or hover a line and hit +.</div>
         ) : (
           <ThreadList
             threads={threads}

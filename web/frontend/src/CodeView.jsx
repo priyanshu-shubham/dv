@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
 import { AttachButton } from "./Threads.jsx";
 import { newLineFor } from "./hunks.js";
 import { ensureLanguage } from "./highlight.js";
+import { asMedia, MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { cx, LRM, splitPath, statusLabel, statusLetter } from "./util.js";
 import { IconBack, IconForward, IconSplit } from "./icons.jsx";
 
@@ -12,14 +14,19 @@ const noop = () => {};
 // CodeView is Code mode's reading pane: one file, whole and read-only, with
 // what the diff changed marked in the gutter. It renders through the diff's own
 // rows, so commenting, selecting, go-to-definition and n/p work as they do there.
+// A Markdown or SVG file can be read rendered instead, which `preview` remembers
+// for all of them; an image, video or sound is only ever shown as itself.
+// `media` is { type, stamp } for one outside the diff.
 export default function CodeView({
   path, entry, fd, error, at, threads, wrap, reveal, hit, composing, setComposing,
   onComment, onThreadAction, onSymbol, onAttach, onSearch, onDiff, onBack, onForward, onBody, found, foundAt,
+  scope, preview, onPreview, onOpenFile, media: plainMedia,
 }) {
   const [selection, setSelection] = useState(null);
   const [, force] = useState(0);
   // A deleted file has nothing on the new side; it is read as it was.
   const side = entry?.status === "D" ? "old" : "new";
+  const media = plainMedia || (asMedia(entry) ? { type: entry.media, stamp: entry.rev } : null);
 
   useEffect(() => {
     if (fd?.lang) ensureLanguage(fd.lang, () => force((n) => n + 1));
@@ -43,9 +50,12 @@ export default function CodeView({
   }, [threads, fd, side]);
 
   const [dir, name] = splitPath(path);
+  const kind = media ? "" : previewKind(path);
+  const lines = side === "old" ? fd?.oldLines : fd?.newLines;
+  const readable = fd && !fd.binary && !fd.tooLarge;
 
   return (
-    <section className="file code-file" data-path={path} data-pending={(!fd && !error) || undefined}>
+    <section className="file code-file" data-path={path} data-pending={(!fd && !error && !media) || undefined}>
       <header className="file-head">
         <button className="nav" onClick={onBack} disabled={!onBack} title="Back (Alt+Left)">
           <IconBack size={13} />
@@ -73,25 +83,32 @@ export default function CodeView({
         )}
         <span className="spacer" />
         {entry && (
-          <>
-            <span className="stat">
-              <span className="add">+{entry.additions}</span>
-              <span className="del">-{entry.deletions}</span>
-            </span>
-            <button className="view-file" onClick={() => onDiff(path)} title="Show this file's diff (m)">
-              <IconSplit size={12} />
-              <span className="btn-label">Diff</span>
-            </button>
-          </>
+          <span className="stat">
+            <span className="add">+{entry.additions}</span>
+            <span className="del">-{entry.deletions}</span>
+          </span>
+        )}
+        {/* After the count, whose fixed column would otherwise open a gap beside it. */}
+        {kind && <PreviewToggle kind={kind} on={preview} onChange={onPreview} />}
+        {entry && (
+          <button className="view-file" onClick={() => onDiff(path)} title="Show this file's diff (m)">
+            <IconSplit size={12} />
+            <span className="btn-label">Diff</span>
+          </button>
         )}
         <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} title="Add this file to your next message to Claude" />
       </header>
       <div className={cx("file-body", wrap && "wrap")}>
-        {error && <div className="file-note error">{error}</div>}
-        {!fd && !error && <div className="file-note">Loading...</div>}
-        {fd?.binary && <div className="file-note">Binary file - not shown.</div>}
-        {fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
-        {fd && !fd.binary && !fd.tooLarge && (
+        {media && <Media type={media.type} src={api.mediaURL(path, scope, side, media.stamp)} />}
+        {!media && error && <div className="file-note error">{error}</div>}
+        {!media && !fd && !error && <div className="file-note">Loading...</div>}
+        {!media && fd?.binary && <div className="file-note">Binary file - not shown.</div>}
+        {!media && fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
+        {readable && kind === "markdown" && preview && (
+          <MarkdownPreview lines={lines} path={path} side={side} scope={scope} onOpenFile={onOpenFile} />
+        )}
+        {readable && kind === "svg" && preview && <SvgPreview newLines={lines} />}
+        {readable && !media && !(kind && preview) && (
           <DiffBody
             view="code"
             side={side}

@@ -91,6 +91,12 @@ export function captureAnchor(root) {
       if (cell) {
         return { ...at, side: cell.dataset.side, line: Number(cell.dataset.line), top: cell.getBoundingClientRect().top - box.top };
       }
+      // A rendered Markdown block stands for the source line it starts on.
+      const block = el.closest(".md-preview [data-src]");
+      if (block) {
+        const side = block.closest(".md-preview").dataset.side;
+        return { ...at, side, line: Number(block.dataset.src), top: block.getBoundingClientRect().top - box.top };
+      }
       fallback ||= at;
     }
   }

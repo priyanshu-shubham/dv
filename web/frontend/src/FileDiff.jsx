@@ -4,6 +4,8 @@ import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { charWidth, cx, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useElementWidth, useMedia, visualLength } from "./util.js";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
+import { api } from "./api.js";
+import { asMedia, MarkdownPreview, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "./icons.jsx";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
@@ -15,11 +17,18 @@ function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
   composing, setComposing, onAttach, onSearch, onView, reveal, generatedHidden, onShowGenerated,
-  onBody, found, foundAt, foundHead,
+  onBody, found, foundAt, foundHead, scope, onOpenFile,
 }) {
   const [expanded, setExpanded] = useState({});
   const [selection, setSelection] = useState(null); // { side, start, end }
   const [, forceRender] = useState(0);
+  // A Markdown file can be read as it comes out of the change, rendered, and an
+  // SVG drawn before and after. Other media only ever shows as itself.
+  const [preview, setPreview] = useState(false);
+  const media = asMedia(entry);
+  const kind = previewKind(entry.path);
+  const previewable = kind === "svg" || (kind === "markdown" && entry.status !== "D");
+  const previewing = previewable && preview;
 
   useEffect(() => {
     if (fd?.lang) ensureLanguage(fd.lang, () => forceRender((n) => n + 1));
@@ -50,7 +59,7 @@ function FileDiff({
 
   // A body that is on its way; stepping between changes has to be able to
   // find it before it has any rows.
-  const pending = !collapsed && !generatedHidden && !fd && !error;
+  const pending = !collapsed && !generatedHidden && !media && !fd && !error;
 
   return (
     <section
@@ -89,10 +98,13 @@ function FileDiff({
             <span className="btn-label">open</span>
           </span>
         )}
-        <span className="stat">
-          <span className="add">+{entry.additions}</span>
-          <span className="del">-{entry.deletions}</span>
-        </span>
+        {!media && (
+          <span className="stat">
+            <span className="add">+{entry.additions}</span>
+            <span className="del">-{entry.deletions}</span>
+          </span>
+        )}
+        {previewable &&<PreviewToggle kind={kind} on={preview} onChange={setPreview} />}
         <button
           className="view-file"
           onClick={() => onView(entry.path)}
@@ -129,13 +141,29 @@ function FileDiff({
         </div>
       )}
 
-      {!collapsed && !generatedHidden && (
+      {!collapsed && !generatedHidden && media && (
+        <div className="file-body">
+          <MediaCompare
+            type={entry.media}
+            oldSrc={entry.status !== "A" && api.mediaURL(entry.oldPath || entry.path, scope, "old", entry.rev)}
+            newSrc={entry.status !== "D" && api.mediaURL(entry.path, scope, "new", entry.rev)}
+          />
+        </div>
+      )}
+
+      {!collapsed && !generatedHidden && !media && (
         <div className={cx("file-body", wrap && "wrap")}>
           {loading && <div className="file-note">Loading...</div>}
           {error && <div className="file-note error">{error}</div>}
           {fd?.binary && <div className="file-note">Binary file - not shown.</div>}
           {fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
-          {fd && !fd.binary && !fd.tooLarge && (
+          {fd && !fd.binary && !fd.tooLarge && previewing && kind === "markdown" && (
+            <MarkdownPreview lines={fd.newLines} path={entry.path} scope={scope} onOpenFile={onOpenFile} />
+          )}
+          {fd && !fd.binary && !fd.tooLarge && previewing && kind === "svg" && (
+            <SvgPreview oldLines={entry.status !== "A" && fd.oldLines} newLines={entry.status !== "D" && fd.newLines} />
+          )}
+          {fd && !fd.binary && !fd.tooLarge && !previewing && (
             <DiffBody
               fd={fd}
               view={oneSided && view === "split" ? "unified" : view}

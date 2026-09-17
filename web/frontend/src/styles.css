@@ -1927,6 +1927,243 @@ button.link:hover {
   color: var(--fg-2);
 }
 
+/* A Markdown file rendered in its card: a document's measure and type, drawn
+   with the page's own grounds and code styles. */
+.md-preview {
+  max-width: 900px;
+  padding: 16px 28px 28px;
+  color: var(--fg);
+  font: var(--fs-lg) / 1.65 var(--font-ui);
+  overflow-wrap: break-word;
+}
+
+.md-preview > :first-child {
+  margin-top: 0;
+}
+
+.md-preview :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.4em 0 0.5em;
+  line-height: 1.3;
+  font-weight: 600;
+  /* Clear of the card's pinned head when a link scrolls to one. */
+  scroll-margin-top: calc(var(--inset, 0px) + var(--file-head-h) + 8px);
+}
+
+.md-preview h1,
+.md-preview h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.md-preview h1 {
+  font-size: 1.75em;
+}
+
+.md-preview h2 {
+  font-size: 1.4em;
+}
+
+.md-preview h3 {
+  font-size: 1.15em;
+}
+
+.md-preview h6 {
+  color: var(--fg-2);
+}
+
+.md-preview :is(p, ul, ol, dl, blockquote, pre, table, details, figure) {
+  margin: 0 0 1em;
+}
+
+.md-preview :is(ul, ol) {
+  padding-left: 2em;
+}
+
+.md-preview :is(ul, ol) :is(ul, ol) {
+  margin-bottom: 0;
+}
+
+.md-preview li + li {
+  margin-top: 0.25em;
+}
+
+.md-preview li.md-task {
+  list-style: none;
+}
+
+.md-preview li.md-task input {
+  margin: 0 0.45em 0 -1.35em;
+  vertical-align: middle;
+}
+
+.md-preview a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md-preview a:hover {
+  text-decoration: underline;
+}
+
+.md-preview :is(code, kbd, samp) {
+  padding: 0.15em 0.35em;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  font-size: 0.86em;
+}
+
+.md-preview kbd {
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+.md-preview pre {
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  overflow-x: auto;
+  font: var(--fs-sm) / 1.5 var(--font-mono);
+}
+
+.md-preview pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.md-preview blockquote {
+  padding: 0 1em;
+  border-left: 3px solid var(--border-strong);
+  color: var(--fg-2);
+}
+
+.md-preview hr {
+  height: 1px;
+  margin: 1.5em 0;
+  border: 0;
+  background: var(--border);
+}
+
+.md-preview table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.md-preview :is(th, td) {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+}
+
+.md-preview th {
+  background: var(--bg-panel);
+  font-weight: 600;
+  text-align: left;
+}
+
+.md-preview img {
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.md-preview summary {
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .md-preview {
+    padding: 12px 14px 20px;
+  }
+}
+
+/* An image, video or sound shown as itself, centred with its size under it.
+   A transparent image sits on a checkerboard, so its edges can be seen. */
+.media-compare {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.media-compare.both {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.media {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+}
+
+.media-compare .media {
+  padding: 0;
+}
+
+.media img,
+.media video {
+  display: block;
+  max-width: 100%;
+  max-height: 75vh;
+  border-radius: var(--r-md);
+}
+
+.media img {
+  background: repeating-conic-gradient(var(--bg-active) 0 25%, transparent 0 50%) 0 0 / 16px 16px;
+  box-shadow: 0 0 0 1px var(--border-soft);
+}
+
+.media audio {
+  width: min(480px, 100%);
+}
+
+.media-pdf {
+  align-items: stretch;
+}
+
+.media-pdf iframe {
+  height: 80vh;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+}
+
+.media-pdf .media-info {
+  align-self: center;
+  color: var(--accent);
+  font-family: var(--font-ui);
+}
+
+.media-label,
+.media-info {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.media-info {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.media-failed {
+  padding: 12px;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.viewer-body .media {
+  padding: 24px;
+}
+
+@media (max-width: 760px) {
+  .media-compare.both {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* The composer is a card the text box fills, so the card's edge is the only
    one: a field with its own frame inside a frame was two lines for one box. */
 .composer {

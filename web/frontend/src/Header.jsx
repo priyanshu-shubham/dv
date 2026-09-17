@@ -16,7 +16,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // gives way (the diff is unified and wrapped there), and the sidebar is behind
 // the menu button.
 export default function Header({
-  meta, mode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
+  meta, folder, mode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
   theme, onTheme, onSearch, onHelp, waiting, arrived, onBell, bellOn,
   comments, commentsOn, onComments, sideOn, onSide,
 }) {
@@ -43,7 +43,7 @@ export default function Header({
       </div>
 
       <div className="topbar-right">
-      {!agent && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />}
+      {!agent && !folder && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />}
 
       {mode !== "code" && (
         <>
@@ -103,17 +103,20 @@ export default function Header({
   );
 }
 
-// ModeSwitch is Diff, Code and Agent, at the top of the sidebar whose list
-// each of them fills. Agent counts what waits to go with the next message.
-export function ModeSwitch({ mode, onMode, attached }) {
+// ModeSwitch is Diff, Files and Agent, at the top of the sidebar whose list
+// each of them fills; a folder outside git has no Diff. Files is Code mode,
+// by its name in the code. Agent counts what waits to go with the next message.
+export function ModeSwitch({ mode, modes, onMode, attached }) {
   const agent = mode === "agent";
   return (
     <div className="seg mode-switch" role="group" aria-label="Mode">
-      <button className={cx(mode === "diff" && "on")} aria-pressed={mode === "diff"} onClick={() => onMode("diff")} title="The changes (Shift+←/→ steps through the modes)">
-        Diff
-      </button>
-      <button className={cx(mode === "code" && "on")} aria-pressed={mode === "code"} onClick={() => onMode("code")} title="The whole repository (Shift+←/→ steps through the modes)">
-        Code
+      {modes.includes("diff") && (
+        <button className={cx(mode === "diff" && "on")} aria-pressed={mode === "diff"} onClick={() => onMode("diff")} title="The changes (Shift+←/→ steps through the modes)">
+          Diff
+        </button>
+      )}
+      <button className={cx(mode === "code" && "on")} aria-pressed={mode === "code"} onClick={() => onMode("code")} title="Every file, one at a time (Shift+←/→ steps through the modes)">
+        Files
       </button>
       <button
         className={cx(agent && "on")}

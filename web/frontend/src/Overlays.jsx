@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { cx, LRM, modKey, statusLabel, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
+import { Media } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
@@ -460,7 +461,7 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
 
   const ready = langReady(data?.lang);
   const html = useMemo(
-    () => (data ? highlightLines(`view:${side || ""}:${file}`, data.lines, data.lang) : []),
+    () => (data?.lines ? highlightLines(`view:${side || ""}:${file}`, data.lines, data.lang) : []),
     [data, file, side, ready],
   );
 
@@ -483,7 +484,8 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
       <div className="viewer-body" ref={bodyRef}>
         {error && <div className="empty error">{error}</div>}
         {!data && !error && <div className="empty">Loading...</div>}
-        {data && (
+        {data?.media && <Media type={data.media} src={api.mediaURL(file, scope, side, data.stamp)} />}
+        {data?.lines && (
           <div className="viewer-lines">
             {data.lines.map((_, i) => (
               <div key={i} className={cx("vrow", i + 1 === line && "hit")} data-line={i + 1}>
@@ -506,7 +508,7 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
 
 export function HelpOverlay({ onClose }) {
   const keys = [
-    ["Shift+← / Shift+→", "Previous / next mode: Diff, Code, Agent"],
+    ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent"],
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
     [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
@@ -521,8 +523,8 @@ export function HelpOverlay({ onClose }) {
     ["w", "Toggle line wrapping"],
     ["r", "Reload the diff"],
     ["double-click", "Jump to a symbol's definition, or search its uses"],
-    ["Alt+Left", "Back to the previous definition, or file in Code"],
-    ["Alt+Right", "Forward again, in Code"],
+    ["Alt+Left", "Back to the previous definition, or file in Files"],
+    ["Alt+Right", "Forward again, in Files"],
     ["select code", "Comment on the selected lines"],
     ["drag line numbers", "Comment on a range of lines"],
     ["click a gap bar", "Expand 20 more lines of context"],

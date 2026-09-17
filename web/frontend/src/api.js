@@ -53,6 +53,16 @@ export const api = {
     return req(`/api/file?${p}`);
   },
 
+  // mediaURL serves an image, video or sound off the scope's new side, or its
+  // old one. stamp is the version to show, so a changed file is fetched again.
+  mediaURL: (path, scope, side, stamp) => {
+    const p = scope ? scopeQuery(scope) : new URLSearchParams();
+    p.set("path", path);
+    if (side === "old") p.set("side", "old");
+    if (stamp) p.set("v", stamp);
+    return `/api/media?${p}`;
+  },
+
   files: (q, limit = 60) => req(`/api/files?${new URLSearchParams({ q, limit: String(limit) })}`),
 
   // tree lists every file on the scope's new side, for Code mode's explorer.

@@ -3,6 +3,7 @@ import MarkdownIt from "markdown-it";
 import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { cx, isTyping, LRM, splitPath } from "./util.js";
 import { IconFile, IconSpark, IconX } from "./icons.jsx";
 
@@ -421,6 +422,7 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
   const ref = useRef(null);
   const p = req.preview;
   const fd = p?.diff;
+  const [preview, setPreview] = useState(false);
 
   const startComment = useCallback(
     (side, start, end, selected) => {
@@ -494,6 +496,9 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
 
   const [dir, name] = splitPath(p.path);
   const shown = fd && !fd.binary && !fd.tooLarge;
+  // A problem edit shows only the text it would replace, not the file it makes.
+  const kind = previewKind(p.path);
+  const previewable = shown && !p.problem && kind;
   return (
     <div className="file prompt-card" ref={ref}>
       <header className="file-head">
@@ -522,6 +527,7 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
             <span className="del">-{fd.deletions}</span>
           </span>
         )}
+        {previewable && <PreviewToggle kind={kind} on={preview} onChange={setPreview} />}
         {p.inRepo && fd?.status !== "A" && (
           <button className="view-file" onClick={() => onOpenFile(p.path, firstChange(fd))} title="The whole file as it is now, at the edit">
             <IconFile size={12} />
@@ -537,7 +543,9 @@ function RequestCard({ req, what, comments, onComments, view, contextLines, wrap
         )}
         {fd?.binary && <div className="file-note">Binary file - not shown.</div>}
         {fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
-        {shown && (
+        {previewable && preview && kind === "markdown" && <MarkdownPreview lines={fd.newLines} path={p.path} onOpenFile={p.inRepo ? onOpenFile : null} />}
+        {previewable && preview && kind === "svg" && <SvgPreview oldLines={fd.status !== "A" && fd.oldLines} newLines={fd.newLines} />}
+        {shown && !(previewable && preview) && (
           <DiffBody
             fd={fd}
             view={fd.status === "A" ? "unified" : view}

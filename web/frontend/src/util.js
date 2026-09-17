@@ -201,6 +201,29 @@ export function globMatcher(list) {
   return res.length ? (path) => res.some((re) => re.test(path)) : null;
 }
 
+// listFilter compiles the file list's filter box, or null when it is empty:
+// comma-separated terms, each a piece of the path to look for or, given a * or
+// ?, a glob as globMatcher reads one. A term starting with ! hides what it
+// matches instead, so `*.go, !*_test.go` is the Go files but the tests.
+export function listFilter(text) {
+  const terms = text
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.replace(/^!/, ""));
+  if (!terms.length) return null;
+  const term = (t) => {
+    if (/[*?]/.test(t)) {
+      const re = globRegExp(t);
+      return (path) => re.test(path);
+    }
+    const piece = t.toLowerCase();
+    return (path) => path.toLowerCase().includes(piece);
+  };
+  const shown = terms.filter((t) => !t.startsWith("!")).map(term);
+  const hidden = terms.filter((t) => t.startsWith("!")).map((t) => term(t.slice(1)));
+  return (path) => (!shown.length || shown.some((f) => f(path))) && !hidden.some((f) => f(path));
+}
+
 function globRegExp(glob) {
   // A trailing slash only says "folder"; any other slash anchors the pattern.
   let src = glob.slice(0, -1).includes("/") ? "^" : "(?:^|/)";

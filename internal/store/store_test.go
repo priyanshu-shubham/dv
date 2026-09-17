@@ -117,3 +117,19 @@ func TestSessionsOpenMostRecentFirstAndSurviveReopening(t *testing.T) {
 		t.Fatalf("after closing b elsewhere: %v", s.IDs())
 	}
 }
+
+func TestFindServerInAFolderAndNotPastARepository(t *testing.T) {
+	folder := t.TempDir()
+	repo := filepath.Join(folder, "repo")
+	os.MkdirAll(filepath.Join(repo, ".git"), 0o755)
+	os.MkdirAll(filepath.Join(folder, "notes", "deep"), 0o755)
+	if _, err := Announce(folder, "http://127.0.0.1:1"); err != nil {
+		t.Fatal(err)
+	}
+	if s, ok := FindServer(filepath.Join(folder, "notes", "deep")); !ok || s.URL != "http://127.0.0.1:1" {
+		t.Fatalf("from inside the folder: %+v, %v", s, ok)
+	}
+	if _, ok := FindServer(filepath.Join(repo, "sub")); ok {
+		t.Fatal("a repository inside the folder reached the folder's dv")
+	}
+}

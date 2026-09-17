@@ -67,6 +67,9 @@ func (r *Repo) baseSide() side {
 
 // ResolveScope turns a picker selection into concrete comparison sides.
 func (r *Repo) ResolveScope(kind, rev string) (*Scope, error) {
+	if !r.IsGit() {
+		return folderScope(), nil
+	}
 	s, err := r.resolve(kind, rev)
 	if err != nil {
 		return nil, err
@@ -286,6 +289,8 @@ type FileEntry struct {
 	// Generated means machine-written: still listed, but its diff is not shown
 	// until asked for. See generated.go for what counts.
 	Generated bool `json:"generated,omitempty"`
+	// Media is the content type of a file shown as itself; see MediaType.
+	Media string `json:"media,omitempty"`
 	// Rev identifies the content on both sides, so a client holding this
 	// file's diff can tell from a fresh listing whether it has gone stale.
 	Rev string `json:"rev"`
@@ -295,6 +300,9 @@ type FileEntry struct {
 
 // Files lists what changed in the scope, sorted by path.
 func (r *Repo) Files(s *Scope) ([]FileEntry, error) {
+	if !r.IsGit() {
+		return []FileEntry{}, nil
+	}
 	args := append([]string{"diff", "--raw", "--no-abbrev", "-M", "-z"}, s.diffArgs()...)
 	rawOut, err := r.run(args...)
 	if err != nil {
@@ -333,6 +341,7 @@ func (r *Repo) Files(s *Scope) ([]FileEntry, error) {
 	out := make([]FileEntry, 0, len(entries))
 	for _, e := range entries {
 		e.Rev = r.rev(e)
+		e.Media = MediaType(e.Path)
 		out = append(out, *e)
 	}
 	sortFiles(out)
@@ -537,13 +546,7 @@ func (sd side) name() string {
 // one it reads that side of the comparison, so a file opened from the diff
 // has the diff's line numbers. at names the side read, if not the working tree.
 func (r *Repo) FileAt(path string, s *Scope, old bool) (lines []string, at string, err error) {
-	sd := side{worktree: true}
-	if s != nil {
-		sd = s.new
-		if old {
-			sd = s.old
-		}
-	}
+	sd := s.pick(old)
 	raw, ok, err := r.read(sd, path)
 	if err != nil {
 		return nil, "", err
@@ -562,6 +565,17 @@ func (r *Repo) FileAt(path string, s *Scope, old bool) (lines []string, at strin
 		return nil, "", fmt.Errorf("file too large")
 	}
 	return splitLines(raw), at, nil
+}
+
+// pick is the side a file is read from: the working tree without a scope.
+func (s *Scope) pick(old bool) side {
+	switch {
+	case s == nil:
+		return side{worktree: true}
+	case old:
+		return s.old
+	}
+	return s.new
 }
 
 func splitLines(b []byte) []string {

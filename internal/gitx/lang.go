@@ -16,6 +16,28 @@ func LangFor(path string) string {
 	return byExt[ext]
 }
 
+// MediaType is the content type of a file the page shows as itself - an
+// image, a video, a sound or a PDF - rather than as lines, or "" for any other.
+func MediaType(path string) string {
+	return mediaTypes[strings.ToLower(filepath.Ext(path))]
+}
+
+// SVG is the one media type that is also text, so it is read as lines too.
+const SVG = "image/svg+xml"
+
+// Kept here rather than asked of the system's MIME table, which some machines
+// do not have.
+var mediaTypes = map[string]string{
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+	".webp": "image/webp", ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon", ".svg": SVG,
+	".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ogv": "video/ogg",
+	".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
+	".m4a": "audio/mp4", ".flac": "audio/flac",
+	".pdf": PDF,
+}
+
+const PDF = "application/pdf"
+
 var byName = map[string]string{
 	"dockerfile":     "dockerfile",
 	"makefile":       "makefile",

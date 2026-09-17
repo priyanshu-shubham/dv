@@ -40,8 +40,9 @@ export function buildTree(files) {
   for (const f of files) {
     const parts = f.path.split("/");
     let parent = root;
+    let path = "";
     for (let i = 0; i < parts.length - 1; i++) {
-      const path = parts.slice(0, i + 1).join("/");
+      path = i ? path + "/" + parts[i] : parts[i];
       let dir = dirs.get(path);
       if (!dir) {
         dir = { dir: true, name: parts[i], path, children: [], paths: [] };

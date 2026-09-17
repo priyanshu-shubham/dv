@@ -15,12 +15,15 @@ import { mapLine, newLineFor } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
 import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
+import { blockAt } from "./markdown.js";
+import { asMedia } from "./Preview.jsx";
 import { cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
 const NO_ATTACHED = [];
 const MODES = ["diff", "code", "agent"];
+const FOLDER_MODES = ["code", "agent"];
 const NO_FILTER = { include: "", exclude: "" };
 
 export default function App() {
@@ -88,7 +91,11 @@ export default function App() {
   // mounted and the hidden one keeps its scroll, so switching back and forth
   // costs nothing. codeNav is its trail of files, like an editor's back and
   // forward: entries are { path, line, top, scroll }, scroll noted on leaving.
-  const [mode, setMode] = usePersisted("mode", "diff");
+  // A folder outside git has nothing to diff, so it opens on its files.
+  const folder = meta?.git === false;
+  const modes = folder ? FOLDER_MODES : MODES;
+  const [modePicked, setMode] = usePersisted("mode", "diff");
+  const mode = folder && modePicked === "diff" ? "code" : modePicked;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   // Once opened, the Agent view stays, hidden in the other modes like they are
@@ -203,6 +210,7 @@ export default function App() {
   // was listed at. loadGen counts full loads, so a fetch one of them overtook
   // is dropped instead of landing on a different comparison.
   const versionRef = useRef("");
+  const [repoAt, setRepoAt] = useState(0);
   const loadGen = useRef(0);
   const diffRef = useRef(diff);
   diffRef.current = diff;
@@ -300,6 +308,8 @@ export default function App() {
 
   const needFile = useCallback(
     (path) => {
+      // Media is shown from its own URL; its diff would only read it whole.
+      if (asMedia(diffRef.current?.files.find((f) => f.path === path))) return;
       setFileData((prev) => {
         if (prev[path]) return prev;
         fetchFile(path, false);
@@ -374,7 +384,9 @@ export default function App() {
       files.length === was.files.length &&
       files.every((f, i) => f === was.files[i]) &&
       JSON.stringify([d.scope, d.head]) === JSON.stringify([was.scope, was.head]);
-    if (unchanged) return;
+    // The same diff over different files: an edit outside it, or anything at
+    // all in a folder outside git. Code mode reads those files still.
+    if (unchanged) return setRepoAt((n) => n + 1);
 
     const byPath = new Map(files.map((f) => [f.path, f]));
     applyInPlace(() => {
@@ -499,6 +511,17 @@ export default function App() {
 
   useEffect(() => setLastCode(codePath), [codePath, setLastCode]);
 
+  // Rendered or as source, the line at the top stays where it was.
+  const [preview, setPreview] = usePersisted("preview", false);
+  const togglePreview = useCallback(
+    (on) => {
+      const a = captureAnchor(codeRef.current);
+      setPreview(on);
+      if (a?.line) openCode(a.path, a.line, { top: a.top, replace: true });
+    },
+    [setPreview, openCode],
+  );
+
   // Arriving at a step: back to where it was left, or to its line.
   useEffect(() => {
     const root = codeRef.current;
@@ -511,7 +534,7 @@ export default function App() {
     }
     setReveal({ path, line });
     return chase(root, () => {
-      const cell = root.querySelector(`.code-file [data-line="${line}"]`);
+      const cell = root.querySelector(`.code-file [data-line="${line}"]`) || blockAt(root, line);
       return cell && { y: yOf(root, cell, top ?? root.clientHeight / 3), final: true };
     });
   }, [codeAt]);
@@ -525,7 +548,7 @@ export default function App() {
     return () => {
       live = false;
     };
-  }, [mode, scope, diff]);
+  }, [mode, scope, diff, repoAt]);
   const explorer = useMemo(() => {
     if (!repoFiles) return [];
     const changed = new Map((diff?.files || []).map((f) => [f.path, f]));
@@ -546,12 +569,12 @@ export default function App() {
     let live = true;
     api
       .file(codePath, scope, "new")
-      .then((r) => live && setPlain({ path: codePath, fd: plainDiff(r) }))
+      .then((r) => live && setPlain(r.media ? { path: codePath, media: { type: r.media, stamp: r.stamp } } : { path: codePath, fd: plainDiff(r) }))
       .catch((e) => live && setPlain({ path: codePath, error: e.message }));
     return () => {
       live = false;
     };
-  }, [mode, codePath, codeEntry, scope, diff, needFile]);
+  }, [mode, codePath, codeEntry, scope, diff, needFile, repoAt]);
   const codeState = codeEntry ? fileData[codePath] : plain?.path === codePath ? plain : null;
 
   // Find in page, in whichever pane is showing. DiffBody publishes the rows each
@@ -610,7 +633,7 @@ export default function App() {
   // The diff's files still to load: a match in one of them is not found yet.
   // Folded files and generated ones are left out, as they would be on screen.
   const findWants = useMemo(
-    () => (find && mode === "diff" ? files.filter((f) => !f.generated && !collapsed.has(f.path)).map((f) => f.path) : []),
+    () => (find && mode === "diff" ? files.filter((f) => !f.generated && !asMedia(f) && !collapsed.has(f.path)).map((f) => f.path) : []),
     [!!find, mode, files, collapsed],
   );
   useEffect(() => {
@@ -707,11 +730,12 @@ export default function App() {
   // Ctrl+F is taken before anything focused can keep it, so it reaches find from
   // a composer too, seeded like Ctrl+K: the selection in a text box, else on the
   // page, else the code whose selection opened the composer - which goes if
-  // nothing was typed in it. Over a modal or Claude's request the browser's own
-  // find stays: those draw every line.
+  // nothing was typed in it. Over a modal, Claude's request or a Markdown preview
+  // in Code mode the browser's own find stays: those draw every line.
   useEffect(() => {
     const onKey = (e) => {
       if (promptRef.current || document.querySelector(".backdrop") || modeRef.current === "agent") return;
+      if (modeRef.current === "code" && codeRef.current?.querySelector(".md-preview")) return;
       if (isFindKey(e)) {
         e.preventDefault();
         if (e.target.closest?.(".find-bar")) return openFind("");
@@ -1190,8 +1214,8 @@ export default function App() {
       if (e.shiftKey && !mod && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         if (!isTyping(e.target) || (e.target.closest(".agent-composer") && !e.target.value)) {
           e.preventDefault();
-          const i = MODES.indexOf(mode) + (e.key === "ArrowRight" ? 1 : -1);
-          switchMode(MODES[(i + MODES.length) % MODES.length]);
+          const i = modes.indexOf(mode) + (e.key === "ArrowRight" ? 1 : -1);
+          switchMode(modes[(i + modes.length) % modes.length]);
           return;
         }
       }
@@ -1300,7 +1324,7 @@ export default function App() {
   }, [
     files, activePath, view, wrap, jumpToFile, toggleViewed, setView, setWrap,
     loadDiff, loadThreads, startCommentAtCursor, attachHere, openOverlay, openSearch, closeOverlay, closeFind, needFile, viewFile,
-    mode, codePath, openCode, stepCode, switchMode,
+    mode, modes, codePath, openCode, stepCode, switchMode,
   ]);
 
   const onMouseOver = useCallback((e) => {
@@ -1322,6 +1346,7 @@ export default function App() {
     <div className={cx("app", offline && "offline")}>
       <Header
         meta={meta}
+        folder={folder}
         mode={mode}
         onMode={switchMode}
         scope={scope}
@@ -1355,6 +1380,7 @@ export default function App() {
         {phone && <div className={cx("panel-backdrop", panel && "on")} onClick={() => setPanel(null)} />}
         <Sidebar
           mode={mode}
+          modes={modes}
           onMode={switchMode}
           attached={attachedCount}
           files={mode === "code" ? explorer : files}
@@ -1400,7 +1426,7 @@ export default function App() {
         <div className="content" ref={scrollRef} onMouseOver={onMouseOver} hidden={mode !== "diff"}>
           {mode === "diff" && findBar}
           {error && <div className="banner error">{error}</div>}
-          {diff && files.length === 0 && !error && (
+          {meta && !folder && diff && files.length === 0 && !error && (
             <div className="empty-state">
               <h2>Nothing to review</h2>
               {filteredOut + hiddenGenerated > 0 ? (
@@ -1439,6 +1465,8 @@ export default function App() {
               onAttach={attach}
               onSearch={openSearch}
               onView={viewFile}
+              scope={scope}
+              onOpenFile={goTo}
               reveal={reveal?.path === entry.path ? reveal.line : 0}
               onBody={onBody.diff}
               found={(mode === "diff" && found?.byFile.get(entry.path)) || null}
@@ -1474,18 +1502,25 @@ export default function App() {
               onDiff={() => switchMode("diff")}
               onBack={codeNav.at > 0 ? () => stepCode(-1) : null}
               onForward={codeNav.at < codeNav.stack.length - 1 ? () => stepCode(1) : null}
+              scope={scope}
+              preview={preview}
+              onPreview={togglePreview}
+              onOpenFile={openCode}
+              media={codeEntry ? null : codeState?.media}
             />
           ) : (
             <div className="empty-state">
               <h2>Pick a file</h2>
-              <p>The explorer lists every file in the repository, with changed ones marked.</p>
+              <p>{folder ? "The explorer lists every file in the folder." : "The explorer lists every file in the repository, with changed ones marked."}</p>
               <span className="keys">
                 <span>
                   <kbd>{modKey}+P</kbd> open a file
                 </span>
-                <span>
-                  <kbd>[</kbd> <kbd>]</kbd> next changed file
-                </span>
+                {!folder && (
+                  <span>
+                    <kbd>[</kbd> <kbd>]</kbd> next changed file
+                  </span>
+                )}
               </span>
             </div>
           )}

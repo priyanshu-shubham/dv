@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ func (s *Server) scopeFromRequest(w http.ResponseWriter, r *http.Request) (*gitx
 func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repo":          s.repo.Name(),
+		"git":           s.repo.IsGit(),
 		"root":          s.repo.Root,
 		"place":         homeRelative(s.repo.Root),
 		"head":          s.repo.Head(),
@@ -205,6 +207,16 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The page shows media from /api/media; here it learns only which version.
+	if media := gitx.MediaType(path); media != "" && media != gitx.SVG {
+		stamp, at, err := s.repo.StampAt(path, sc, q.Get("side") == "old")
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"path": path, "media": media, "stamp": stamp, "at": at})
+		return
+	}
 	lines, at, err := s.repo.FileAt(path, sc, q.Get("side") == "old")
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
@@ -216,6 +228,45 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		"lang":  gitx.LangFor(path),
 		"at":    at,
 	})
+}
+
+// handleMedia serves an image, video, sound or PDF off the scope's new side,
+// or with side=old its old one, with ranges so a video can be seeked in. Only
+// those types: anything else served from this origin could run script with the
+// page's reach.
+func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if !filepath.IsLocal(filepath.FromSlash(path)) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a path inside the repository", path))
+		return
+	}
+	ctype := gitx.MediaType(path)
+	if ctype == "" {
+		writeErr(w, http.StatusUnsupportedMediaType, fmt.Errorf("%s is not an image, video or sound", path))
+		return
+	}
+	sc, ok := s.scopeFromRequest(w, r)
+	if !ok {
+		return
+	}
+	f, modified, err := s.repo.OpenAt(path, sc, r.URL.Query().Get("side") == "old")
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// What a PDF viewer calls it, and a download is saved as.
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": filepath.Base(path)}))
+	// An SVG opened as a page of its own is a document, and could script. A
+	// PDF is left out: Chrome will not draw one sandboxed, and its viewer runs
+	// apart from the page anyway.
+	if ctype != gitx.PDF {
+		w.Header().Set("Content-Security-Policy", "sandbox")
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, "", modified, f)
 }
 
 // handleTree lists the whole repository as the scope's new side has it.

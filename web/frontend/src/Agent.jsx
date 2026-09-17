@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./ClaudePrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { cx, isTyping, LRM, relTime, splitPath, useDismiss, usePersisted } from "./util.js";
@@ -2360,6 +2361,10 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
   const [composing, setComposing] = useState(null);
   const [, force] = useState(0);
   const fd = state?.ed?.diff;
+  // Only a whole file renders: with just the changed lines kept, it would not read.
+  const [preview, setPreview] = useState(false);
+  const kind = previewKind(e.path);
+  const previewable = kind && fd && !fd.binary && !fd.tooLarge && !state.ed.partial;
 
   useEffect(() => {
     const el = ref.current;
@@ -2447,6 +2452,7 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
           <span className="add">+{e.adds}</span>
           <span className="del">-{e.dels}</span>
         </span>
+        {previewable && <PreviewToggle kind={kind} on={preview} onChange={setPreview} />}
         {e.inRepo && (
           <button className="view-file" onClick={() => onOpenFile(e.path, first ? first.ns + 1 : 1)} title="The whole file as it is now">
             <IconFile size={12} />
@@ -2457,7 +2463,9 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
       <div className={cx("file-body", wrap && "wrap")}>
         {!state && <div className="file-note loading">Loading...</div>}
         {state?.error && <div className="file-note error">{state.error}</div>}
-        {fd && !fd.binary && !fd.tooLarge && (
+        {previewable && preview && kind === "markdown" && <MarkdownPreview lines={fd.newLines} path={e.path} onOpenFile={e.inRepo ? onOpenFile : null} />}
+        {previewable && preview && kind === "svg" && <SvgPreview oldLines={fd.status !== "A" && fd.oldLines} newLines={fd.newLines} />}
+        {fd && !fd.binary && !fd.tooLarge && !(previewable && preview) && (
           <DiffBody
             fd={fd}
             view={fd.status === "A" ? "unified" : view}
@@ -2740,7 +2748,7 @@ export function SessionList({ sessions, available, usage, notify, onNotify, acti
           <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? s.status || "working" : "running in dv") : relTime(s.updated)}</span>
           <SessionID id={s.id} />
           {added[s.id]?.length > 0 && (
-            <span className="session-added" title="Added from Diff or Code, to go with the next message">
+            <span className="session-added" title="Added from Diff or Files, to go with the next message">
               {added[s.id].length} added
             </span>
           )}

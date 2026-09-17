@@ -1,7 +1,8 @@
-// dv opens a local diff reviewer for the git repository you run it in. It
-// serves a browser UI on loopback, and any comments you leave are written to
-// .dv/comments.json inside that repository — never committed, because dv adds
-// the directory to .git/info/exclude on first run.
+// dv opens a local diff reviewer for the git repository you run it in, or a
+// file browser for a folder outside git. It serves a browser UI on loopback,
+// and any comments you leave are written to .dv/comments.json inside that
+// repository — never committed, because dv adds the directory to
+// .git/info/exclude on first run.
 package main
 
 import (
@@ -47,7 +48,8 @@ func run() error {
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n       dv claude install\n\n"+
-			"Review the current repository's diff in a browser. reset deletes the\n"+
+			"Review the current repository's diff in a browser (outside git, read the\n"+
+			"folder's files). reset deletes the\n"+
 			"review's comments and viewed marks, to start it over. claude install\n"+
 			"adds hooks to Claude Code's settings so its permission prompts come up\n"+
 			"in the page too.\n\nflags:\n")
@@ -85,7 +87,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	excludeNotes(repo)
+	if repo.IsGit() {
+		excludeNotes(repo)
+	}
 
 	ix := symindex.New(repo.Root, repo)
 	ix.BuildAsync()
@@ -102,7 +106,11 @@ func run() error {
 	}
 	url := fmt.Sprintf("http://%s", ln.Addr().String())
 
-	fmt.Printf("\n  \033[1m%s\033[0m — reviewing %s\n", repo.Name(), repo.Root)
+	doing := "reviewing"
+	if !repo.IsGit() {
+		doing = "reading (not a git repository, so no diff)"
+	}
+	fmt.Printf("\n  \033[1m%s\033[0m — %s %s\n", repo.Name(), doing, repo.Root)
 	fmt.Printf("  \033[1;32m%s\033[0m\n", url)
 	fmt.Printf("  comments → %s\n\n  ctrl-c to stop\n\n", st.Path())
 
