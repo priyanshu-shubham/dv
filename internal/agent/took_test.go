@@ -32,7 +32,7 @@ func TestTurnsAreMarkedWhereTheyBeginAndEnd(t *testing.T) {
 
 	ms := int64(4200)
 	turn := codex.Turn{ID: "t", Status: "completed", DurationMs: &ms, Items: []codex.Item{{Type: "agentMessage", ID: "a", Text: "ok"}}}
-	if items := codexItems("/repo", []codex.Turn{turn}, nil, nil); items[len(items)-1].Kind != "worked" || items[len(items)-1].Took != 4200 {
+	if items := codexItems("/repo", []codex.Turn{turn}, nil, nil, nil); items[len(items)-1].Kind != "worked" || items[len(items)-1].Took != 4200 {
 		t.Errorf("Codex turn: %+v", items)
 	}
 }

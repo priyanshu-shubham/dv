@@ -1,10 +1,12 @@
 // Files shown as what they are rather than as lines: Markdown rendered, and
 // images, videos and sounds drawn or played by the browser.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { ensureLanguage } from "./highlight.js";
-import { isMarkdown, renderMarkdown } from "./markdown.js";
-import { cx } from "./util.js";
+import { blockAt, isMarkdown, renderMarkdown } from "./markdown.js";
+import { AttachButton, Composer, ThreadList } from "./Threads.jsx";
+import { cx, searchSeed } from "./util.js";
 import { IconEye } from "./icons.jsx";
 
 const SVG = "image/svg+xml";
@@ -38,6 +40,130 @@ export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }
   };
 
   return <div className="md-preview" data-side={side} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// MarkdownDocument is a Markdown file rendered and open to the comments its
+// lines take: selecting text comments on the blocks it covers, anchored to the
+// lines they were written from, which is what is saved and what an agent is
+// told. Every rendered block names the line it starts on, so the two line up.
+// Without onStartComment it is the preview alone.
+export function MarkdownDocument({
+  lines, path, side = "new", scope, onOpenFile, threads, composing, setComposing, onStartComment, onComment, onThreadAction, onAttach, onSearch,
+}) {
+  const ref = useRef(null);
+  const slots = useRef(new Map()); // key -> the element it is drawn in
+  // A comment on the file itself is not on any block: its card shows it.
+  const mine = (threads || []).filter((t) => t.startLine > 0 && (!t.side || t.side === side));
+  const shown = [...mine.map((t) => ["t:" + t.id, t.endLine]), ...(composing?.side === side ? [["c", composing.end]] : [])];
+  const slot = (key) => {
+    if (!slots.current.has(key)) {
+      const el = document.createElement("div");
+      el.className = "row-threads md-threads";
+      slots.current.set(key, el);
+    }
+    return slots.current.get(key);
+  };
+  // Each goes under the block it is about, in the document's own flow.
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const want = new Set(shown.map(([key]) => key));
+    for (const [key, el] of slots.current) {
+      if (want.has(key)) continue;
+      el.remove();
+      slots.current.delete(key);
+    }
+    for (const [key, line] of shown) {
+      const el = slots.current.get(key);
+      // After the whole list or quote a block belongs to, not inside it.
+      let at = blockAt(root, line) || root.querySelector(".md-preview")?.lastElementChild;
+      while (at?.parentElement && !at.parentElement.classList.contains("md-preview")) at = at.parentElement;
+      if (at && at.nextSibling !== el) at.after(el);
+    }
+  });
+
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !onStartComment) return;
+    const onMouseUp = (e) => {
+      if (e.detail === 2 || e.target.closest?.(".md-threads")) return;
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+      const from = blockOf(root, sel.anchorNode);
+      const to = blockOf(root, sel.focusNode);
+      if (!from || !to) return;
+      const [a, b] = [Number(from.dataset.src), Number(to.dataset.src)];
+      onStartComment(side, Math.min(a, b), blockEnd(root, b < a ? from : to, lines.length), searchSeed(sel.toString()));
+    };
+    root.addEventListener("mouseup", onMouseUp);
+    return () => root.removeEventListener("mouseup", onMouseUp);
+  }, [onStartComment, side, lines.length]);
+
+  const at = composing;
+  return (
+    <div className="md-commentable" ref={ref}>
+      <MarkdownPreview lines={lines} path={path} side={side} scope={scope} onOpenFile={onOpenFile} />
+      {shown.map(([key]) =>
+        createPortal(
+          <div className="thread-slot">
+            {key === "c" ? (
+              <Composer
+                title={at.start === at.end ? `Line ${at.end}` : `Lines ${at.start}-${at.end}`}
+                autoFocus
+                selected={at.selected}
+                onSearch={onSearch}
+                aside={
+                  onAttach &&
+                  ((body) => (
+                    <AttachButton
+                      onClick={async (to) => {
+                        if (body) {
+                          const t = await onComment({ file: path, side, startLine: at.start, endLine: at.end, quote: at.quote, body });
+                          if (t) onAttach({ kind: "thread", threadId: t.id }, to);
+                        } else onAttach({ kind: "lines", file: path, side, start: at.start, end: at.end, quote: at.quote }, to);
+                        setComposing(null);
+                      }}
+                      what={body ? "this comment" : "these lines"}
+                    />
+                  ))
+                }
+                onCancel={() => setComposing(null)}
+                onSubmit={async (body) => {
+                  await onComment({ file: path, side, startLine: at.start, endLine: at.end, quote: at.quote, body });
+                  setComposing(null);
+                }}
+              />
+            ) : (
+              <ThreadList
+                threads={mine.filter((t) => "t:" + t.id === key)}
+                onAction={onThreadAction}
+                onAttach={onAttach && ((t, to) => onAttach({ kind: "thread", threadId: t.id }, to))}
+              />
+            )}
+          </div>,
+          slot(key),
+          key,
+        ),
+      )}
+    </div>
+  );
+}
+
+// blockOf is the rendered block a node sits in: the innermost naming a line.
+function blockOf(root, node) {
+  const el = node?.nodeType === 3 ? node.parentElement : node;
+  const block = el?.closest?.("[data-src]");
+  return block && root.contains(block) ? block : null;
+}
+
+// blockEnd is the last line a block covers, up to where the next one starts.
+function blockEnd(root, block, total) {
+  const start = Number(block.dataset.src);
+  for (const b of root.querySelectorAll(".md-preview [data-src]")) {
+    const at = Number(b.dataset.src);
+    if (at > start) return at - 1;
+  }
+  return total;
 }
 
 // SvgPreview draws an SVG from the lines in hand, so it shows exactly the

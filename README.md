@@ -4,7 +4,9 @@ A local place to review code and work with Claude Code and Codex, in the
 browser - a phone's too.
 
 - **Diff** - your changes, a branch or any commits, with comments on any line
-  that can be added to a message for Claude or Codex.
+  that can be added to a message for Claude or Codex. Markdown takes them read
+  rendered as well, and any file takes one on the file itself - a picture or
+  something binary included.
 - **Files** - the whole repository, or any branch or commit, to read and
   comment on.
 - **Agent** - Claude Code's and Codex's sessions beside the code: their edits
@@ -65,7 +67,9 @@ $ dv hub
 `dv hub` is one dv for many folders on one port: each folder's page is at
 `/<name>/`, so a single address - or a single tunnel to a phone - reaches all of
 them. `dv` in a folder a hub is serving prints the hub's address for it and
-exits, and `dv hub` with a hub already on the port opens that one.
+exits, and `dv hub` with a hub already on the port opens that one. An agent
+that finishes, or wants an answer, is told of wherever you are: on another
+folder's page or on the hub's own, named by its folder.
 
 - `-host 0.0.0.0` reaches the hub from other devices on your network, where
   **anyone who can reach the port can add folders, clone and run Claude or Codex
@@ -189,12 +193,15 @@ its model. The list has the folder's Codex sessions from Codex's own history;
 one open in a terminal is followed read-only, and its prompts stay the
 terminal's.
 
-The permission modes are made of Codex's sandbox and approvals: **Ask before
-edits** keeps the sandbox read-only and asks for anything but a safe command,
-**Accept edits** lets Codex write in the folder and asks to go beyond it,
-**Plan** is Codex's plan mode, and **Auto** has Codex's reviewer answer
-instead of you. A mode or model picked while Codex works takes effect from its
-next turn. A message sent while it works waits two seconds, when Esc takes it
+The permission modes are made of Codex's sandbox and approvals, which cover
+commands and edits together rather than one at a time as Claude Code's do:
+**Ask before edits** keeps the sandbox read-only and asks for anything but a
+command Codex trusts, **Accept edits** lets it work inside the folder - writing
+there and running commands that stay in the sandbox, without the network - and
+asks to go beyond that, **Plan** is Codex's plan mode, and **Auto** has Codex's
+reviewer answer instead of you. Asked to go beyond its sandbox, Codex says why,
+which the request shows. A mode or model picked while Codex works takes effect
+from its next turn. A message sent while it works waits two seconds, when Esc takes it
 back, and then joins the turn. `/review` has Codex review what is uncommitted,
 or what you describe after it. Rewinding restores the conversation only: Codex
 keeps no copies of the files it changes.

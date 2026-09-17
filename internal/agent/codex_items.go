@@ -30,8 +30,9 @@ type todoList struct {
 
 // codexItems is a thread's turns as the conversation is drawn. commands are
 // the /compact and /review messages sent from dv, which leave no message in the
-// thread, by the turn they came after.
-func codexItems(root string, turns []codex.Turn, todos map[string]*todoList, commands map[string][]Item) []Item {
+// thread, by the turn they came after; reasons are why Codex asked to run a
+// command, which it says only when it asks, by the command's id.
+func codexItems(root string, turns []codex.Turn, todos map[string]*todoList, commands map[string][]Item, reasons map[string]string) []Item {
 	items := append([]Item{}, commands[""]...)
 	before := ""
 	for _, turn := range turns {
@@ -65,7 +66,7 @@ func codexItems(root string, turns []codex.Turn, todos map[string]*todoList, com
 			if review && (it.Type == "userMessage" || it.Type == "agentMessage" && (reviewing || strings.TrimSpace(it.Text) == found)) {
 				continue
 			}
-			items = append(items, codexItem(root, it, at, &prompted, before)...)
+			items = append(items, codexItem(root, it, at, &prompted, before, reasons[it.ID])...)
 			if list != nil && it.ID == list.after {
 				place()
 			}
@@ -115,7 +116,7 @@ func todoItem(turn string, list *todoList) Item {
 // codexItem is one thread item as the page's rows. prompted says whether the
 // turn's first message has been drawn: only that one can be rewound to, since
 // a thread goes back a turn at a time.
-func codexItem(root string, it codex.Item, at string, prompted *bool, before string) []Item {
+func codexItem(root string, it codex.Item, at string, prompted *bool, before, reason string) []Item {
 	// Codex keeps no time for a call, only for its turn, which would make one
 	// still running look to have run since the turn began.
 	tool := func(name string, input any) Item {
@@ -170,7 +171,7 @@ func codexItem(root string, it codex.Item, at string, prompted *bool, before str
 			}
 			return []Item{s}
 		}
-		row := tool("Bash", map[string]string{"command": commandText(it)})
+		row := tool("Bash", map[string]string{"command": commandText(it), "description": reason})
 		if done {
 			out := ""
 			if it.AggregatedOutput != nil {

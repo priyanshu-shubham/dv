@@ -119,6 +119,33 @@ type Status struct {
 	Waiting int  `json:"waiting"` // prompts on the reader
 }
 
+// Asked is a request waiting on the reader, named by its session, for a page
+// that shows it away from the conversation.
+type Asked struct {
+	*permit.Request
+	Title string `json:"title,omitempty"`
+}
+
+// Waiting lists the requests on the reader, of the sessions dv shows.
+func (s *Server) Waiting() []Asked {
+	asked := []Asked{}
+	for _, r := range s.permit.Waiting() {
+		if s.agent.Visible(r.Session) {
+			asked = append(asked, Asked{r, s.agent.Title(r.Session)})
+		}
+	}
+	return asked
+}
+
+// Live is what a folder's sessions are doing, which a hub passes to the pages
+// of its other folders for the notices they raise.
+type Live struct {
+	Sessions []agent.Activity `json:"sessions"`
+	Requests []Asked          `json:"requests"`
+}
+
+func (s *Server) Live() Live { return Live{Sessions: s.agent.Activity(), Requests: s.Waiting()} }
+
 func (s *Server) Status() Status {
 	var st Status
 	for _, a := range s.agent.Activity() {

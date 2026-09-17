@@ -52,11 +52,6 @@ func (s *Server) handleClaudeRequests(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	// The session's name comes along, for a request shown away from it.
-	type shown struct {
-		*permit.Request
-		Title string `json:"title,omitempty"`
-	}
 	// A terminal's busy and idle are only in its process record, so they are
 	// looked at on a tick; each part goes out only when it moved.
 	tick := time.NewTicker(time.Second)
@@ -75,13 +70,7 @@ func (s *Server) handleClaudeRequests(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 	for {
-		requests := []shown{}
-		for _, r := range s.permit.Waiting() {
-			if s.agent.Visible(r.Session) {
-				requests = append(requests, shown{r, s.agent.Title(r.Session)})
-			}
-		}
-		if !send("requests", requests) || !send("sessions", s.agent.Activity()) {
+		if !send("requests", s.Waiting()) || !send("sessions", s.agent.Activity()) {
 			return
 		}
 		select {

@@ -9,7 +9,7 @@ import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay } fr
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import AgentView from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
-import { Notices, say, useNotices } from "./Notices.jsx";
+import { Notices, say, useHubActivity, useNotices } from "./Notices.jsx";
 import { AttachTarget } from "./Threads.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
 import { mapLine, newLineFor, plainDiff } from "./hunks.js";
@@ -18,7 +18,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, usePref } from "./prefs.js";
 import { boot } from "./boot.js";
 
@@ -1073,8 +1073,10 @@ export default function App() {
   const ended = useNotices({
     requests,
     sessions: activity,
+    elsewhere: useHubActivity(),
     looking: mode === "agent" ? agentId : null,
     desktop: desktopNotices,
+    go: openFolderSession,
     review: (id) => {
       setPromptFocus(id);
       setPromptOpen(true);

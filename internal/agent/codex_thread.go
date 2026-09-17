@@ -48,6 +48,7 @@ type codexThread struct {
 	order    []string
 	todos    map[string]*todoList
 	commands map[string][]Item // /compact and /review sent from dv, by the turn they came after
+	reasons  map[string]string // why Codex asked to run a command, by its id
 	plans    map[string]bool   // turns run in plan mode
 	asks     map[string]context.CancelFunc
 	planAsk  context.CancelFunc
@@ -85,7 +86,7 @@ var errTerminal = errors.New("this session is open in a terminal; dv follows it,
 func newCodexThread(side *codexSide, id string) *codexThread {
 	return &codexThread{
 		side: side, id: id, blocks: map[string]*Block{}, todos: map[string]*todoList{},
-		commands: map[string][]Item{}, plans: map[string]bool{}, asks: map[string]context.CancelFunc{},
+		commands: map[string][]Item{}, reasons: map[string]string{}, plans: map[string]bool{}, asks: map[string]context.CancelFunc{},
 		subs: map[*Sub]bool{}, lastUsed: time.Now(),
 	}
 }
@@ -347,7 +348,7 @@ func (t *codexThread) update(s *Sub) Update {
 			turns = slices.Clone(turns)
 			turns[n-1].Status = "inProgress"
 		}
-		u.Reset, u.Items = s.diff(codexItems(t.side.root, turns, t.todos, t.commands))
+		u.Reset, u.Items = s.diff(codexItems(t.side.root, turns, t.todos, t.commands, t.reasons))
 	}
 	if t.history && !t.whole {
 		u.Earlier = &Earlier{Next: "all"}
@@ -414,7 +415,7 @@ func (t *codexThread) items() []Item {
 	t.readHistory(true)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return codexItems(t.side.root, t.turns, t.todos, t.commands)
+	return codexItems(t.side.root, t.turns, t.todos, t.commands, t.reasons)
 }
 
 // last is the thread's latest words, for its row.
@@ -1169,6 +1170,12 @@ func (t *codexThread) approveCommand(ctx context.Context, params json.RawMessage
 	}
 	json.Unmarshal(params, &p)
 	command := commandText(p.Item)
+	// Said once, when it asks; the command keeps it in the conversation after.
+	if r := strings.TrimSpace(deref(p.Reason)); r != "" && p.Item.ID != "" {
+		t.mu.Lock()
+		t.reasons[p.Item.ID] = r
+		t.mu.Unlock()
+	}
 	input, _ := json.Marshal(map[string]string{"command": command, "description": deref(p.Reason)})
 	req := &permit.Request{Tool: "Bash", Input: input}
 	var offered []json.RawMessage

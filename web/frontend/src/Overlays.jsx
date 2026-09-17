@@ -8,7 +8,7 @@ import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
 import { cx, LRM, modKey, statusLabel, useCopy, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml } from "./highlight.js";
-import { MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
@@ -550,7 +550,21 @@ export function FileViewer({
         {fd && rendered && (
           <div className="file-body">
             {kind === "markdown" ? (
-              <MarkdownPreview lines={at === "old" ? fd.oldLines : fd.newLines} path={file} side={at} scope={scope} onOpenFile={onOpenFile} />
+              <MarkdownDocument
+                lines={at === "old" ? fd.oldLines : fd.newLines}
+                path={file}
+                side={at}
+                scope={scope}
+                onOpenFile={onOpenFile}
+                threads={shown}
+                composing={composing}
+                setComposing={setComposing}
+                onStartComment={startComment}
+                onComment={onComment}
+                onThreadAction={onThreadAction}
+                onAttach={onAttach}
+                onSearch={onSearch}
+              />
             ) : (
               <SvgPreview newLines={at === "old" ? fd.oldLines : fd.newLines} />
             )}
@@ -706,7 +720,7 @@ export function HelpOverlay({ onClose }) {
     ...(boot.base
       ? [
           ["h", "Back to the hub"],
-          ["Ctrl+Shift+↑ / ↓", "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone)"],
+          [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone)"],
         ]
       : []),
     ["double-click", "Jump to a symbol's definition, or search its uses"],

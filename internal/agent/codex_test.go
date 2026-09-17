@@ -37,7 +37,7 @@ func TestCodexItems(t *testing.T) {
 		{"type":"userMessage","id":"m3","content":[{"type":"text","text":"steered in"}]},
 		{"type":"commandExecution","id":"x2","command":"sleep 30","status":"inProgress"}]}`)
 	todos := map[string]*todoList{"turn1": {after: "r1", steps: []map[string]string{{"content": "read", "status": "completed"}}}}
-	items := codexItems("/repo", []codex.Turn{first, second}, todos, nil)
+	items := codexItems("/repo", []codex.Turn{first, second}, todos, nil, nil)
 
 	var got []string
 	for _, it := range items {
@@ -77,7 +77,7 @@ func TestCodexItems(t *testing.T) {
 func TestAReviewShowsOnlyItsFindings(t *testing.T) {
 	kinds := func(turns []codex.Turn) string {
 		var got []string
-		for _, it := range codexItems("/repo", turns, nil, nil) {
+		for _, it := range codexItems("/repo", turns, nil, nil, nil) {
 			got = append(got, it.Kind+":"+it.Key)
 		}
 		return strings.Join(got, " ")
@@ -201,7 +201,7 @@ func TestCodexImageGeneration(t *testing.T) {
 		{"type":"imageGeneration","id":"g1","status":"generating","result":"","revisedPrompt":"a red square"},
 		{"type":"imageGeneration","id":"g2","status":"completed","result":"`+png+`","revisedPrompt":"a red square","savedPath":"`+filepath.Join(dir, "gone.png")+`"},
 		{"type":"imageGeneration","id":"g3","status":"failed","result":"","failure":{"type":"usageLimitExceeded","limitId":"images","resetsAt":null}}]}`)
-	items := codexItems(dir, []codex.Turn{turn}, nil, nil)
+	items := codexItems(dir, []codex.Turn{turn}, nil, nil, nil)
 	if len(items) != 3 || items[0].Tool != "ImageGeneration" || items[0].Result != nil {
 		t.Fatalf("still making it: %+v", items)
 	}

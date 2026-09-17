@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { AttachTarget } from "./Threads.jsx";
@@ -24,6 +24,7 @@ const NO_IMAGES = [];
 const NO_QUEUED = [];
 const NO_COMMANDS = [];
 const NO_MODELS = [];
+const NO_PICKED = {};
 const DOUBLE_ESC_MS = 600;
 // How long the reader goes without a key before a request takes the keys.
 const KEYS_SETTLE_MS = 1000;
@@ -186,7 +187,9 @@ function composeMessage(text, attached, threads) {
       const quote = (t.quote || []).map((l) => `> ${l}`).join("\n");
       const said = t.comments.map((c) => (t.comments.length > 1 ? `${c.author}: ${c.body}` : c.body)).join("\n\n");
       const on = t.origin ? ` on="your edit"` : "";
-      parts.push(`<comment path="${attr(t.file)}" lines="${span(t.startLine, t.endLine)}" side="${t.side}"${on}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
+      // A comment on the file itself names no lines: it is about all of it.
+      const lines = t.startLine ? ` lines="${span(t.startLine, t.endLine)}"` : "";
+      parts.push(`<comment path="${attr(t.file)}"${lines} side="${t.side}"${on}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
     }
   }
   const body = text.trim();
@@ -903,8 +906,9 @@ export default function AgentView({
     let to = id;
     try {
       to ||= await onNew();
-      if (!id && Object.keys(picks).length) {
-        await api.agentSettings(to, picks);
+      const start = id ? null : { ...startWith, ...picks };
+      if (start && Object.keys(start).length) {
+        await api.agentSettings(to, start);
         setPicks({});
       }
       if (!id && temporaryNew) {
@@ -1049,8 +1053,35 @@ export default function AgentView({
   }, [undoing, items, busy]);
 
   const interrupt = () => api.agentInterrupt(id).catch((e) => setError(e.message));
-  // With no session yet, what is picked waits for the one the first message starts.
+  // Saying no leaves the agent going, so stopping while it asks is both: no to
+  // everything waiting, which lets it read again, and then the interrupt.
+  const stopAsked = async () => {
+    try {
+      for (const r of waiting) await api.claudeAnswer(r.id, { allowed: false });
+      await api.agentInterrupt(id);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  // With no session yet, the mode picked waits for the one the first message
+  // starts; the model and effort are the remembered ones below.
   const [picks, setPicks] = useState({});
+  // The model and effort last picked, by agent, since the models are the
+  // agent's own: where a new session starts, as it starts with the agent last
+  // picked. { "": { model, effort }, codex: … }
+  const [picked, setPicked] = usePref("user", "newModel", NO_PICKED);
+  // Only what the agent still offers: a model it has dropped, or an effort that
+  // model no longer takes, is not asked for - dv would turn it down, as would
+  // the agent. Until it has answered with its models, nothing is.
+  const startWith = useMemo(() => {
+    const want = picked[agentKind] || NO_PICKED;
+    const on = models.find((c) => c.id === (want.model || ""));
+    const start = {};
+    // "" is the agent's own model, which a session starts on anyway.
+    if (want.model && on) start.model = want.model;
+    if (want.effort && on?.efforts?.includes(want.effort)) start.effort = want.effort;
+    return start;
+  }, [picked, agentKind, models]);
   const temporary = id ? !!session?.temporary : temporaryNew;
   const toggleTemporary = () => {
     if (!id) return onTemporaryNew(!temporary);
@@ -1061,15 +1092,22 @@ export default function AgentView({
     setPicks({});
     onNewAgent(kind);
   };
+  // A model or effort picked for the session to come is where the next one
+  // starts too; one picked in a session under way is that conversation's own.
+  // The mode is never remembered: a new session takes the agent's.
   const settings = (patch) => {
     if (id) return api.agentSettings(id, patch).catch((e) => setError(e.message));
-    setPicks((p) => {
-      const next = { ...p, ...patch };
-      // As a session does: an effort the new model does not take is dropped.
-      const m = patch.model !== undefined && models.find((c) => c.id === patch.model);
-      if (m && !m.efforts?.includes(next.effort)) delete next.effort;
-      return next;
-    });
+    const { mode, ...pick } = patch;
+    if (Object.keys(pick).length) {
+      setPicked((all) => {
+        const next = { ...(all[agentKind] || NO_PICKED), ...pick };
+        // As a session does: an effort the new model does not take is dropped.
+        const m = pick.model !== undefined && models.find((c) => c.id === pick.model);
+        if (m && !m.efforts?.includes(next.effort)) delete next.effort;
+        return { ...all, [agentKind]: next };
+      });
+    }
+    if (mode !== undefined) setPicks((p) => ({ ...p, mode }));
   };
 
   // The picker has every message, those from before the compaction the page
@@ -1125,6 +1163,14 @@ export default function AgentView({
     }
     lastEsc.current = now;
     if (readOnly || lost) return;
+    // A request waiting holds the turn, so an interrupt alone would not reach
+    // the agent: Esc says no to what is asked and then stops it, as it does in
+    // the terminal. The buttons keep their own meanings, plans included.
+    if (waiting.length) {
+      stopAsked();
+      lastEsc.current = 0;
+      return;
+    }
     const s = lastSent.current;
     if (queued.length) takeBackQueued();
     else if (s?.session === id && !s.queued && now - s.at < TAKE_BACK_MS && running === "dv") takeBack(s);
@@ -1170,8 +1216,9 @@ export default function AgentView({
     }
   };
 
-  // Until a session starts, it is in whatever the user's settings start it in.
-  const asked = id ? live : picks;
+  // Until a session starts, it is on what was last picked for its agent, and
+  // otherwise in whatever the user's settings start it in.
+  const asked = id ? live : { ...startWith, ...picks };
   // Shift+Tab steps the picker at once, and only the mode it stops on goes to
   // Claude Code: stepping through plan mode mid-turn would put Claude in it.
   const [stepping, setStepping] = useState(null); // { id, mode, sent }
@@ -2950,7 +2997,20 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
       <div className={cx("file-body", wrap && "wrap")}>
         {!state && <div className="file-note loading">Loading...</div>}
         {state?.error && <div className="file-note error">{state.error}</div>}
-        {previewable && preview && kind === "markdown" && <MarkdownPreview lines={fd.newLines} path={e.path} onOpenFile={e.inRepo ? onOpenFile : null} />}
+        {previewable && preview && kind === "markdown" && (
+          <MarkdownDocument
+            lines={fd.newLines}
+            path={e.path}
+            onOpenFile={e.inRepo ? onOpenFile : null}
+            threads={threads}
+            composing={composing}
+            setComposing={setComposing}
+            onStartComment={startComment}
+            onComment={comment}
+            onThreadAction={onThreadAction}
+            onAttach={attach}
+          />
+        )}
         {previewable && preview && kind === "svg" && <SvgPreview oldLines={fd.status !== "A" && fd.oldLines} newLines={fd.newLines} />}
         {fd && !fd.binary && !fd.tooLarge && !(previewable && preview) && (
           <DiffBody

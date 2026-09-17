@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { Modal, SettingsOverlay } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
-import { copyText, cx, isMac, isTyping, LRM, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
+import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
+import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconX } from "./icons.jsx";
 
 const POLL_MS = 2000;
@@ -57,6 +58,10 @@ export default function Hub() {
   const [filter, setFilter] = useState("");
   // The clone or worktree started here, which is opened once it is done.
   const [awaited, setAwaited] = useState(null);
+
+  // What the folders are doing, for notices about any of them: the hub's page
+  // is on none of them.
+  useNotices({ elsewhere: useHubActivity(), desktop: notices, go: openFolderSession });
 
   const pickNotices = async (on) => {
     if (!on || typeof Notification === "undefined") return setNotices(false);
@@ -183,6 +188,9 @@ export default function Hub() {
   const empty = data && !folders.length && !jobs.length;
 
   return (
+    <>
+    {/* Out of the page's grid, whose rows are the header's and the rest's. */}
+    <Notices />
     <div className="hub">
       <header className="topbar">
         <div className="topbar-left">
@@ -329,6 +337,7 @@ export default function Hub() {
         />
       )}
     </div>
+    </>
   );
 }
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { agentName, cx, isTyping, LRM, splitPath, useCopy, usePersisted } from "./util.js";
 import { usePref } from "./prefs.js";
 import { AgentIcon, IconFile, IconX } from "./icons.jsx";
@@ -722,7 +722,8 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
   const [, force] = useState(0);
   const ref = useRef(null);
   const fd = p?.diff;
-  const [preview, setPreview] = useState(false);
+  // A plan opens as the document it is; an edit opens as the diff it is.
+  const [preview, setPreview] = useState(req.tool === "ExitPlanMode");
   const [copied, copy] = useCopy(p?.path || "");
 
   const startComment = useCallback(
@@ -826,7 +827,7 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
         </header>
         <div className={cx("file-body", wrap && "wrap")}>
           {preview ? (
-            <MarkdownPreview lines={fd.newLines} path={p.path} />
+            <MarkdownDocument lines={fd.newLines} path={p.path} {...commentable} />
           ) : (
             <DiffBody
               fd={fd}
@@ -896,7 +897,9 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
         )}
         {fd?.binary && <div className="file-note">Binary file - not shown.</div>}
         {fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
-        {previewable && preview && kind === "markdown" && <MarkdownPreview lines={fd.newLines} path={p.path} onOpenFile={p.inRepo ? onOpenFile : null} />}
+        {previewable && preview && kind === "markdown" && (
+          <MarkdownDocument lines={fd.newLines} path={p.path} onOpenFile={p.inRepo ? onOpenFile : null} {...commentable} />
+        )}
         {previewable && preview && kind === "svg" && <SvgPreview oldLines={fd.status !== "A" && fd.oldLines} newLines={fd.newLines} />}
         {shown && !(previewable && preview) && (
           <DiffBody
@@ -1065,12 +1068,22 @@ function offer(s, plan) {
   }
   if (s.type === "addRules" && s.behavior === "allow" && s.rules?.length) {
     const rules = s.rules.map((r) => (r.toolName === "Bash" && r.ruleContent ? r.ruleContent : r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName));
-    return { label: `Yes, and don't ask again for ${rules.join(", ")}`, where, title: rules.join("\n") };
+    return { label: `Yes, and don't ask again for ${rules.map(shortRule).join(", ")}`, where, title: rules.join("\n") };
   }
   if (s.type === "addDirectories" && s.directories?.length) {
     return { label: `Yes, and always allow access to ${s.directories.join(", ")}`, where };
   }
   return {};
+}
+
+// shortRule keeps an answer on one line: a rule can be a whole script, and the
+// answer says what it allows, not the script. The tooltip keeps all of it.
+const RULE_CHARS = 56;
+function shortRule(rule) {
+  const [first, ...rest] = rule.split("\n");
+  const line = first.trim();
+  if (line.length > RULE_CHARS) return line.slice(0, RULE_CHARS - 1).trimEnd() + "…";
+  return rest.length ? line + " …" : line;
 }
 
 function optionHint(o, said, no) {

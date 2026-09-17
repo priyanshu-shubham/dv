@@ -1824,6 +1824,11 @@ a.logo.to-hub:hover > svg {
   max-width: 880px;
 }
 
+/* A comment on the file itself sits under its head, above whatever it holds. */
+.row-threads.file-threads {
+  border-bottom: 1px solid var(--border-soft);
+}
+
 .diff-split .row-threads {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -2012,6 +2017,16 @@ a.logo.to-hub:hover > svg {
 
 .md-preview > :first-child {
   margin-top: 0;
+}
+
+/* A comment left on a rendered block sits under it, out of the document's font. */
+.md-preview .md-threads {
+  margin: 12px -28px;
+  font: var(--fs-md) / 1.5 var(--font-ui);
+}
+
+.md-preview .md-threads .thread-slot {
+  padding: 0 28px;
 }
 
 .md-preview :is(h1, h2, h3, h4, h5, h6) {

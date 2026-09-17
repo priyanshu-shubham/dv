@@ -3,6 +3,17 @@ import { slug } from "./boot.js";
 
 export const cx = (...parts) => parts.filter(Boolean).join(" ");
 
+// openFolderSession goes to another of the hub's folders, landing on the Agent
+// view with one of its sessions picked: the folders share this origin, so its
+// page reads both from here as it loads.
+export function openFolderSession(to, session) {
+  try {
+    localStorage.setItem(`dv:${to}:agentSession`, JSON.stringify(session));
+    localStorage.setItem(`dv:${to}:mode`, JSON.stringify("agent"));
+  } catch {}
+  location.href = `/${to}/`;
+}
+
 // usePersisted keeps a small preference in localStorage so the viewer opens the
 // way you left it; `session` keeps it for the tab only. It is for what suits
 // one screen: what should follow the reader to another device is in prefs.js.

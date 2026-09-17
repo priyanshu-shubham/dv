@@ -6,7 +6,7 @@ import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highli
 import { charWidth, cx, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
-import { asMedia, MarkdownPreview, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { asMedia, MarkdownDocument, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "./icons.jsx";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
@@ -39,6 +39,11 @@ function FileDiff({
   const [copied, copy] = useCopy(entry.path);
   const headAt = foundAt?.side === "head" ? foundAt.start : -1;
   const openThreads = threads.filter((t) => !t.resolved).length;
+  // A comment on the file itself rather than a line, which anything can take:
+  // a picture, something binary, a file too large to show.
+  const fileThreads = useMemo(() => threads.filter((t) => !t.startLine), [threads]);
+  const lineThreads = useMemo(() => threads.filter((t) => t.startLine > 0), [threads]);
+  const fileComposing = !!composing && !composing.start;
   // An added or deleted file has one side; split would leave half of it blank.
   const oneSided = entry.status === "A" || entry.status === "D";
 
@@ -110,6 +115,14 @@ function FileDiff({
         {previewable &&<PreviewToggle kind={kind} on={preview} onChange={setPreview} />}
         <button
           className="view-file"
+          onClick={() => setComposing({ path: entry.path, side: "new", start: 0, end: 0, quote: [] })}
+          title="Comment on the file, whatever is in it"
+        >
+          <IconComment size={12} />
+          <span className="btn-label">Comment</span>
+        </button>
+        <button
+          className="view-file"
           onClick={() => onView(entry.path)}
           title={entry.status === "D" ? "View the file as it was before it was deleted (f)" : "View the whole file (f)"}
         >
@@ -127,6 +140,29 @@ function FileDiff({
           <span className="btn-label">Viewed</span>
         </button>
       </header>
+
+      {!collapsed && (fileThreads.length > 0 || fileComposing) && (
+        <div className="row-threads file-threads">
+          <div className="thread-slot">
+            <ThreadList
+              threads={fileThreads}
+              onAction={onThreadAction}
+              onAttach={onAttach && ((t, to) => onAttach({ kind: "thread", threadId: t.id }, to))}
+            />
+            {fileComposing && (
+              <Composer
+                title="The whole file"
+                autoFocus
+                onCancel={() => setComposing(null)}
+                onSubmit={async (body) => {
+                  await onComment({ file: entry.path, side: "new", startLine: 0, endLine: 0, quote: [], body });
+                  setComposing(null);
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {!collapsed && generatedHidden && (
         <div className="file-body">
@@ -161,7 +197,20 @@ function FileDiff({
           {fd?.binary && <div className="file-note">Binary file - not shown.</div>}
           {fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
           {fd && !fd.binary && !fd.tooLarge && previewing && kind === "markdown" && (
-            <MarkdownPreview lines={fd.newLines} path={entry.path} scope={scope} onOpenFile={onOpenFile} />
+            <MarkdownDocument
+              lines={fd.newLines}
+              path={entry.path}
+              scope={scope}
+              onOpenFile={onOpenFile}
+              threads={lineThreads}
+              composing={fileComposing ? null : composing}
+              setComposing={setComposing}
+              onStartComment={startComment}
+              onComment={onComment}
+              onThreadAction={onThreadAction}
+              onAttach={onAttach}
+              onSearch={onSearch}
+            />
           )}
           {fd && !fd.binary && !fd.tooLarge && previewing && kind === "svg" && (
             <SvgPreview oldLines={entry.status !== "A" && fd.oldLines} newLines={entry.status !== "D" && fd.newLines} />
@@ -174,10 +223,10 @@ function FileDiff({
               contextLines={contextLines}
               expanded={expanded}
               onExpand={expand}
-              threads={threads}
+              threads={lineThreads}
               selection={selection}
               setSelection={setSelection}
-              composing={composing}
+              composing={fileComposing ? null : composing}
               setComposing={setComposing}
               onStartComment={startComment}
               onComment={onComment}

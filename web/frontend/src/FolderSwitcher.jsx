@@ -3,9 +3,12 @@ import { api } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { say } from "./Notices.jsx";
 import { Modal } from "./Overlays.jsx";
-import { cx, isTyping, LRM, workingLabel } from "./util.js";
+import { cx, isMac, isTyping, LRM, workingLabel } from "./util.js";
 
 const RECENT = "dv:hubRecent";
+
+// held is whether the key a switch began with is still down.
+const held = (e, hold) => (hold === "Control" ? e.ctrlKey : hold === "Meta" ? e.metaKey : e.shiftKey);
 
 const readRecent = () => {
   try {
@@ -20,8 +23,9 @@ const readRecent = () => {
 // browser was last in each, the one before this picked; Down and Up move along
 // and letting go switches, so a tap goes back and forth between two. In Diff
 // and Files, where Shift+Up and Down do nothing else, Shift is enough; the Agent
-// view steps through its sessions with them. Ctrl on a Mac too, where
-// Cmd+Shift+Up selects text.
+// view steps through its sessions with them. On a Mac, Cmd holds it as Ctrl
+// does, which is what the page's other keys use; the switch has the arrows
+// while it is up, so neither selects text in a box.
 export default function FolderSwitcher({ mode }) {
   const [shown, setShown] = useState(null); // { list, at }
   const run = useRef(null); // { hold, at, list, released }: the switch under way
@@ -58,18 +62,19 @@ export default function FolderSwitcher({ mode }) {
       const step = e.key === "ArrowDown" ? 1 : -1;
       const r = run.current;
       if (r) {
-        if (!(r.hold === "Control" ? e.ctrlKey : e.shiftKey)) return;
+        if (!held(e, r.hold)) return;
         e.preventDefault();
         e.stopPropagation();
         r.at += step;
         if (r.list) setShown({ list: r.list, at: at(r) });
         return;
       }
-      if (!e.shiftKey || e.metaKey || e.altKey) return;
-      if (!e.ctrlKey && (mode === "agent" || isTyping(e.target) || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])"))) return;
+      if (!e.shiftKey || e.altKey || (e.metaKey && !isMac)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod && (mode === "agent" || isTyping(e.target) || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])"))) return;
       e.preventDefault();
       e.stopPropagation();
-      const started = { hold: e.ctrlKey ? "Control" : "Shift", at: step, list: null, released: false };
+      const started = { hold: e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "Shift", at: step, list: null, released: false };
       run.current = started;
       api.hubFolders().then(
         ({ folders }) => {

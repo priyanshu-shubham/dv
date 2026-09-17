@@ -18,8 +18,8 @@ async function req(path, opts = {}, at = base) {
 
 // follow reads a stream of JSON events until the returned func is called. It
 // reconnects on its own after a drop, and the first event after is a reset.
-function follow(path, onEvent, onDrop) {
-  const es = new EventSource(base + path);
+function follow(path, onEvent, onDrop, at = base) {
+  const es = new EventSource(at + path);
   es.onmessage = (e) => onEvent(JSON.parse(e.data));
   es.onerror = () => onDrop?.();
   return () => es.close();
@@ -222,6 +222,9 @@ export const api = {
   hubDeleteWorktree: (slug, how = {}) =>
     req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
   // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
+  // hubActivity follows every folder open in the hub: { folders: [{ slug,
+  // name, sessions, requests }] }, for notices about the folders not on screen.
+  hubActivity: (onEvent, onDrop) => follow("/api/hub/activity", onEvent, onDrop, ""),
   hubDirs: (path) => req(`/api/hub/dirs?${new URLSearchParams({ path })}`),
   // hubMakeDir: { path, place }; a folder already there is taken as made.
   hubMakeDir: (into, name) => req("/api/hub/dirs", { method: "POST", body: JSON.stringify({ in: into, name }) }),

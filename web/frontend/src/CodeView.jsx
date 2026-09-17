@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
-import { AttachButton } from "./Threads.jsx";
+import { AttachButton, Composer, ThreadList } from "./Threads.jsx";
 import { newLineFor } from "./hunks.js";
 import { ensureLanguage } from "./highlight.js";
-import { asMedia, MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { asMedia, MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { cx, LRM, splitPath, statusLabel, statusLetter, useCopy } from "./util.js";
-import { IconBack, IconForward, IconSplit } from "./icons.jsx";
+import { IconBack, IconComment, IconForward, IconSplit } from "./icons.jsx";
 
 export const NO_EXPAND = {};
 export const noop = () => {};
@@ -51,6 +51,11 @@ export default function CodeView({
   );
 
   const shown = useMemo(() => commentsOn(threads, side, fd), [threads, fd, side]);
+  // A comment on the file itself rather than a line: what a picture, something
+  // binary or a file too large to show can still take.
+  const fileThreads = useMemo(() => shown.filter((t) => !t.startLine), [shown]);
+  const lineThreads = useMemo(() => shown.filter((t) => t.startLine > 0), [shown]);
+  const fileComposing = !!composing && !composing.start;
 
   const [dir, name] = splitPath(path);
   const [copied, copy] = useCopy(path);
@@ -101,8 +106,38 @@ export default function CodeView({
             <span className="btn-label">Diff</span>
           </button>
         )}
+        <button
+          className="view-file"
+          onClick={() => setComposing({ path, side, start: 0, end: 0, quote: [] })}
+          title="Comment on the file, whatever is in it"
+        >
+          <IconComment size={12} />
+          <span className="btn-label">Comment</span>
+        </button>
         <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} what="this file" />
       </header>
+      {(fileThreads.length > 0 || fileComposing) && (
+        <div className="row-threads file-threads">
+          <div className="thread-slot">
+            <ThreadList
+              threads={fileThreads}
+              onAction={onThreadAction}
+              onAttach={onAttach && ((t, to) => onAttach({ kind: "thread", threadId: t.id }, to))}
+            />
+            {fileComposing && (
+              <Composer
+                title="The whole file"
+                autoFocus
+                onCancel={() => setComposing(null)}
+                onSubmit={async (body) => {
+                  await onComment({ file: path, side, startLine: 0, endLine: 0, quote: [], body });
+                  setComposing(null);
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
       <div className={cx("file-body", wrap && "wrap")}>
         {media && <Media type={media.type} src={api.mediaURL(path, scope, side, media.stamp)} />}
         {!media && error && <div className="file-note error">{error}</div>}
@@ -110,7 +145,21 @@ export default function CodeView({
         {!media && fd?.binary && <div className="file-note">Binary file - not shown.</div>}
         {!media && fd?.tooLarge && <div className="file-note">File is too large to display.</div>}
         {readable && kind === "markdown" && preview && (
-          <MarkdownPreview lines={lines} path={path} side={side} scope={scope} onOpenFile={onOpenFile} />
+          <MarkdownDocument
+            lines={lines}
+            path={path}
+            side={side}
+            scope={scope}
+            onOpenFile={onOpenFile}
+            threads={lineThreads}
+            composing={fileComposing ? null : composing}
+            setComposing={setComposing}
+            onStartComment={startComment}
+            onComment={onComment}
+            onThreadAction={onThreadAction}
+            onAttach={onAttach}
+            onSearch={onSearch}
+          />
         )}
         {readable && kind === "svg" && preview && <SvgPreview newLines={lines} />}
         {readable && !media && !(kind && preview) && (
@@ -121,10 +170,10 @@ export default function CodeView({
             contextLines={0}
             expanded={NO_EXPAND}
             onExpand={noop}
-            threads={shown}
+            threads={lineThreads}
             selection={selection}
             setSelection={setSelection}
-            composing={composing}
+            composing={fileComposing ? null : composing}
             setComposing={setComposing}
             onStartComment={startComment}
             onComment={onComment}
