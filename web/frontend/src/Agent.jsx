@@ -25,7 +25,7 @@ const NO_QUEUED = [];
 const NO_COMMANDS = [];
 const DOUBLE_ESC_MS = 600;
 // How long after sending Esc takes the message back instead of stopping Claude.
-const TAKE_BACK_MS = 5000;
+const TAKE_BACK_MS = 2000;
 const UNDER_PX = 40; // the bar naming the message the view is under, and its gap
 // Claude scales down anything bigger itself; past this, the upload is only slower.
 const IMAGE_PX = 2000;
@@ -1152,12 +1152,17 @@ export default function AgentView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // The box grows with what is written in it, to a point.
+  // The box grows with what is written in it, to a point. Its card holds its
+  // height while the box is measured: collapsed, the box would let the
+  // conversation grow for a moment, and the view would slip off its end.
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
+    const card = el.parentElement;
+    card.style.minHeight = card.offsetHeight + "px";
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 320) + "px";
+    card.style.minHeight = "";
   }, [draft, blank, readOnly, lost]);
 
   const [dropping, setDropping] = useState(false);
