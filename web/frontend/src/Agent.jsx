@@ -846,6 +846,19 @@ export default function AgentView({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
+  // Alt+N starts a session, since the browser keeps Ctrl+N. Read by code, as
+  // Option+N on a Mac types a dead key.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!activeRef.current || e.code !== "KeyN" || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onStart();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onStart]);
 
   // A comment's way back to the edit it was left on.
   useEffect(() => {
@@ -3296,7 +3309,7 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
     <>
       <div className="sidebar-filter">
         <input value={filter} placeholder="Filter by name or ID" onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
-        <button className="ghost" onClick={onNew} title="New session" disabled={!available}>
+        <button className="ghost" onClick={onNew} title="New session (Alt+N)" disabled={!available}>
           <IconPlus size={13} />
         </button>
       </div>

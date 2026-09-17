@@ -723,6 +723,7 @@ export function HelpOverlay({ onClose }) {
     ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],
     ["Shift+Tab", "In the Agent view's message box, change the permission mode"],
     ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty)"],
+    ["Alt+N", "In the Agent view, a new session (from the message box too)"],
     ["Esc", "Back a step, or close what is open"],
     ["Shift+Esc", "Close whatever is open"],
   ];
