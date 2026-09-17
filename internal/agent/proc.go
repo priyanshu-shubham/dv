@@ -553,8 +553,9 @@ func (p *proc) control(id string, raw json.RawMessage) {
 			return // Claude Code withdrew the question, or stopped
 		}
 		d := p.broker.Decision(req, a)
-		if d["behavior"] == "allow" {
-			d["updatedInput"] = withAnswers(r.Input, a.Answers)
+		// Over the channel an allow always says what to run with.
+		if _, ok := d["updatedInput"]; !ok && d["behavior"] == "allow" {
+			d["updatedInput"] = r.Input
 		}
 		p.respond(id, d)
 		// Approving a plan says which mode to go on in.
@@ -627,21 +628,6 @@ func deliver(ch chan reply, r reply) {
 	case ch <- r:
 	default:
 	}
-}
-
-// withAnswers is AskUserQuestion's input with the reader's answers in it,
-// which is how the tool is told them.
-func withAnswers(input json.RawMessage, answers map[string]string) json.RawMessage {
-	if len(answers) == 0 {
-		return input
-	}
-	var m map[string]any
-	if json.Unmarshal(input, &m) != nil {
-		return input
-	}
-	m["answers"] = answers
-	out, _ := json.Marshal(m)
-	return out
 }
 
 // tailBuffer keeps the last bytes written to it: the end of stderr is where a

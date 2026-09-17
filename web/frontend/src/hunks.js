@@ -229,6 +229,14 @@ export function codeLines(fd, side) {
   return out;
 }
 
+// plainDiff is a file read whole as a diff that changed nothing, its lines on
+// the side they were read from.
+export function plainDiff(r, side = "new") {
+  const n = r.lines.length;
+  const old = side === "old";
+  return { path: r.path, lang: r.lang, oldLines: old ? r.lines : [], newLines: old ? [] : r.lines, ops: [{ k: EQUAL, os: 0, ol: n, ns: 0, nl: n }] };
+}
+
 // newLineFor finds where an old-side line stands in the new file: the same line
 // if it survived, or the one now in the place it was deleted from.
 export function newLineFor(fd, line) {

@@ -20,9 +20,10 @@ type Sessions struct {
 }
 
 type sessionsDoc struct {
-	Format  int               `json:"format"`
-	Open    []string          `json:"open"` // most recently opened first
-	Rewinds map[string]Rewind `json:"rewinds,omitempty"`
+	Format    int               `json:"format"`
+	Open      []string          `json:"open"`                // most recently opened first
+	Temporary []string          `json:"temporary,omitempty"` // left out of the list once closed
+	Rewinds   map[string]Rewind `json:"rewinds,omitempty"`
 }
 
 // Rewind is a session taken back to an earlier message.
@@ -67,6 +68,33 @@ func (s *Sessions) Has(id string) bool {
 	defer s.mu.Unlock()
 	s.sync()
 	return slices.Contains(s.doc.Open, id)
+}
+
+// TemporaryIDs lists the sessions marked temporary.
+func (s *Sessions) TemporaryIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return slices.Clone(s.doc.Temporary)
+}
+
+// SetTemporary marks a session temporary or not.
+func (s *Sessions) SetTemporary(id string, on bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	i := slices.Index(s.doc.Temporary, id)
+	switch {
+	case on && i < 0:
+		s.doc.Temporary = append(s.doc.Temporary, id)
+	case !on && i >= 0:
+		s.doc.Temporary = slices.Delete(s.doc.Temporary, i, i+1)
+	default:
+		return nil
+	}
+	return s.file.save(s.doc)
 }
 
 // Rewound returns a session's rewind, if it has one.

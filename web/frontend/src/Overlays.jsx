@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
+import { commentsOn, NO_EXPAND, noop } from "./CodeView.jsx";
+import { CONTEXT_LINES } from "./Header.jsx";
+import { DiffBody } from "./FileDiff.jsx";
+import { plainDiff } from "./hunks.js";
 import { cx, LRM, modKey, statusLabel, useDebounced } from "./util.js";
-import { ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
+import { ensureLanguage, escapeHtml } from "./highlight.js";
 import { Media } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 
@@ -14,6 +18,7 @@ export function Modal({ onClose, onBack, className, children, wide, centred }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
+        if (e.target.closest?.(".composer")) return; // the comment box's own Esc
         e.stopPropagation();
         (e.shiftKey || !onBack ? onClose : onBack)();
       } else if (onBack && ((e.altKey && e.key === "ArrowLeft") || ((e.metaKey || e.ctrlKey) && e.key === "["))) {
@@ -426,12 +431,19 @@ function markSpans(text, spans) {
 
 // FileViewer shows a whole source file, which is where symbol jumps and search
 // hits land. It is read-only on purpose: dv reviews, it does not edit. `side`
-// reads the file off that side of the scope instead of the working tree.
-export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBack, backTo, onSymbol }) {
+// reads the file off that side of the scope instead of the working tree. It
+// draws through Code mode's rows, so its code is commented on, and added to a
+// session, as there; `changes` is the file's diff, for where comments hang.
+export function FileViewer({
+  file, line, side, scope, scroll = 0, threads, changes, wrap, onClose, onBack, backTo, onSymbol, onComment, onThreadAction, onAttach, onSearch,
+}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [, force] = useState(0);
   const bodyRef = useRef(null);
+  const [selection, setSelection] = useState(null);
+  const [composing, setComposing] = useState(null);
+  const at = side === "old" ? "old" : "new";
 
   useEffect(() => {
     setData(null);
@@ -455,15 +467,22 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
       bodyRef.current.scrollTop = scroll;
       return;
     }
-    const el = bodyRef.current?.querySelector(`[data-line="${line}"]`);
+    const el = bodyRef.current?.querySelector(`[data-line="${line}"][data-side]`);
     el?.scrollIntoView({ block: "center" });
   }, [data, line, scroll]);
 
-  const ready = langReady(data?.lang);
-  const html = useMemo(
-    () => (data?.lines ? highlightLines(`view:${side || ""}:${file}`, data.lines, data.lang) : []),
-    [data, file, side, ready],
+  const fd = useMemo(() => data?.lines && plainDiff({ ...data, path: file }, at), [data, file, at]);
+  const shown = useMemo(() => commentsOn(threads, at, changes), [threads, at, changes]);
+  const startComment = useCallback(
+    (s, start, end, selected) => {
+      const src = s === "old" ? fd?.oldLines : fd?.newLines;
+      setComposing({ path: file, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setSelection(null);
+    },
+    [fd, file],
   );
+  // Where the viewer was, so stepping back from a definition returns there.
+  const jump = useCallback((name, from) => onSymbol(name, from, bodyRef.current?.scrollTop || 0), [onSymbol]);
 
   return (
     <Modal onClose={onClose} onBack={onBack} wide centred className="viewer">
@@ -485,24 +504,113 @@ export function FileViewer({ file, line, side, scope, scroll = 0, onClose, onBac
         {error && <div className="empty error">{error}</div>}
         {!data && !error && <div className="empty">Loading...</div>}
         {data?.media && <Media type={data.media} src={api.mediaURL(file, scope, side, data.stamp)} />}
-        {data?.lines && (
-          <div className="viewer-lines">
-            {data.lines.map((_, i) => (
-              <div key={i} className={cx("vrow", i + 1 === line && "hit")} data-line={i + 1}>
-                <span className="ln">{i + 1}</span>
-                <code
-                  onDoubleClick={() => {
-                    const sel = window.getSelection()?.toString().trim();
-                    if (sel && /^[A-Za-z_$][\w$]*$/.test(sel)) onSymbol(sel, file, bodyRef.current?.scrollTop || 0);
-                  }}
-                  dangerouslySetInnerHTML={{ __html: html[i] || "&nbsp;" }}
-                />
-              </div>
-            ))}
+        {fd && (
+          <div className={cx("file-body", wrap && "wrap")}>
+            <DiffBody
+              view="code"
+              side={at}
+              fd={fd}
+              contextLines={0}
+              expanded={NO_EXPAND}
+              onExpand={noop}
+              threads={shown}
+              selection={selection}
+              setSelection={setSelection}
+              composing={composing}
+              setComposing={setComposing}
+              onStartComment={startComment}
+              onComment={onComment}
+              onThreadAction={onThreadAction}
+              onSymbol={jump}
+              onAttach={onAttach}
+              onSearch={onSearch}
+              path={file}
+              wrap={wrap}
+              reveal={line}
+              hit={line}
+            />
           </div>
         )}
       </div>
     </Modal>
+  );
+}
+
+const OFF_ON = [
+  [false, "Off"],
+  [true, "On"],
+];
+
+// SettingsOverlay is dv's preferences, kept in this browser: the page's own,
+// as the header also sets them, and `settings`, which only this sets through
+// onChange's patches. A phone always shows the diff unified, so it has no
+// layout to pick.
+export function SettingsOverlay({
+  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, settings, onChange, onClose,
+}) {
+  return (
+    <Modal onClose={onClose} centred className="settings">
+      <div className="viewer-head">
+        <span className="path">Settings</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={onClose}>
+          <IconX size={13} />
+        </button>
+      </div>
+      <div className="settings-body">
+        <div className="menu-label">Appearance</div>
+        <Setting label="Theme" value={theme} onPick={onTheme} choices={[["dark", "Dark"], ["light", "Light"]]} />
+        <Setting
+          label="Code colors"
+          note="How code is highlighted. Monokai is dark only: the light theme shows GitHub's."
+          value={settings.codeColors || "github"}
+          onPick={(v) => onChange({ codeColors: v })}
+          choices={[["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]]}
+        />
+        <div className="menu-label">Diff</div>
+        {!phone && <Setting label="Layout" note="u toggles it" value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
+        <Setting label="Context around each change" value={contextLines} onPick={onContext} choices={CONTEXT_LINES.map((n) => [n, n ? String(n) : "None"])} />
+        <Setting label="Wrap long lines" note={phone ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
+        <div className="menu-label">Agent</div>
+        <Setting
+          label="Desktop notifications"
+          note={
+            typeof Notification === "undefined"
+              ? "This browser does not offer them here: they need https or localhost."
+              : "With this tab in the background, you are told when Claude asks or finishes."
+          }
+          value={!!notices}
+          onPick={onNotices}
+          choices={OFF_ON}
+        />
+        <Setting
+          label="Sessions opened by adding start temporary"
+          note="A new session opened from Add, or from New session over selected text, starts temporary: once closed, it leaves the session list."
+          value={!!settings.addedTemporary}
+          onPick={(on) => onChange({ addedTemporary: on })}
+          choices={OFF_ON}
+        />
+      </div>
+    </Modal>
+  );
+}
+
+// Setting is one preference and its choices, [value, label] pairs.
+function Setting({ label, note, value, onPick, choices }) {
+  return (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>{label}</div>
+        {note && <div className="settings-note">{note}</div>}
+      </div>
+      <span className="seg">
+        {choices.map(([v, name]) => (
+          <button key={String(v)} className={cx(v === value && "on")} aria-pressed={v === value} onClick={() => onPick(v)}>
+            {name}
+          </button>
+        ))}
+      </span>
+    </div>
   );
 }
 
@@ -522,6 +630,7 @@ export function HelpOverlay({ onClose }) {
     ["u", "Toggle split / unified"],
     ["w", "Toggle line wrapping"],
     ["r", "Reload the diff"],
+    [",", "Settings"],
     ["double-click", "Jump to a symbol's definition, or search its uses"],
     ["Alt+Left", "Back to the previous definition, or file in Files"],
     ["Alt+Right", "Forward again, in Files"],

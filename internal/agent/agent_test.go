@@ -508,6 +508,18 @@ func TestSummaryTakesTheLatestTitleAndPrompt(t *testing.T) {
 		t.Fatalf("summary %+v", s)
 	}
 
+	// Untitled, a session is named by its prompt, which Claude Code keeps with the context flattened in.
+	asked := line(t, user("u1", "", "what does this do?\n\n<dv-context>\n<file path=\"a.go\" />\n</dv-context>"))
+	os.WriteFile(path, []byte(asked+line(t, map[string]any{"type": "last-prompt", "lastPrompt": "what does this do?  <dv-context> <file path=\"a.go\" /> </dv-context>"})), 0o644)
+	if s, ok := summarize(path); !ok || s.Prompt != "what does this do?" {
+		t.Fatalf("prompt %q, listed %v", s.Prompt, ok)
+	}
+	// Only added code said, it is still a conversation, just unnamed.
+	os.WriteFile(path, []byte(line(t, user("u1", "", "\n\n<dv-context>\n<file path=\"a.go\" />\n</dv-context>"))), 0o644)
+	if s, ok := summarize(path); !ok || s.Prompt != "" {
+		t.Fatalf("prompt %q, listed %v", s.Prompt, ok)
+	}
+
 	os.WriteFile(path, []byte(line(t, map[string]any{"type": "permission-mode", "permissionMode": "default"})), 0o644)
 	if _, ok := summarize(path); ok {
 		t.Fatal("a transcript with nothing said in it was listed")
@@ -695,6 +707,35 @@ func TestANewSessionOutlivesARestartBeforeItsFirstMessage(t *testing.T) {
 
 // A session not running yet is in the mode its transcript last recorded, and
 // is resumed in it.
+func TestATemporarySessionLeavesTheListOnceClosed(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "") // no claude to ask for the options
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	for _, id := range []string{"kept", "temp"} {
+		os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+	}
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	m.SetOpen("temp", true)
+	m.SetTemporary("temp", true)
+	listed := func() (ids []string) {
+		for _, s := range m.Sessions() {
+			ids = append(ids, s.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	if got := listed(); !slices.Equal(got, []string{"kept", "temp"}) {
+		t.Fatalf("while open %v", got)
+	}
+	m.SetOpen("temp", false)
+	if got := listed(); !slices.Equal(got, []string{"kept"}) {
+		t.Fatalf("once closed %v", got)
+	}
+}
+
 func TestASessionKeepsItsRecordedMode(t *testing.T) {
 	root, cfg := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)

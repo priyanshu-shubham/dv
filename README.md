@@ -207,10 +207,17 @@ you to ignore.
 line you are on — the one under the pointer, or the first one showing. It is
 read from the side of the comparison the diff shows, so the line numbers agree
 and a deleted file shows what was deleted; when that is not the working tree,
-the viewer names the revision. `Ctrl/Cmd+P` opens any file in the repository by
+the viewer names the revision. Select code in it, or drag its line numbers, to
+comment as anywhere else. `Ctrl/Cmd+P` opens any file in the repository by
 a fuzzy match on its path, favouring matches in the file name (`srvhand` finds
 `server/handlers.go`; spaces separate terms that must all match). Before you
 type, it lists the files in the diff.
+
+**Settings.** The sliders button at the right of the header, or `,`, opens
+dv's settings, kept in the browser: the theme and the colours code is
+highlighted in (GitHub, One, Solarized, Tomorrow, or Monokai, which is dark
+only), split or unified, the context around each change, line wrapping, desktop
+notifications, and whether a session opened by adding to it starts temporary.
 
 **Agent.** *Agent* at the top of the sidebar (or `Shift+→`), lists the repository's Claude
 Code sessions and lets you work in them next to the diff: start one, pick up an
@@ -220,13 +227,19 @@ has to be on your PATH. The conversation reads like the terminal's, except that
 an edit Claude made is a diff card, highlighted and split or unified like the
 rest. You can comment on those cards as on any diff. The comment goes into the
 review and onto your next message, so Claude sees what you said about its edit.
-To give Claude something to look at, press `a` on a line, or use *Add to …* on a
-file or selection, in Diff or Files; the button names the session it adds to. It
-turns into a chip on that session's message box, to go with the next message you
+To give Claude something to look at, press `a` on a line, or use *Add* on a
+file or selection, in Diff, Files or the file window a definition opens in. It
+turns into a chip on a session's message box, to go with the next message you
 send: the first open session's, or the one picked in the menu beside the button,
-which stays picked. The session's card says how much is waiting there, and the
-header counts it all. dv keeps a list of the sessions you have
-open in `.dv/agent.json`.
+which stays picked (pointing at *Add* names it). The round button after it adds
+to a new session instead and takes you there. The session's card says how much
+is waiting there, and the header counts it all. dv keeps a list of the sessions
+you have open in `.dv/agent.json`.
+
+Select text in a conversation - something Claude said, a command, a tool's
+output - and a small bar over it offers *Reply*, which quotes it in this
+session's message box, and *New session*, which starts one with it quoted there.
+A selection that starts or ends partway into a word takes the whole word.
 
 With no session picked, or after `+`, the view asks what you want to do, with a
 few places to start. No session exists until you send the first message. The
@@ -283,7 +296,10 @@ not trade places. Closing a session, with `×` on its card or in its
 header, stops the Claude Code dv runs for it and moves it to Recent, from where
 it carries on when you next send to it. For a session running in a terminal,
 closing only stops following it: the terminal carries on, and goes back to being
-the only place it asks for permission.
+the only place it asks for permission. A session marked *Temporary* (the dashed
+circle by the permission mode) leaves the list once closed instead; its
+transcript stays for `claude --resume`. A card whose session is waiting on you
+has a pulsing amber dot and says so.
 
 The session's header has how full its context is, with a tick where Claude Code
 compacts it; near there it says how close. Click it to compact now (the
@@ -311,8 +327,8 @@ the conversation. An agent's call also opens on its conversation from its line
 
 **Notices.** A session not on screen that asks permission, or finishes its
 turn, says so in a notice at the top right, wherever in dv you are: *Review*
-opens the request, *Open session* goes to it. With the bell by the session
-filter on, the same come as desktop notifications while dv's tab is in the
+opens the request, *Open session* goes to it. With desktop notifications on in
+Settings, the same come as desktop notifications while dv's tab is in the
 background, and the tab's title says when Claude has finished.
 
 A session that is open in a terminal can be read in dv but not written to,
@@ -338,9 +354,16 @@ it is the reason, and Claude carries on with it, where a bare No stops Claude);
 `Shift+Tab` to allow all edits for the session. `Esc` puts the request away
 under the bell in the header, which counts what is waiting and brings it back. For a
 terminal session, the terminal asks at the same time, and whichever you answer
-first wins; the other one goes away. When Claude asks you a question, you answer
-it in dv too. dv only sees what the terminal would ask about, so in accept-edits
-mode edits go straight through, as they would anyway.
+first wins; the other one goes away. dv only sees what the terminal would ask
+about, so in accept-edits mode edits go straight through, as they would anyway.
+
+When Claude asks you questions, you answer them in dv too, as in the terminal:
+one at a time under a tab each, with `←` `→` between them. Picking an option
+moves on; where several can be picked, the *Submit* row does. Claude's drawing
+of an option shows beside the list, *Something else* takes your own answer, and
+`Tab` goes to a note on the answer, which Claude reads with it. The last tab
+sums up your answers, with rows to send them or cancel. Half-answered questions
+keep their place if you put them away or reload.
 
 For terminal sessions this works through Claude Code's hooks, which one command
 puts in place:
@@ -402,7 +425,7 @@ Under 760px wide, dv is one column. The menu button at the top left slides the
 sidebar in over the page, and the comments button does the same for the
 comments from the right; one is open at a time, and picking a file, a session
 or a comment puts it away. The diff is unified, with one line number and long
-lines wrapped (the wrap button turns that off, and a phone keeps its own
+lines wrapped (Settings turns that off, and a phone keeps its own
 setting; unwrapped, drag a line sideways to read the rest). Tap a line number to comment on the line; a selection comments on the
 lines it covers once you let its handles rest; a double tap on a name goes to
 its definition. The buttons that show on pointing at a line show always, and
@@ -439,6 +462,8 @@ over https or on localhost, and elsewhere `+` picks a photo or file.
 | `Ctrl/Cmd+F` | find in the page, all of it, not just the rows drawn so far; `Enter` / `Shift+Enter` or `F3` step |
 | `Ctrl/Cmd+K`, `Ctrl/Cmd+Shift+F` | search definitions and text, starting from the selection |
 | `↑` `↓` `Enter`, `1`–`9` | answer what Claude is asking; `Tab` adds a note, `Esc` leaves it under the bell |
+| `←` / `→` | between Claude's questions, when it asks several |
+| `,` | settings |
 | `?` | show all shortcuts |
 
 ## The comments file

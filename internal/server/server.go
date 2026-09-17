@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/agent/sessions", guarded(s.handleAgentCreate))
 	mux.HandleFunc("GET /api/agent/commands", guarded(s.handleAgentCommands))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/open", guarded(s.handleAgentOpen))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/temporary", guarded(s.handleAgentTemporary))
 	mux.HandleFunc("GET /api/agent/sessions/{id}/events", guarded(s.handleAgentEvents))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/messages", guarded(s.handleAgentSend))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/messages/{message}/unqueue", guarded(s.handleAgentUnqueue))

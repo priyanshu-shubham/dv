@@ -709,7 +709,7 @@ function Block({ lines, view, wrap, ctx, onMeasure, force }) {
     // Observed against the pane that scrolls: against the window, the pane
     // clips the block before the margin is applied, so nothing off screen is
     // ever near.
-    const root = el.closest(".content, .agent-scroll");
+    const root = el.closest(".content, .agent-scroll, .viewer-body");
     const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { root, rootMargin: OVERSCAN });
     io.observe(el);
     return () => io.disconnect();

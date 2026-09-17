@@ -24,6 +24,8 @@ type Session struct {
 	Busy    bool   `json:"busy,omitempty"`
 	Status  string `json:"status,omitempty"` // "compacting", when dv runs it and it is
 	Open    bool   `json:"open"`
+	// Temporary leaves the list once nothing has it open.
+	Temporary bool `json:"temporary,omitempty"`
 	// The last thing said in it, by "you" or "claude".
 	Last   string `json:"last,omitempty"`
 	LastBy string `json:"lastBy,omitempty"`
@@ -130,6 +132,9 @@ func summarize(path string) (Session, bool) {
 	if s.Cwd == "" || s.Prompt == "" && s.Title == "" {
 		return Session{}, false
 	}
+	// Claude Code keeps the prompt with what dv sent along with it, which names nothing.
+	s.Prompt, _, _ = strings.Cut(s.Prompt, "<dv-context>")
+	s.Prompt = strings.TrimSpace(s.Prompt)
 	return s, true
 }
 

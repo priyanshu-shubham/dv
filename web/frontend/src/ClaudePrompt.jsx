@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { cx, isTyping, LRM, splitPath } from "./util.js";
+import { cx, isTyping, LRM, splitPath, usePersisted } from "./util.js";
 import { IconFile, IconSpark, IconX } from "./icons.jsx";
 
 const NO_COMMENTS = [];
@@ -141,9 +141,12 @@ export function Request({
   const listRef = useRef(null);
   const noteRef = useRef(null);
   const armed = useRef(0);
+  const questionsRef = useRef(null);
+  const questionKeys = useRef(null);
 
   const what = describe(req);
   const asking = req.tool === "AskUserQuestion";
+  const manyQuestions = asking && (req.input?.questions?.length || 0) > 1;
   const options = useMemo(() => optionsFor(req), [req]);
   const modeOption = options.findIndex((o) => o.mode === "acceptEdits");
 
@@ -186,7 +189,7 @@ export function Request({
     setSel(0);
     armed.current = Date.now() + ARM_MS;
     const g = typeof grab === "function" ? grab() : grab;
-    if (g) listRef.current?.focus({ preventScroll: true });
+    if (g) (asking ? questionsRef : listRef).current?.focus({ preventScroll: true });
   }, [active, req.id]);
 
   // On the window, ahead of the page's own shortcuts, so the page behind does
@@ -197,9 +200,11 @@ export function Request({
     const onKey = (e) => {
       if (document.querySelector(".backdrop")) return; // a viewer opened over the request has the keys
       if (!listRef.current?.closest(".prompt-backdrop") && document.querySelector(".prompt-backdrop:not([hidden])")) return;
-      // A question is answered with the pointer and the text boxes it has.
       if (asking) {
-        if (e.key === "Escape" && onLater && !isTyping(e.target)) onLater();
+        if (questionKeys.current?.(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (e.key === "Escape" && onLater && !isTyping(e.target)) onLater();
         return;
       }
       // Any other text box has its own keys: a comment's Ctrl+Enter saves it.
@@ -251,7 +256,16 @@ export function Request({
   return (
     <>
       {asking ? (
-        <Questions questions={req.input?.questions || []} busy={busy} onAnswer={answer} />
+        <Questions
+          key={req.id}
+          id={req.id}
+          questions={req.input?.questions || []}
+          busy={busy}
+          armed={armed}
+          rootRef={questionsRef}
+          keysRef={questionKeys}
+          onAnswer={answer}
+        />
       ) : (
         <div className="prompt-body" ref={bodyRef}>
           <RequestCard
@@ -314,11 +328,16 @@ export function Request({
           <span className="prompt-error">{error}</span>
         ) : (
           <span className="prompt-keys">
+            {manyQuestions && (
+              <span>
+                <kbd>←</kbd> <kbd>→</kbd> question
+              </span>
+            )}
             <span>
               <kbd>↑</kbd> <kbd>↓</kbd> choose
             </span>
             <span>
-              <kbd>Enter</kbd> answer
+              <kbd>Enter</kbd> {asking ? "pick" : "answer"}
             </span>
             <span>
               <kbd>Tab</kbd> note
@@ -343,67 +362,331 @@ export function Request({
   );
 }
 
-// Questions takes AskUserQuestion's answers: one or more of each question's
-// options, or something else written in. Only a session dv runs asks here; in
-// a terminal the terminal takes them.
-function Questions({ questions, busy, onAnswer }) {
-  const [picked, setPicked] = useState({}); // question -> labels
-  const [other, setOther] = useState({}); // question -> text
-  const pick = (q, label) =>
-    setPicked((p) => {
-      const had = p[q.question] || [];
-      const on = had.includes(label);
-      const next = q.multiSelect ? (on ? had.filter((l) => l !== label) : [...had, label]) : on ? [] : [label];
-      return { ...p, [q.question]: next };
-    });
-  const said = (q) => [...(picked[q.question] || []), (other[q.question] || "").trim()].filter(Boolean);
-  const ready = questions.length > 0 && questions.every((q) => said(q).length > 0);
+// Where a request's questions stand before any is answered: the tab and row on
+// screen, and by question the labels picked, what was written in (and, where
+// several are taken, whether it is ticked) and the note for Claude.
+const NO_PROGRESS = { tab: 0, cursors: {}, picked: {}, other: {}, otherOn: {}, notes: {} };
 
+// Questions takes AskUserQuestion's answers as the terminal does: a question at
+// a time under a tab for each, and a last tab summing up what was chosen, whose
+// rows send them or cancel. A choice moves on to the next question; one that
+// takes several moves on with its Submit row, → or Next. Under each question's
+// options come something else, written in - where several are taken, writing
+// there ticks it and Enter ticks it on and off like the rest - and a note on
+// the answer, which Tab goes to and back from. Progress
+// is kept for the tab by request id, so putting the request away, reopening it
+// elsewhere in the page or reloading loses nothing. rootRef is what takes the
+// focus; keysRef is handed the key handler Request calls while it has the
+// keys, which says whether it took the key.
+function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
+  const [progress, setProgress] = usePersisted("ask:" + id, NO_PROGRESS, { session: true });
+  const { tab, cursors, picked, other, otherOn, notes } = { ...NO_PROGRESS, ...progress };
+  const field = (key) => (v) => setProgress((s) => ({ ...NO_PROGRESS, ...s, [key]: typeof v === "function" ? v({ ...NO_PROGRESS, ...s }[key]) : v }));
+  const [setTab, setCursors, setPicked, setOther, setOtherOn, setNotes] = ["tab", "cursors", "picked", "other", "otherOn", "notes"].map(field);
+  const otherRef = useRef(null);
+  const noteRef = useRef(null);
+  const n = questions.length;
+  const many = n > 1;
+  const written = (q, o = other) => (!q.multiSelect || otherOn[q.question] ? (o[q.question] || "").trim() : "");
+  const said = (q, p = picked, o = other) => [...(p[q.question] || []), written(q, o)].filter(Boolean);
+  const ready = (p = picked, o = other) => n > 0 && questions.every((q) => said(q, p, o).length > 0);
+  const submit = (p = picked, o = other) => {
+    if (busy || !ready(p, o)) return;
+    // A note, and the drawing of an option picked, go as the terminal sends them.
+    const annotations = {};
+    for (const q of questions) {
+      const note = (notes[q.question] || "").trim();
+      const drawn = q.options.find((o) => o.preview && (p[q.question] || []).includes(o.label))?.preview;
+      if (note || drawn) annotations[q.question] = { ...(note && { notes: note }), ...(drawn && { preview: drawn }) };
+    }
+    onAnswer({
+      allow: true,
+      answers: Object.fromEntries(questions.map((q) => [q.question, said(q, p, o).join(", ")])),
+      annotations: Object.keys(annotations).length ? annotations : undefined,
+    });
+  };
+  const cancel = () => busy || onAnswer({ allow: false });
+  const go = (i) => {
+    setTab(Math.max(0, Math.min(many ? n : 0, i)));
+    rootRef.current?.focus({ preventScroll: true });
+  };
+  // The last tab comes up on Submit, or on the first question still unanswered.
+  const cursor = cursors[tab] ?? (tab === n ? (ready() ? n : Math.max(0, questions.findIndex((x) => !said(x).length))) : 0);
+  // A question's rows: its options, then something else, the note, and where
+  // several are taken, Submit. The two text rows take the focus.
+  const moveTo = (row) => {
+    setCursors((c) => ({ ...c, [tab]: row }));
+    const k = questions[tab].options.length;
+    const box = row === k ? otherRef : row === k + 1 ? noteRef : null;
+    if (box) requestAnimationFrame(() => box.current?.focus());
+    else rootRef.current?.focus({ preventScroll: true });
+  };
+  // Settled with one question, the answer goes; with more, the next one comes up.
+  const onward = (p, o) => (many ? go(tab + 1) : submit(p, o));
+  // A single choice is one option or what was written, never both.
+  const pick = (label) => {
+    const q = questions[tab];
+    const had = picked[q.question] || [];
+    const labels = !q.multiSelect ? [label] : had.includes(label) ? had.filter((l) => l !== label) : [...had, label];
+    const p = { ...picked, [q.question]: labels };
+    const o = q.multiSelect ? other : { ...other, [q.question]: "" };
+    setPicked(p);
+    setOther(o);
+    if (!q.multiSelect) onward(p, o);
+  };
+  const write = (text) => {
+    const q = questions[tab];
+    const had = (other[q.question] || "").trim();
+    setOther((o) => ({ ...o, [q.question]: text }));
+    if (!q.multiSelect) setPicked((p) => ({ ...p, [q.question]: [] }));
+    // Starting to write ticks it, and emptying the box unticks it; Enter can still untick what is written.
+    else if (!text.trim() || !had) setOtherOn((on) => ({ ...on, [q.question]: !!text.trim() }));
+  };
+  const tickOther = () => {
+    const q = questions[tab];
+    if ((other[q.question] || "").trim()) setOtherOn((on) => ({ ...on, [q.question]: !on[q.question] }));
+  };
+
+  keysRef.current = (e) => {
+    const inNote = e.target === noteRef.current;
+    const typing = inNote || e.target === otherRef.current;
+    if ((!typing && isTyping(e.target)) || e.altKey) return false;
+    if (Date.now() < armed.current) return !typing;
+    if (e.metaKey || e.ctrlKey) {
+      if (e.key !== "Enter") return false;
+      submit();
+      return true;
+    }
+    // Tab goes to the note and back, as it does for a permission's.
+    if (e.key === "Tab") {
+      if (tab === n) return true;
+      const q = questions[tab];
+      if (!inNote) moveTo(q.options.length + 1);
+      else {
+        setCursors((c) => ({ ...c, [tab]: Math.max(0, q.options.findIndex((o) => (picked[q.question] || []).includes(o.label))) }));
+        rootRef.current?.focus({ preventScroll: true });
+      }
+      return true;
+    }
+    if (typing) {
+      const t = e.target;
+      const q = questions[tab];
+      const k = q.options.length;
+      if (e.key === "Enter" && !e.shiftKey) {
+        if (inNote) {
+          if (q.multiSelect) moveTo(k + 2);
+          else if (said(q).length) onward(picked, other);
+        } else if (!(other[q.question] || "").trim()) return true;
+        else if (q.multiSelect) tickOther();
+        else onward(picked, other);
+      } else if (e.key === "Escape") rootRef.current?.focus({ preventScroll: true });
+      else if (e.key === "ArrowUp" && !t.value.slice(0, t.selectionStart).includes("\n")) moveTo(inNote ? k : k - 1);
+      else if (e.key === "ArrowDown" && !t.value.slice(t.selectionEnd).includes("\n")) moveTo(!inNote ? k + 1 : q.multiSelect ? k + 2 : 0);
+      else return false;
+      return true;
+    }
+    const move = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    const number = /^[1-9]$/.test(e.key) ? Number(e.key) : 0;
+    if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && many) go(tab + (e.key === "ArrowRight" ? 1 : -1));
+    else if (tab === n) {
+      // The questions, to go back to, then Submit and Cancel.
+      if (move) setCursors((c) => ({ ...c, [n]: (cursor + move + n + 2) % (n + 2) }));
+      else if (number && number <= n) go(number - 1);
+      else if (e.key === "Enter" || e.key === " ") {
+        if (cursor < n) go(cursor);
+        else if (cursor === n) submit();
+        else cancel();
+      } else return e.key.length === 1;
+    } else {
+      const q = questions[tab];
+      const k = q.options.length;
+      const rows = k + (q.multiSelect ? 3 : 2);
+      if (move) moveTo((cursor + move + rows) % rows);
+      else if (number && number <= k) {
+        setCursors((c) => ({ ...c, [tab]: number - 1 }));
+        pick(q.options[number - 1].label);
+      } else if (e.key === "Enter" || e.key === " ") {
+        if (cursor < k) pick(q.options[cursor].label);
+        else if (cursor <= k + 1) moveTo(cursor);
+        else onward(picked, other);
+      } else return e.key.length === 1; // a letter would reach the page's shortcuts
+    }
+    return true;
+  };
+
+  const q = questions[tab];
+  // What Claude drew for its options, beside them: the one the cursor is on,
+  // else the one picked. Fence lines are dropped, the box being code already.
+  // The box is as tall as the tallest drawing, so moving between options does
+  // not move the conversation around it.
+  const previewing = q?.options.some((o) => o.preview);
+  const drawn = (o) => (o?.preview || "").replace(/^```\w*\s*$/gm, "").trim();
+  const preview = previewing && drawn(q.options[cursor] || q.options.find((o) => (picked[q.question] || []).includes(o.label)));
+  const previewLines = previewing ? Math.max(...q.options.map((o) => drawn(o).split("\n").length)) : 0;
   return (
-    <div className="prompt-body prompt-questions">
-      {questions.map((q) => (
-        <div className="prompt-answer" key={q.question}>
-          <div className="prompt-question">
-            {q.header && <span className="tag-generated">{q.header}</span>} {q.question}
-            {q.multiSelect && <span className="dim"> (any that apply)</span>}
-          </div>
+    <div className="prompt-body prompt-questions" ref={rootRef} tabIndex={-1}>
+      {many && (
+        <div className="prompt-tabs" role="tablist">
+          {questions.map((x, i) => (
+            <button key={x.question} role="tab" aria-selected={i === tab} className={cx(i === tab && "on", said(x).length > 0 && "done")} onClick={() => go(i)} title={x.question}>
+              <span className="badge">{said(x).length > 0 ? "✓" : i + 1}</span>
+              {x.header || `Question ${i + 1}`}
+            </button>
+          ))}
+          <button role="tab" aria-selected={tab === n} className={cx(tab === n && "on")} onClick={() => go(n)}>
+            Submit
+          </button>
+        </div>
+      )}
+      {tab === n ? (
+        <div className="prompt-answer">
+          <div className="prompt-question">{ready() ? "Your answers" : "Your answers so far"}</div>
           <div className="prompt-list">
             <div className="prompt-options">
-              {q.options.map((o, i) => {
-                const on = (picked[q.question] || []).includes(o.label);
+              {questions.map((x, i) => {
+                const s = said(x);
                 return (
-                  <button key={o.label} className={cx("palette-row", "prompt-option", on && "on")} disabled={busy} onClick={() => pick(q, o.label)}>
-                    <span className="badge">{on ? "✓" : i + 1}</span>
-                    <span className="label">{o.label}</span>
-                    {o.description && <span className="hint">{o.description}</span>}
+                  <button
+                    key={x.question}
+                    className={cx("palette-row", "prompt-option", "choice", cursor === i && "on")}
+                    onMouseEnter={() => setCursors((c) => ({ ...c, [n]: i }))}
+                    onClick={() => go(i)}
+                    title={`${x.question} - click to change`}
+                  >
+                    <span className="badge">{i + 1}</span>
+                    <span className="prompt-choice">
+                      <span className="label">{x.header || x.question}</span>
+                      <span className={cx("prompt-choice-desc", !s.length && "missing")}>{s.join(", ") || "Not answered yet"}</span>
+                      {(notes[x.question] || "").trim() && <span className="prompt-choice-desc">Note: {notes[x.question].trim()}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+              <button
+                className={cx("palette-row", "prompt-option", cursor === n && "on")}
+                disabled={busy}
+                onMouseEnter={() => setCursors((c) => ({ ...c, [n]: n }))}
+                onClick={() => submit()}
+              >
+                <span className="badge">↵</span>
+                <span className="label">Submit answers</span>
+                {!ready() && <span className="hint">answer every question first</span>}
+              </button>
+              <button
+                className={cx("palette-row", "prompt-option", "no", cursor === n + 1 && "on")}
+                disabled={busy}
+                onMouseEnter={() => setCursors((c) => ({ ...c, [n]: n + 1 }))}
+                onClick={cancel}
+              >
+                <span className="badge">✕</span>
+                <span className="label">Cancel</span>
+                <span className="hint">decline to answer, which stops Claude</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="prompt-answer">
+          <div className="prompt-question">
+            {!many && q.header && <span className="tag-generated">{q.header}</span>} {q.question}
+            {q.multiSelect && <span className="dim"> (any that apply)</span>}
+          </div>
+          <div className={cx(previewing && "prompt-previewing")}>
+          <div className="prompt-list">
+            <div className="prompt-options" role="listbox">
+              {q.options.map((o, i) => {
+                const chosen = (picked[q.question] || []).includes(o.label);
+                return (
+                  <button
+                    key={o.label}
+                    role="option"
+                    aria-selected={chosen}
+                    className={cx("palette-row", "prompt-option", "choice", i === cursor && "on", chosen && "picked")}
+                    disabled={busy}
+                    onMouseEnter={() => setCursors((c) => ({ ...c, [tab]: i }))}
+                    onClick={() => pick(o.label)}
+                  >
+                    <span className="badge">{chosen ? "✓" : i + 1}</span>
+                    <span className="prompt-choice">
+                      <span className="label">{o.label}</span>
+                      {o.description && <span className="prompt-choice-desc">{o.description}</span>}
+                    </span>
                   </button>
                 );
               })}
             </div>
-            <label className="prompt-note">
-              <span className="badge">…</span>
+            <label className={cx("prompt-note", q.multiSelect && otherOn[q.question] && "picked")}>
+              <span
+                className="badge"
+                onClick={(e) => {
+                  if (!q.multiSelect) return;
+                  e.preventDefault();
+                  tickOther();
+                }}
+              >
+                {q.multiSelect && otherOn[q.question] ? "✓" : "…"}
+              </span>
               <textarea
+                ref={otherRef}
                 rows={1}
                 value={other[q.question] || ""}
                 placeholder="Something else"
-                onChange={(e) => setOther((o) => ({ ...o, [q.question]: e.target.value }))}
+                onFocus={() => setCursors((c) => ({ ...c, [tab]: q.options.length }))}
+                onChange={(e) => write(e.target.value)}
               />
             </label>
+            <label className="prompt-note">
+              <span className="badge" title="Tab">
+                ⇥
+              </span>
+              <textarea
+                ref={noteRef}
+                rows={1}
+                value={notes[q.question] || ""}
+                placeholder="Add a note for Claude on this answer"
+                onFocus={() => setCursors((c) => ({ ...c, [tab]: q.options.length + 1 }))}
+                onChange={(e) => setNotes((ns) => ({ ...ns, [q.question]: e.target.value }))}
+              />
+            </label>
+            {/* Choices that take several have nothing to move on by, so they end in this. */}
+            {q.multiSelect && (
+              <button
+                className={cx("palette-row", "prompt-option", cursor === q.options.length + 2 && "on")}
+                disabled={busy}
+                onMouseEnter={() => setCursors((c) => ({ ...c, [tab]: q.options.length + 2 }))}
+                onClick={() => onward(picked, other)}
+              >
+                <span className="badge">↵</span>
+                <span className="label">Submit</span>
+                <span className="hint">{!many ? "send the answer" : tab < n - 1 ? "on to the next question" : "on to your answers"}</span>
+              </button>
+            )}
+          </div>
+          {previewing && (
+            <pre className="prompt-preview" style={{ height: `calc(${previewLines} * var(--preview-line) + 22px)` }}>
+              {preview || "No preview for this one."}
+            </pre>
+          )}
           </div>
         </div>
-      ))}
-      <div className="prompt-question-actions">
-        <button className="ghost" disabled={busy} onClick={() => onAnswer({ allow: false })} title="Decline to answer, which stops Claude">
-          Skip
-        </button>
-        <button
-          className="primary"
-          disabled={!ready || busy}
-          onClick={() => onAnswer({ allow: true, answers: Object.fromEntries(questions.map((q) => [q.question, said(q).join(", ")])) })}
-        >
-          Answer
-        </button>
-      </div>
+      )}
+      {/* The last tab has these as its rows. */}
+      {!(many && tab === n) && (
+        <div className="prompt-question-actions">
+          <button className="ghost" disabled={busy} onClick={cancel} title="Decline to answer, which stops Claude">
+            Cancel
+          </button>
+          {many ? (
+            <button className="primary" disabled={busy} onClick={() => go(tab + 1)}>
+              Next
+            </button>
+          ) : (
+            <button className="primary" disabled={!ready() || busy} onClick={() => submit()}>
+              Answer
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

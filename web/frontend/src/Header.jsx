@@ -1,23 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
-import { cx, modKey, useDismiss } from "./util.js";
+import { cx, modKey } from "./util.js";
 import {
-  IconBell, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconMenu, IconMoon, IconPin,
-  IconSearch, IconSplit, IconSun, IconUndo, IconUnified, IconWrap,
+  IconBell, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconMenu, IconPin, IconSearch, IconSettings, IconUndo,
 } from "./icons.jsx";
 
 // AUTO is the scope dv starts on: whichever comparison has something in it,
 // followed as the work moves. Any other scope is a pin.
 export const AUTO = { kind: "auto", rev: "" };
 
-// The bar names the repository in its middle, and holds how the page is drawn
-// and the tools at its right. Which mode the page is in is the sidebar's, at
-// the top of the list that mode fills. On a phone, what is marked wide-only
-// gives way (the diff is unified and wrapped there), and the sidebar is behind
-// the menu button.
+// The bar names the repository in its middle, and holds what is compared and
+// the tools at its right; how the page is drawn is in Settings. Which mode the
+// page is in is the sidebar's, at the top of the list that mode fills. On a
+// phone, what is marked wide-only gives way, and the sidebar is behind the
+// menu button.
 export default function Header({
-  meta, folder, mode, scope, resolvedScope, onScope, view, onView, wrap, onWrap, contextLines, onContext,
-  theme, onTheme, onSearch, onHelp, waiting, arrived, onBell, bellOn,
+  meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
   comments, commentsOn, onComments, sideOn, onSide,
 }) {
   const agent = mode === "agent";
@@ -45,26 +43,7 @@ export default function Header({
       <div className="topbar-right">
       {!agent && !folder && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />}
 
-      {mode !== "code" && (
-        <>
-          <div className="seg wide-only" role="group" aria-label="Diff layout">
-            <button className={cx(view === "split" && "on")} aria-pressed={view === "split"} onClick={() => onView("split")} title="Split view (u toggles)">
-              <IconSplit size={14} />
-            </button>
-            <button className={cx(view === "unified" && "on")} aria-pressed={view === "unified"} onClick={() => onView("unified")} title="Unified view (u toggles)">
-              <IconUnified size={14} />
-            </button>
-          </div>
-
-          <ContextPicker value={contextLines} onPick={onContext} />
-        </>
-      )}
-
-      <button className={cx("icon", wrap && "on")} aria-pressed={wrap} onClick={() => onWrap(!wrap)} title="Wrap long lines (w)">
-        <IconWrap size={14} />
-      </button>
-
-      <span className="divider wide-only" />
+      {!agent && !folder && <span className="divider wide-only" />}
 
       {waiting > 0 && (
         <button
@@ -92,11 +71,11 @@ export default function Header({
       <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
         <IconSearch size={14} />
       </button>
-      <button className="icon wide-only" onClick={() => onTheme(theme === "dark" ? "light" : "dark")} title="Toggle theme">
-        {theme === "dark" ? <IconSun size={14} /> : <IconMoon size={14} />}
-      </button>
       <button className="icon wide-only" onClick={onHelp} title="Keyboard shortcuts (?)">
         <IconKeyboard size={14} />
+      </button>
+      <button className="icon" onClick={onSettings} title="Settings (,)">
+        <IconSettings size={14} />
       </button>
       </div>
     </header>
@@ -136,48 +115,7 @@ export function ModeSwitch({ mode, modes, onMode, attached }) {
   );
 }
 
-const CONTEXT_LINES = [0, 3, 8, 20];
-const linesLabel = (n) => (n ? `${n} lines` : "No context");
-
-// ContextPicker is how many unchanged lines show around each change.
-function ContextPicker({ value, onPick }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      setOpen(false);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open]);
-  return (
-    <div className="scope ctx-picker wide-only" ref={ref}>
-      <button className="scope-button" onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Lines of context around each change">
-        <span>{linesLabel(value)}</span>
-        <IconChevronDown size={12} />
-      </button>
-      {open && (
-        <div className="scope-menu ctx-menu">
-          <div className="scope-sep">Context around each change</div>
-          {CONTEXT_LINES.map((n) => (
-            <ScopeItem
-              key={n}
-              on={n === value}
-              label={linesLabel(n)}
-              onClick={() => {
-                onPick(n);
-                setOpen(false);
-              }}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+export const CONTEXT_LINES = [0, 3, 8, 20];
 
 const PRESETS = [
   { kind: "working", label: "Uncommitted", hint: () => "working tree vs HEAD" },

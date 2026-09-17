@@ -8,8 +8,16 @@ import { asMedia, MarkdownPreview, Media, previewKind, PreviewToggle, SvgPreview
 import { cx, LRM, splitPath, statusLabel, statusLetter } from "./util.js";
 import { IconBack, IconForward, IconSplit } from "./icons.jsx";
 
-const NO_EXPAND = {};
-const noop = () => {};
+export const NO_EXPAND = {};
+export const noop = () => {};
+
+// commentsOn is the comments shown reading a file whole on one side. One on a
+// removed line has no row of its own there, so it hangs under the line now
+// standing in that line's place, as `changes` - the file's diff - has it.
+export function commentsOn(threads, side, changes) {
+  if (side === "old" || !changes) return threads.filter((t) => t.side === side);
+  return threads.map((t) => (t.side === "old" ? { ...t, side: "new", endLine: newLineFor(changes, t.endLine) } : t));
+}
 
 // CodeView is Code mode's reading pane: one file, whole and read-only, with
 // what the diff changed marked in the gutter. It renders through the diff's own
@@ -42,12 +50,7 @@ export default function CodeView({
     [fd, path, setComposing],
   );
 
-  // A comment on a removed line has no row of its own here, so it hangs under
-  // the line now standing in that line's place.
-  const shown = useMemo(() => {
-    if (side === "old" || !fd) return threads.filter((t) => t.side === side);
-    return threads.map((t) => (t.side === "old" ? { ...t, side: "new", endLine: newLineFor(fd, t.endLine) } : t));
-  }, [threads, fd, side]);
+  const shown = useMemo(() => commentsOn(threads, side, fd), [threads, fd, side]);
 
   const [dir, name] = splitPath(path);
   const kind = media ? "" : previewKind(path);

@@ -1,5 +1,6 @@
 /* dv — local diff review UI.
-   Dark by default; the header toggle flips [data-theme] on <html>. */
+   Dark by default; Settings sets [data-theme], and [data-code] for the code's
+   colours, on <html>. */
 
 /* The code font ships in the binary, so code looks the same on every machine
    and needs no network. */
@@ -604,10 +605,6 @@ button.link:hover {
   border-radius: var(--r-lg);
   background: var(--bg-raised);
   box-shadow: var(--shadow-pop);
-}
-
-.scope-menu.ctx-menu {
-  width: 220px;
 }
 
 .scope-item {
@@ -2639,46 +2636,8 @@ mark {
   font: 500 var(--fs-xs) / 1 var(--font-mono);
 }
 
-/* The file scrolls sideways as one, under line numbers that stay put. */
 .viewer-body {
-  overflow-x: auto;
-  font: 12px/20px var(--font-mono);
   padding: 6px 0;
-}
-
-/* As wide as the longest line, so every row - and a hit's tint - spans it. */
-.viewer-lines {
-  width: max-content;
-  min-width: 100%;
-}
-
-.vrow {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  background: var(--tint, none);
-}
-
-.vrow .ln {
-  position: sticky;
-  left: 0;
-  min-width: 42px;
-  padding: 0 12px 0 8px;
-  box-sizing: content-box;
-  color: var(--fg-3);
-  background: linear-gradient(var(--tint, transparent), var(--tint, transparent)) var(--bg);
-}
-
-.vrow code {
-  white-space: pre;
-  padding-right: 12px;
-}
-
-.vrow.hit {
-  --tint: var(--accent-soft);
-}
-
-.vrow.hit .ln {
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .help-body {
@@ -2691,6 +2650,77 @@ mark {
 
 .help-row {
   display: contents;
+}
+
+.settings-body {
+  display: grid;
+  gap: 8px;
+  padding: 8px 14px 16px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.settings-body .menu-label {
+  padding: 4px 0 0;
+}
+
+.settings-body .menu-label:not(:first-child) {
+  margin-top: 14px;
+}
+
+/* The words keep a readable width; choices that will not fit beside them go under. */
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+
+.settings-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.settings-row > .seg {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.settings-note {
+  margin-top: 2px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+/* On a phone each setting is its words over its choices, which share the width
+   as one control and take the finger-sized height. */
+@media (max-width: 760px) {
+  .settings-body {
+    gap: 14px;
+    padding: 8px 16px 20px;
+  }
+
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-text {
+    flex: none;
+  }
+
+  .settings-row > .seg {
+    display: flex;
+    margin-left: 0;
+    padding: 2px;
+    border-radius: var(--r-md);
+    background: var(--bg-input);
+  }
+
+  .settings-row > .seg > button {
+    flex: 1 1 auto;
+    height: 36px;
+  }
 }
 
 kbd {
@@ -2709,6 +2739,94 @@ kbd {
 }
 
 /* ---------- syntax highlighting ---------- */
+
+/* Code colours other than GitHub's, picked in Settings. They fill the same
+   roles and leave the grounds alone, so each is tuned, where its own colours
+   fall short, to clear 4.5:1 on dv's. After the themes, so they win. */
+:root[data-code="one"] {
+  --hl-keyword: #c678dd;
+  --hl-entity: #61afef;
+  --hl-constant: #d19a66;
+  --hl-string: #98c379;
+  --hl-variable: #e5c07b;
+  --hl-comment: #7f848e;
+  --hl-tag: #e06c75;
+  --hl-heading: #e06c75;
+  --hl-list: #61afef;
+}
+
+:root[data-code="one"][data-theme="light"] {
+  --hl-keyword: #a626a4;
+  --hl-entity: #2f63d6;
+  --hl-constant: #986801;
+  --hl-string: #377a36;
+  --hl-variable: #9a6a00;
+  --hl-comment: #6f7178;
+  --hl-tag: #c9392c;
+  --hl-heading: #c9392c;
+  --hl-list: #2f63d6;
+}
+
+:root[data-code="solarized"] {
+  --hl-keyword: #859900;
+  --hl-entity: #268bd2;
+  --hl-constant: #e05a9a;
+  --hl-string: #2aa198;
+  --hl-variable: #b58900;
+  --hl-comment: #839496;
+  --hl-tag: #268bd2;
+  --hl-heading: #e0602a;
+  --hl-list: #b58900;
+}
+
+:root[data-code="solarized"][data-theme="light"] {
+  --hl-keyword: #6b7a00;
+  --hl-entity: #1f72ad;
+  --hl-constant: #b82a6e;
+  --hl-string: #1f7d76;
+  --hl-variable: #8a6800;
+  --hl-comment: #5b7078;
+  --hl-tag: #1f72ad;
+  --hl-heading: #b0400f;
+  --hl-list: #8a6800;
+}
+
+:root[data-code="tomorrow"] {
+  --hl-keyword: #b294bb;
+  --hl-entity: #81a2be;
+  --hl-constant: #de935f;
+  --hl-string: #b5bd68;
+  --hl-variable: #f0c674;
+  --hl-comment: #969896;
+  --hl-tag: #cc6666;
+  --hl-heading: #81a2be;
+  --hl-list: #8abeb7;
+}
+
+:root[data-code="tomorrow"][data-theme="light"] {
+  --hl-keyword: #8959a8;
+  --hl-entity: #4271ae;
+  --hl-constant: #b05500;
+  --hl-string: #5d7300;
+  --hl-variable: #8a6c00;
+  --hl-comment: #6d6f6b;
+  --hl-tag: #c82829;
+  --hl-heading: #4271ae;
+  --hl-list: #2f7c81;
+}
+
+/* Monokai has no light version; light keeps GitHub's. */
+:root[data-code="monokai"]:not([data-theme="light"]) {
+  --hl-keyword: #f92672;
+  --hl-entity: #a6e22e;
+  --hl-constant: #ae81ff;
+  --hl-string: #e6db74;
+  --hl-variable: #fd971f;
+  --hl-comment: #8f8a75;
+  --hl-tag: #f92672;
+  --hl-heading: #a6e22e;
+  --hl-list: #66d9ef;
+}
 
 /* highlight.js's GitHub themes, rule for rule. */
 .hljs-doctag,
@@ -2902,9 +3020,17 @@ body.resizing * {
   flex: none;
 }
 
-.attach-split > .attach-btn:first-child {
+.attach-split > .attach-picked {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+}
+
+/* Its own action, so apart from the pair. */
+.attach-split > .attach-btn.attach-new {
+  aspect-ratio: 1;
+  margin-left: 2px;
+  padding: 0;
+  border-radius: 50%;
 }
 
 .attach-split > .attach-btn.attach-to {
@@ -2914,11 +3040,21 @@ body.resizing * {
   border-bottom-left-radius: 0;
 }
 
-/* A session's name can be long; the button gives way before the file's path. */
-.attach-split .btn-label {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Over a selection in the conversation, so raised like a menu. */
+.selection-ask {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  transform: translateX(-50%);
+  background: var(--bg-raised);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.selection-ask .attach-btn {
+  color: var(--fg);
 }
 
 .model-list.attach-menu {
@@ -3937,6 +4073,7 @@ button.ghost.agent-context {
   color: var(--fg-4);
   font: inherit;
   text-align: right;
+  user-select: none; /* selected code is the code alone */
 }
 
 .agent-code-line button.n:hover {
@@ -4120,10 +4257,12 @@ button.ghost.agent-context {
   background: none;
 }
 
+/* Clip, not hidden: hidden would make the card what its header sticks in, the
+   conversation's inset then pushing the header over the first line. */
 .agent-ask .prompt-card {
   border: 1px solid var(--border-soft);
   border-radius: var(--r-lg);
-  overflow: hidden;
+  overflow: clip;
 }
 
 .agent-ask .prompt-answer {
@@ -4431,6 +4570,11 @@ button.ghost.composer-add {
   color: var(--accent);
 }
 
+.session-temporary {
+  display: inline-flex;
+  color: var(--fg-3);
+}
+
 .session-id {
   margin: 0 -3px;
   padding: 0 3px;
@@ -4470,10 +4614,6 @@ button.ghost.composer-add {
   display: block;
 }
 
-.notify-toggle.on {
-  color: var(--accent);
-}
-
 .session-row:hover .session-close {
   display: inline-grid;
 }
@@ -4506,6 +4646,29 @@ button.ghost.composer-add {
 .session-dot.busy {
   background: var(--accent);
   box-shadow: none;
+}
+
+/* Waiting on the reader outranks working, in the dot and in the words, and is
+   the one dot that moves: its ring breathes until the prompt is answered. */
+.session-dot.asking {
+  background: var(--mod);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mod) 25%, transparent);
+  animation: asking 1.8s ease-in-out infinite;
+}
+
+@keyframes asking {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--mod) 30%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--mod) 8%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-dot.asking {
+    animation: none;
+  }
+}
+
+.session-asking {
+  color: var(--mod);
 }
 
 
@@ -4559,8 +4722,126 @@ button.ghost.composer-add {
   white-space: pre-wrap;
 }
 
+.prompt-questions {
+  outline: none;
+}
+
 .prompt-questions .prompt-answer {
   padding-bottom: 6px;
+}
+
+/* A tab for each question, then Submit. */
+/* Inset as the answer is, so a tab's number lines up with the options'. */
+.prompt-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 8px 12px 0;
+}
+
+.agent-ask .prompt-tabs {
+  padding: 0;
+}
+
+.prompt-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.prompt-tabs button:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.prompt-tabs button.on {
+  color: var(--fg);
+  background: var(--bg-active);
+}
+
+.prompt-tabs .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+}
+
+.prompt-tabs .done .badge,
+.prompt-option.picked .badge,
+.prompt-note.picked .badge {
+  color: var(--accent-fg);
+  background: var(--accent-fill);
+}
+
+.prompt-choice-desc.missing {
+  font-style: italic;
+}
+
+/* The options, and beside them what Claude drew for the one under the cursor. */
+.prompt-previewing {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  align-items: start;
+}
+
+/* Sized by its line height, which the height set from the tallest drawing counts in. */
+.prompt-preview {
+  --preview-line: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 50vh;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: 12px / var(--preview-line) var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A choice's words under its label, whole rather than cut to one line. */
+.prompt-option.choice {
+  align-items: flex-start;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.prompt-option.choice .badge {
+  margin-top: 1px;
+}
+
+.prompt-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.prompt-choice .label {
+  white-space: normal;
+}
+
+.prompt-choice-desc {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+  .prompt-previewing {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .prompt-question-actions {
@@ -5085,6 +5366,11 @@ button.ghost.back {
   /* Room for a finger. */
   :root {
     --bar-h: 44px;
+  }
+
+  /* The message box's bar keeps its send button in reach; the accent says Temporary. */
+  .composer-bar .btn-label {
+    display: none;
   }
 
   .topbar {

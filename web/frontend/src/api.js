@@ -132,6 +132,8 @@ export const api = {
 
   // Open sessions are the ones whose permission prompts come up in the page.
   agentOpen: (id, open) => req(`/api/agent/sessions/${id}/open`, { method: "POST", body: JSON.stringify({ open }) }),
+  // A temporary session leaves the list once it is closed.
+  agentTemporary: (id, temporary) => req(`/api/agent/sessions/${id}/temporary`, { method: "POST", body: JSON.stringify({ temporary }) }),
 
   // agentEvents follows a session: each update carries the items new or changed
   // since the last (all of them when `reset`) and what the session is doing.

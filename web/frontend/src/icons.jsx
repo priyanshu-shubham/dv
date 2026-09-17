@@ -22,6 +22,13 @@ export const IconForward = svg(<path d="M3 8h9.5M9 3.5L13 8l-4 4.5" />, { stroke
 export const IconFile = svg(<path d="M3 1.5h6L13 5.5v9H3z M9 1.5V6h4" />, { stroke: true });
 export const IconEye = svg(<><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" /><circle cx="8" cy="8" r="2" /></>, { stroke: true });
 export const IconComment =svg(<path d="M2 3.5h12v8H8l-3.5 3v-3H2z" />, { stroke: true });
+export const IconNewSession = svg(
+  <path d="M8 2.5c3.31 0 6 2.24 6 5s-2.69 5-6 5a6.9 6.9 0 0 1-2.2-.35L2.5 13.5l.85-2.55A4.6 4.6 0 0 1 2 7.5c0-2.76 2.69-5 6-5z M8 5.5v4M6 7.5h4" />,
+  { stroke: true },
+);
+export const IconReply = svg(<path d="M6.5 4L3 7.5 6.5 11M3 7.5h6.5A3.5 3.5 0 0 1 13 11v1.5" />, { stroke: true });
+export const IconSettings = svg(<><path d="M2.5 4.5h6.5M13 4.5h.5M2.5 11.5h.5M7 11.5h6.5" /><circle cx="11" cy="4.5" r="2" /><circle cx="5" cy="11.5" r="2" /></>, { stroke: true });
+export const IconTemporary =svg(<circle cx="8" cy="8" r="5.5" strokeDasharray="2.4 2" />, { stroke: true });
 export const IconSearch = svg(<><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></>, { stroke: true });
 export const IconSymbol = svg(<path d="M5.5 2.5L2 8l3.5 5.5M10.5 2.5L14 8l-3.5 5.5" />, { stroke: true });
 export const IconCheck = svg(<path d="M3 8.5l3.5 3.5L13 4.5" />, { stroke: true });

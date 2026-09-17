@@ -123,6 +123,32 @@ func TestTheTerminalAnsweringFirstReleasesTheHook(t *testing.T) {
 	}
 }
 
+func TestAQuestionFromTheTerminalIsAnsweredInDV(t *testing.T) {
+	b := New(t.TempDir())
+	input := `{"questions":[{"question":"Which color?","header":"Color","multiSelect":false,"options":[{"label":"Red"},{"label":"Blue"}]}]}`
+	req, out := asking(t, b, context.Background(), "AskUserQuestion", input)
+	b.Answer(req.ID, Answer{
+		Allow:       true,
+		Answers:     map[string]string{"Which color?": "Blue"},
+		Annotations: map[string]json.RawMessage{"Which color?": json.RawMessage(`{"notes":"a darker navy"}`)},
+	})
+	d := decision(t, out)
+	got, _ := json.Marshal(d["updatedInput"])
+	for _, want := range []string{`"answers":{"Which color?":"Blue"}`, `"annotations":{"Which color?":{"notes":"a darker navy"}}`, `"questions":[`} {
+		if d["behavior"] != "allow" || !strings.Contains(string(got), want) {
+			t.Fatalf("decision %v lacks %s", d, want)
+		}
+	}
+
+	// Answered in the terminal, the call reports with its answers in it.
+	req, out = asking(t, b, context.Background(), "AskUserQuestion", input)
+	answered := strings.TrimSuffix(input, "}") + `,"answers":{"Which color?":"Red"},"annotations":{}}`
+	b.Hook(context.Background(), event("PostToolUse", "AskUserQuestion", answered))
+	if d := decision(t, out); d != nil || b.Answer(req.ID, Answer{Allow: true}) {
+		t.Fatalf("the question is still waiting after the terminal answered: %v", d)
+	}
+}
+
 // Claude Code asks one thing at a time per agent, so a new prompt means the
 // last one from that agent was answered, however dv missed hearing it.
 func TestANewPromptRetiresTheLastFromTheSameAgent(t *testing.T) {

@@ -109,6 +109,7 @@ func (m *Manager) Sessions() []Session {
 	for i, id := range m.saved.IDs() {
 		opened[id] = i + 1
 	}
+	temporary := m.saved.TemporaryIDs()
 	m.mu.Lock()
 	procs := make(map[string]*proc, len(m.procs))
 	for id, p := range m.procs {
@@ -124,6 +125,11 @@ func (m *Manager) Sessions() []Session {
 		}
 		row.ID, row.Open = id, opened[id] > 0
 		row.Running, row.Busy = where(procs[id], live[id])
+		row.Temporary = slices.Contains(temporary, id)
+		if row.Temporary && !row.Open && row.Running == "" {
+			delete(procs, id)
+			continue
+		}
 		row.Status = statusOf(procs[id])
 		// Rewound, the file ends on the branch left behind until the next message.
 		if r, ok := m.saved.Rewound(id); ok && !r.Sent {
@@ -146,7 +152,7 @@ func (m *Manager) Sessions() []Session {
 	// Started here, with nothing said yet.
 	for id, p := range procs {
 		p.mu.Lock()
-		row := Session{ID: id, Title: p.title, Cwd: p.cwd, Updated: p.lastUsed, Open: opened[id] > 0}
+		row := Session{ID: id, Title: p.title, Cwd: p.cwd, Updated: p.lastUsed, Open: opened[id] > 0, Temporary: slices.Contains(temporary, id)}
 		p.mu.Unlock()
 		row.Running, row.Busy = where(p, running{})
 		row.Status = statusOf(p)
@@ -301,6 +307,16 @@ func (m *Manager) Create() (string, error) {
 	}
 	m.broker.Notify()
 	return id, nil
+}
+
+// SetTemporary marks a session to leave the list once it is closed. Its
+// transcript stays, for the terminal's --resume.
+func (m *Manager) SetTemporary(id string, on bool) error {
+	if err := m.saved.SetTemporary(id, on); err != nil {
+		return err
+	}
+	m.broker.Notify()
+	return nil
 }
 
 // SetOpen opens a session in the Agent view or closes it. Closing one dv runs

@@ -44,6 +44,9 @@ type Answer struct {
 	// Answers are AskUserQuestion's, by question: the labels picked, or what
 	// the reader wrote instead.
 	Answers map[string]string `json:"answers,omitempty"`
+	// Annotations go with them, by question: { notes, preview }, the reader's
+	// note on the answer and the drawing of the option picked.
+	Annotations map[string]json.RawMessage `json:"annotations,omitempty"`
 }
 
 // hookInput is the part of a hook's stdin dv reads.
@@ -109,8 +112,7 @@ func (b *Broker) Hook(ctx context.Context, body []byte) ([]byte, error) {
 	}
 	switch in.Event {
 	case "PermissionRequest":
-		// A question for the user wants answers, which only the terminal takes.
-		if in.Tool == "AskUserQuestion" || b.isOwned(in.Session) {
+		if b.isOwned(in.Session) {
 			return nil, nil
 		}
 		return b.ask(ctx, &in), nil
@@ -178,6 +180,9 @@ func (b *Broker) Decision(req *Request, a *Answer) map[string]any {
 	case a.Allow:
 		if i := a.Suggestion; i != nil && *i >= 0 && *i < len(req.Suggestions) {
 			d["updatedPermissions"] = []json.RawMessage{req.Suggestions[*i]}
+		}
+		if len(a.Answers) > 0 {
+			d["updatedInput"] = withAnswers(req.Input, a)
 		}
 		// Held before the allow goes out, so it is there when the call reports back.
 		if text != "" {
@@ -305,6 +310,21 @@ func (b *Broker) remove(match func(*waiter) bool) *waiter {
 	return nil
 }
 
+// withAnswers is AskUserQuestion's input with the reader's answers, and any
+// notes on them, in it, which is how the tool is told them.
+func withAnswers(input json.RawMessage, a *Answer) json.RawMessage {
+	var m map[string]any
+	if json.Unmarshal(input, &m) != nil {
+		return input
+	}
+	m["answers"] = a.Answers
+	if len(a.Annotations) > 0 {
+		m["annotations"] = a.Annotations
+	}
+	out, _ := json.Marshal(m)
+	return out
+}
+
 func output(event, key string, v any) []byte {
 	out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, key: v}})
 	return out
@@ -320,6 +340,11 @@ func sameCall(a, b json.RawMessage) bool {
 func significant(raw json.RawMessage) map[string]any {
 	var m map[string]any
 	json.Unmarshal(raw, &m)
+	// A question reports back with what answering it added - the answers, an
+	// empty set of notes on them - so it is known by its questions alone.
+	if q, ok := m["questions"]; ok {
+		return map[string]any{"questions": q}
+	}
 	for k, v := range m {
 		switch v {
 		case nil, false, "", 0.0:

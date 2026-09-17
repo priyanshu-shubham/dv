@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss } from "./util.js";
-import { IconCheck, IconChevronDown, IconSpark, IconX } from "./icons.jsx";
+import { IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
@@ -107,12 +107,13 @@ function Thread({ thread, onAction, compact }) {
 }
 
 // AttachTarget is the sessions code can be added to, and the one it goes to:
-// { choices: [{ id, label }], target, onTarget }, "" being a new session.
+// { choices: [{ id, label }], target, onTarget }, target "" being a new session
+// when there is none to choose.
 export const AttachTarget = createContext(null);
 
 // AttachButton adds code to what goes with the next message to Claude, in the
-// Agent view. onClick is given the session it goes to; its menu picks another,
-// which stays picked.
+// Agent view. onClick is given the session it goes to, "" for a new one; its
+// menu picks another, which stays picked.
 export function AttachButton({ className, onClick, title = "Add to your next message to Claude (a)" }) {
   const t = useContext(AttachTarget);
   const [at, setAt] = useState(null); // where the open menu goes, under the button
@@ -131,14 +132,20 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
     };
   }, [at]);
   const to = t?.choices.find((c) => c.id === t.target);
+  const picks = t?.choices.length > 1;
   return (
     <span className={cx("attach-split", className)} ref={ref}>
       {/* Add, not send: it waits in that session's message box for you to send. */}
-      <button className="attach-btn" onClick={() => onClick(t?.target)} title={to ? `${title}, in ${to.label}` : title}>
+      {/* Where it goes is in the title and marked in the menu, which keeps the button short. */}
+      <button
+        className={cx("attach-btn", picks && "attach-picked")}
+        onClick={() => onClick(t?.target)}
+        title={t ? `${title}, in ${to ? to.label : "a new session"}` : title}
+      >
         <IconSpark size={12} />
-        <span className="btn-label">Add to {!to ? "agent" : to.id ? to.label : "a new session"}</span>
+        <span className="btn-label">Add</span>
       </button>
-      {t && (
+      {picks && (
         <button
           className="attach-btn attach-to"
           onClick={() => {
@@ -149,6 +156,11 @@ export function AttachButton({ className, onClick, title = "Add to your next mes
           aria-expanded={!!at}
         >
           <IconChevronDown size={10} />
+        </button>
+      )}
+      {to && (
+        <button className="attach-btn attach-new" onClick={() => onClick("")} title="Add to a new session, and go to it">
+          <IconNewSession size={13} />
         </button>
       )}
       {/* In the page's top layer: a file card clips what overflows it. */}
@@ -188,8 +200,8 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const ref = useRef(null);
-  const rootRef = useRef(null);
   const bodyRef = useRef(initial);
+  const pressedInside = useRef(null); // the last mousedown in the composer
   bodyRef.current = body;
   const draft = body.trim() !== initial.trim();
 
@@ -202,12 +214,12 @@ export function Composer({
 
   // Clicking away dismisses a composer nobody has typed into, so opening one by
   // accident costs nothing. Anything half-written stays put, and an edit of an
-  // existing comment is never dismissed this way.
+  // existing comment is never dismissed this way. Inside is the composer's React
+  // tree rather than its DOM, which takes in the Add to menu portaled out of it.
   useEffect(() => {
     if (!onCancel || initial !== "") return;
     const onDown = (e) => {
-      if (rootRef.current?.contains(e.target)) return;
-      if (bodyRef.current.trim() !== "") return;
+      if (e === pressedInside.current || bodyRef.current.trim() !== "") return;
       onCancel();
     };
     document.addEventListener("mousedown", onDown);
@@ -229,7 +241,12 @@ export function Composer({
   };
 
   return (
-    <div className="composer" ref={rootRef} data-draft={draft || undefined} data-selected={selected || undefined}>
+    <div
+      className="composer"
+      onMouseDownCapture={(e) => (pressedInside.current = e.nativeEvent)}
+      data-draft={draft || undefined}
+      data-selected={selected || undefined}
+    >
       {title && <div className="composer-title">{title}</div>}
       <textarea
         ref={ref}

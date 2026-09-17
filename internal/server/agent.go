@@ -86,6 +86,25 @@ func (s *Server) handleAgentOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleAgentTemporary(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Temporary bool `json:"temporary"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.agent.SetTemporary(id, req.Temporary); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // handleAgentEvents streams a session to the page: the conversation as its
 // transcript grows, and what the session is doing now.
 func (s *Server) handleAgentEvents(w http.ResponseWriter, r *http.Request) {

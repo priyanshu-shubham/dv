@@ -5,13 +5,13 @@ import Header, { AUTO } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, HelpOverlay, SearchPanel } from "./Overlays.jsx";
+import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay } from "./Overlays.jsx";
 import AgentView from "./Agent.jsx";
 import ClaudePrompt, { useClaudeEvents } from "./ClaudePrompt.jsx";
 import { Notices, say, useNotices } from "./Notices.jsx";
 import { AttachTarget } from "./Threads.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
-import { mapLine, newLineFor } from "./hunks.js";
+import { mapLine, newLineFor, plainDiff } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
 import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
@@ -79,6 +79,8 @@ export default function App() {
   // By session, "" being the one the next new session starts as.
   const [attachedBy, setAttachedBy] = usePersisted("agentAttachedBy", {});
   const [attachPick, setAttachPick] = usePersisted("agentAttachTo", null);
+  const [temporaryNew, setTemporaryNew] = useState(false); // the blank session's Temporary toggle
+  const [settings, setSettings] = usePersisted("settings", {});
   const [agentReveal, setAgentReveal] = useState(null);
   const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false);
   const showComments = phone ? panel === "comments" : commentsOpen;
@@ -113,12 +115,16 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+  useEffect(() => {
+    document.documentElement.dataset.code = settings.codeColors || "github";
+  }, [settings.codeColors]);
 
   // Claude Code's prompts waiting on the reader. The session on screen in the
   // Agent view asks in its conversation; the rest are told of in notices, and
   // answered in a window over the page opened from one or from the bell.
   const { requests, sessions: activity } = useClaudeEvents();
   const windowed = useMemo(() => requests.filter((r) => mode !== "agent" || r.session !== agentId), [requests, mode, agentId]);
+  const askingSessions = useMemo(() => new Set(requests.map((r) => r.session)), [requests]);
   const [promptOpen, setPromptOpen] = useState(false);
   const promptRef = useRef(false);
   promptRef.current = promptOpen && windowed.length > 0;
@@ -1042,12 +1048,15 @@ export default function App() {
     },
   });
   // Desktop notifications are the browser's to allow, asked when turned on.
-  const toggleDesktopNotices = useCallback(async () => {
-    if (desktopNotices || typeof Notification === "undefined") return setDesktopNotices(false);
-    const allowed = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
-    setDesktopNotices(allowed === "granted");
-    if (allowed === "denied") say("Notifications are blocked", "The browser blocks them for this page; allow them in its site settings.");
-  }, [desktopNotices, setDesktopNotices]);
+  const pickDesktopNotices = useCallback(
+    async (on) => {
+      if (!on || typeof Notification === "undefined") return setDesktopNotices(false);
+      const allowed = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+      setDesktopNotices(allowed === "granted");
+      if (allowed === "denied") say("Notifications are blocked", "The browser blocks them for this page; allow them in its site settings.");
+    },
+    [setDesktopNotices],
+  );
 
   // The waiting note trails so a narrow tab still shows which repository it
   // is; the count up front is enough to catch the eye. The path is for
@@ -1081,20 +1090,25 @@ export default function App() {
   }, [mode, agent.sessions, agentId, selectSession]);
 
   // What is added from Diff and Code goes to a session that can be written to:
-  // the one picked while it stays open, else the first in the list. The open
-  // sessions come with the requests, in every mode.
+  // the one picked while it stays open, else the first in the list, else a new
+  // one. The open sessions come with the requests, in every mode.
   const attachChoices = useMemo(
-    () => [
-      ...(activity || []).filter((s) => s.running !== "terminal").map((s) => ({ id: s.id, label: s.title || "New session" })),
-      { id: "", label: "A new session" },
-    ],
+    () => (activity || []).filter((s) => s.running !== "terminal").map((s) => ({ id: s.id, label: s.title || "Untitled session" })),
     [activity],
   );
-  const attachTo = attachChoices.some((c) => c.id === attachPick) ? attachPick : attachChoices[0].id;
+  const attachTo = attachChoices.some((c) => c.id === attachPick) ? attachPick : attachChoices[0]?.id || "";
   const attachTarget = useMemo(() => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick }), [attachChoices, attachTo, setAttachPick]);
 
   // attach adds to what goes with a session's next message. Code is taken as
-  // it reads on screen, so it says which version that was.
+  // it reads on screen, so it says which version that was. A new session has
+  // no row to show what waits for it, so it is opened instead; an open one is
+  // added to without leaving the review.
+  const openAdded = useCallback(() => {
+    setStack([]);
+    setAgentId("");
+    if (settings.addedTemporary) setTemporaryNew(true);
+    switchMode("agent");
+  }, [setAgentId, settings.addedTemporary, switchMode]);
   const attach = useCallback(
     (a, to = attachTo) => {
       const sc = diffRef.current?.scope;
@@ -1105,8 +1119,9 @@ export default function App() {
         const list = by[to] || [];
         return list.some((x) => x.key === key) ? by : { ...by, [to]: [...list, { ...a, at, key }] };
       });
+      if (to === "") openAdded();
     },
-    [attachTo, setAttachedBy],
+    [attachTo, setAttachedBy, openAdded],
   );
   const attachedFor = useCallback(
     (to, change) =>
@@ -1128,8 +1143,8 @@ export default function App() {
     return out;
   }, [attachedBy, threads]);
   const attachedHere = attachedLive[agentId] || NO_ATTACHED;
-  // Only what a session still open would send.
-  const attachedCount = attachChoices.reduce((n, c) => n + (attachedLive[c.id]?.length || 0), 0);
+  // Only what a session still open, or the next new one, would send.
+  const attachedCount = attachChoices.reduce((n, c) => n + (attachedLive[c.id]?.length || 0), attachedLive[""]?.length || 0);
 
   // attachHere is `a`: the line under the pointer, else the file being read.
   const attachHere = useCallback(() => {
@@ -1268,6 +1283,9 @@ export default function App() {
         case "?":
           openOverlay({ type: "help" });
           break;
+        case ",":
+          openOverlay({ type: "settings" });
+          break;
         case "[":
         case "]":
           e.preventDefault();
@@ -1352,16 +1370,9 @@ export default function App() {
         scope={scope}
         resolvedScope={diff?.scope}
         onScope={setScope}
-        view={view}
-        onView={setView}
-        wrap={wrap}
-        onWrap={setWrap}
-        contextLines={contextLines}
-        onContext={setContextLines}
-        theme={theme}
-        onTheme={setTheme}
         onSearch={() => openOverlay({ type: "search" })}
         onHelp={() => openOverlay({ type: "help" })}
+        onSettings={() => openOverlay({ type: "settings" })}
         waiting={requests.length}
         arrived={arrived}
         onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
@@ -1405,10 +1416,9 @@ export default function App() {
             sessions: agent.sessions,
             available: agent.available,
             usage: agent.usage,
-            notify: desktopNotices,
-            onNotify: toggleDesktopNotices,
             activeId: agentId,
             added: attachedLive,
+            asking: askingSessions,
             onSelect: (id) => {
               if (phone) setPanel(null);
               selectSession(id);
@@ -1541,7 +1551,7 @@ export default function App() {
             wrap={wrap}
             threads={threads}
             attached={attachedHere}
-            onAttach={(a) => attach(a, agentId)}
+            onAttach={(a, to = agentId) => attach(a, to)}
             onDetach={(key) => attachedFor(agentId, (list) => list.filter((x) => x.key !== key))}
             onClearAttached={() => attachedFor(agentId, () => [])}
             onRestoreAttached={(to, back) => attachedFor(to, (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list])}
@@ -1554,6 +1564,9 @@ export default function App() {
             onSelect={selectSession}
             onNew={newSession}
             onStart={startSession}
+            onStartAdded={openAdded}
+            temporaryNew={temporaryNew}
+            onTemporaryNew={setTemporaryNew}
             onClose={closeSession}
             onChanged={loadSessions}
             reveal={agentReveal}
@@ -1631,9 +1644,34 @@ export default function App() {
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
           onSymbol={onSymbol}
+          threads={threadsByFile.get(overlay.file) || NO_THREADS}
+          changes={fileData[overlay.file]?.fd}
+          wrap={wrap}
+          onComment={createComment}
+          onThreadAction={onThreadAction}
+          onAttach={attach}
+          onSearch={openSearch}
         />
       )}
       {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
+      {overlay?.type === "settings" && (
+        <SettingsOverlay
+          theme={theme}
+          onTheme={setTheme}
+          view={view}
+          onView={setView}
+          contextLines={contextLines}
+          onContext={setContextLines}
+          wrap={wrap}
+          onWrap={setWrap}
+          phone={phone}
+          notices={desktopNotices}
+          onNotices={pickDesktopNotices}
+          settings={settings}
+          onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+          onClose={closeOverlay}
+        />
+      )}
     </div>
     </AttachTarget.Provider>
   );
@@ -1879,13 +1917,6 @@ function chase(root, aim) {
 }
 
 const scopeKey = (s, diff) => diff?.scope?.label || (s.kind === "custom" ? "custom:" + s.rev : s.kind);
-
-// plainDiff shapes a file the comparison leaves alone as a diff of itself, so
-// Code mode renders every file through the same rows.
-function plainDiff(r) {
-  const n = r.lines.length;
-  return { path: r.path, lang: r.lang, oldLines: [], newLines: r.lines, ops: [{ k: 0, os: 0, ol: n, ns: 0, nl: n }] };
-}
 
 // What the Back control says it leads to, so a step backwards is a known
 // destination rather than a guess.

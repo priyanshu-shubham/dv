@@ -1,4 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./ClaudePrompt.jsx";
@@ -7,8 +8,12 @@ import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownPreview, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
+import { AttachTarget } from "./Threads.jsx";
 import { cx, isTyping, LRM, relTime, splitPath, useDismiss, usePersisted } from "./util.js";
-import { IconArrowUp, IconBack, IconBell, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconPlus, IconStop, IconUndo, IconX } from "./icons.jsx";
+import {
+  IconArrowUp, IconBack, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary, IconUndo,
+  IconX,
+} from "./icons.jsx";
 
 const md = new MarkdownIt({ html: false, linkify: true });
 // A command's output is Markdown, or lines of plain text that must stay lines.
@@ -448,7 +453,7 @@ function prettyModel(id) {
 export default function AgentView({
   id, session, available, models, modes, defaultMode, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
-  requests, onSelect, onNew, onStart, onClose, onChanged, reveal, offline, active = true,
+  requests, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, offline, active = true,
 }) {
   // A session shows from its latest compaction until the reader asks for what
   // came before: by session, where it is shown from then.
@@ -495,6 +500,40 @@ export default function AgentView({
   const [rewinding, setRewinding] = useState(null); // { prompt } or {} to pick one
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
+  const paneRef = useRef(null);
+  // Text quoted from the conversation goes after what the box holds, with the
+  // caret after it. Taken to a new session, it waits until that box is the one
+  // on screen, after its own draft is read.
+  const quoted = useRef(null);
+  const caretToEnd = useRef(false);
+  const addQuote = useCallback(
+    (q) => {
+      caretToEnd.current = true;
+      setDraft((d) => `${[d.trimEnd(), q].filter(Boolean).join("\n\n")}\n\n`);
+    },
+    [setDraft],
+  );
+  const replyWith = useCallback((text, code) => addQuote(quote(text, code)), [addQuote]);
+  const askInNew = useCallback(
+    (text, code) => {
+      quoted.current = quote(text, code);
+      onStartAdded();
+    },
+    [onStartAdded],
+  );
+  useEffect(() => {
+    if (id || !quoted.current) return;
+    addQuote(quoted.current);
+    quoted.current = null;
+  }, [id]);
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!caretToEnd.current || !el) return;
+    caretToEnd.current = false;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.scrollTop = el.scrollHeight;
+  }, [draft]);
   // stick follows the end as the conversation grows; otherwise anchor holds the
   // reader's place, and for a moment after something is opened, opened keeps it
   // in view while it fills. top is where the view last was, and back where to
@@ -510,6 +549,9 @@ export default function AgentView({
   const readOnly = running === "terminal";
   // Not known while dv is out of reach; the rest of live is only what it was.
   const busy = !!live?.busy && !lost;
+  // Code added from a conversation goes with that conversation's next message,
+  // whichever session Diff and Files are adding to.
+  const attachTarget = useMemo(() => ({ choices: [{ id, label: "this session" }], target: id, onTarget: () => {} }), [id]);
   const byTool = useMemo(() => {
     const m = new Map();
     for (const t of threads) if (t.origin?.session === id) m.set(t.origin.tool, [...(m.get(t.origin.tool) || []), t]);
@@ -779,6 +821,10 @@ export default function AgentView({
         await api.agentSettings(to, picks);
         setPicks({});
       }
+      if (!id && temporaryNew) {
+        await api.agentTemporary(to, true);
+        onTemporaryNew(false);
+      }
       await api.agentSend(to, text, uuid, pictures.map(({ mediaType, data }) => ({ mediaType, data })));
       // Taking a message back rewinds to before it, which does not undo a command.
       if (!command) {
@@ -888,6 +934,11 @@ export default function AgentView({
   const interrupt = () => api.agentInterrupt(id).catch((e) => setError(e.message));
   // With no session yet, what is picked waits for the one the first message starts.
   const [picks, setPicks] = useState({});
+  const temporary = id ? !!session?.temporary : temporaryNew;
+  const toggleTemporary = () => {
+    if (!id) return onTemporaryNew(!temporary);
+    api.agentTemporary(id, !temporary).then(onChanged, (e) => setError(e.message));
+  };
   const settings = (patch) => {
     if (id) return api.agentSettings(id, patch).catch((e) => setError(e.message));
     setPicks((p) => {
@@ -1228,6 +1279,21 @@ export default function AgentView({
             value={mode}
             onPick={(m) => settings({ mode: m })}
           />
+          {!readOnly && (
+            <button
+              className={cx("ghost", temporary && "on")}
+              aria-pressed={temporary}
+              onClick={toggleTemporary}
+              title={
+                temporary
+                  ? "Temporary: once closed, this session leaves the list. Its transcript stays for claude --resume. Click to keep it."
+                  : "Make this session temporary: once closed, it leaves the list"
+              }
+            >
+              <IconTemporary size={13} />
+              {temporary && <span className="btn-label">Temporary</span>}
+            </button>
+          )}
           <span className="spacer" />
           {busy && running === "dv" && !canSend ? (
             <button className="composer-send stop" onClick={interrupt} title="Stop what Claude is doing (Esc)">
@@ -1274,8 +1340,10 @@ export default function AgentView({
   }
 
   return (
+    <AttachTarget.Provider value={attachTarget}>
     <OpenCall.Provider value={setPeek}>
-    <div className="agent-pane" hidden={!active}>
+    <div className="agent-pane" hidden={!active} ref={paneRef}>
+      <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />
       {id && (
         // What the session is and where it runs, its card in the list says; this
         // is what to do in it.
@@ -1299,7 +1367,7 @@ export default function AgentView({
           {live?.context?.max > 0 && <ContextMeter context={live.context} onCompact={!readOnly && !lost ? compactNow : null} />}
           {live?.cost > 0 && <span className="dim agent-cost">${live.cost.toFixed(2)}</span>}
           {/* As on its card: what closing does depends on what runs it, and says so. */}
-          <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running)}>
+          <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary)}>
             <IconX size={13} />
           </button>
         </header>
@@ -1461,6 +1529,7 @@ export default function AgentView({
       )}
     </div>
     </OpenCall.Provider>
+    </AttachTarget.Provider>
   );
 }
 
@@ -1469,6 +1538,124 @@ const OpenCall = createContext(null);
 
 // AtWork is what Claude left at work, over the message box: each agent, and
 // each command in the background, opens on what it is doing.
+// Where a selection is not offered: what is typed, and the edits' code, whose
+// comment box has its own way to a new session.
+const NOT_ASKED = "textarea, input, .agent-composer, .agent-head, .agent-edit .file-body";
+const CODE_TEXT = "pre, code, .agent-code";
+
+// SelectionAsk is a small bar over text selected in the conversation - what was
+// said, a call, its result - that quotes it in a reply here (onReply, when this
+// session can be written to) or in a new session's message box. It waits for
+// the selection to be done, not each change.
+function SelectionAsk({ within, active, onReply, onAsk }) {
+  const [at, setAt] = useState(null); // { top, left, text, code }
+  const bar = useRef(null);
+  const shown = useRef(false);
+  shown.current = !!at;
+  useEffect(() => {
+    if (!active) return setAt(null);
+    let pressed = false;
+    let settle = 0;
+    const place = (snap) => {
+      const sel = window.getSelection();
+      const root = within.current;
+      if (!sel?.rangeCount || sel.isCollapsed || !root) return setAt(null);
+      const el = (n) => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
+      const ends = [el(sel.getRangeAt(0).startContainer), el(sel.getRangeAt(0).endContainer)];
+      if (ends.some((e) => !root.contains(e) || e.closest(NOT_ASKED))) return setAt(null);
+      if (snap) snapToWords(sel);
+      const text = sel.toString().replace(/^\s*\n|\s+$/g, "");
+      if (!text) return setAt(null);
+      const range = sel.getRangeAt(0);
+      const r = range.getBoundingClientRect();
+      const box = root.getBoundingClientRect();
+      if (r.bottom < box.top || r.top > box.bottom) return setAt(null);
+      const above = r.top - 34;
+      setAt({
+        top: above >= box.top ? above : Math.min(r.bottom + 6, box.bottom - 34),
+        left: Math.min(Math.max((r.left + r.right) / 2, box.left + 80), box.right - 80),
+        text,
+        code: ends.every((e) => e.closest(CODE_TEXT)),
+      });
+    };
+    const onDown = (e) => {
+      if (bar.current?.contains(e.target)) return;
+      pressed = true;
+      setAt(null);
+    };
+    const onUp = () => {
+      pressed = false;
+      setTimeout(() => place(true));
+    };
+    // Keys and a touch's handles select without a press to wait for.
+    const onChange = () => {
+      clearTimeout(settle);
+      if (window.getSelection()?.isCollapsed) return setAt(null);
+      if (!pressed) settle = setTimeout(() => place(true), 250);
+    };
+    const onMove = () => shown.current && place(false);
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("pointerup", onUp, true);
+    document.addEventListener("pointercancel", onUp, true);
+    document.addEventListener("selectionchange", onChange);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      clearTimeout(settle);
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("pointerup", onUp, true);
+      document.removeEventListener("pointercancel", onUp, true);
+      document.removeEventListener("selectionchange", onChange);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [active, within]);
+  if (!at) return null;
+  const take = (to) => {
+    window.getSelection()?.removeAllRanges();
+    setAt(null);
+    to(at.text, at.code);
+  };
+  return createPortal(
+    <div ref={bar} className="selection-ask" style={{ top: at.top, left: at.left }} onMouseDown={(e) => e.preventDefault()}>
+      {onReply && (
+        <button className="attach-btn" onClick={() => take(onReply)} title="Quote this in your reply, in this session">
+          <IconReply size={13} />
+          <span>Reply</span>
+        </button>
+      )}
+      <button className="attach-btn" onClick={() => take(onAsk)} title="Start a new session with this in its message">
+        <IconNewSession size={13} />
+        <span>New session</span>
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+const WORD = /[\p{L}\p{N}_]/u;
+
+// snapToWords widens a selection that starts or ends partway into a word to
+// the whole word, keeping which end the reader was dragging.
+function snapToWords(sel) {
+  const r = sel.getRangeAt(0);
+  const inWord = (t, i) => i > 0 && i < t.length && WORD.test(t[i - 1]) && WORD.test(t[i]);
+  let { startContainer: sn, startOffset: so, endContainer: en, endOffset: eo } = r;
+  if (sn.nodeType === Node.TEXT_NODE && inWord(sn.data, so)) while (so > 0 && WORD.test(sn.data[so - 1])) so--;
+  if (en.nodeType === Node.TEXT_NODE && inWord(en.data, eo)) while (eo < en.data.length && WORD.test(en.data[eo])) eo++;
+  if (so === r.startOffset && eo === r.endOffset) return;
+  const backward = sel.focusNode === r.startContainer && sel.focusOffset === r.startOffset;
+  if (backward) sel.setBaseAndExtent(en, eo, sn, so);
+  else sel.setBaseAndExtent(sn, so, en, eo);
+}
+
+// quote is text taken into a message: code fenced as it was, prose as a quote.
+function quote(text, code) {
+  if (!code) return text.split("\n").map((l) => `> ${l}`).join("\n");
+  const fence = "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+  return `${fence}\n${text}\n${fence}`;
+}
+
 function AtWork({ calls, open, root, onOpen }) {
   return (
     <div className="agent-at-work">
@@ -1613,11 +1800,13 @@ function TaskOutput({ session, call }) {
 }
 
 // closeHint says what closing a session does, which depends on what runs it.
-function closeHint(running) {
+function closeHint(running, temporary) {
   if (running === "terminal") {
     return "Stop following this session in dv. It keeps running in its terminal, which goes back to being the only place it asks for permission.";
   }
-  const after = "It moves to Recent, and carries on from where it was when you next send to it.";
+  const after = temporary
+    ? "It is temporary, so it leaves the list."
+    : "It moves to Recent, and carries on from where it was when you next send to it.";
   return running === "dv" ? `Close the session: dv stops the Claude Code running it. ${after}` : `Close the session. ${after}`;
 }
 
@@ -2410,7 +2599,7 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
     },
     [onComment, onAttach, session, item.toolId],
   );
-  const attach = useMemo(() => onAttach && ((a) => onAttach({ ...a, at: "Claude's edit" })), [onAttach]);
+  const attach = useMemo(() => onAttach && ((a, to) => onAttach({ ...a, at: "Claude's edit" }, to)), [onAttach]);
   useEffect(() => {
     const el = ref.current;
     const onComment = (ev) => startComment(ev.detail.side, ev.detail.line, ev.detail.line);
@@ -2689,8 +2878,9 @@ function SessionID({ id }) {
 }
 
 // SessionList is the sidebar in Agent mode: sessions open in dv, then the rest
-// of the repository's, newest first.
-export function SessionList({ sessions, available, usage, notify, onNotify, activeId, added = {}, onSelect, onNew, onClose, onRename }) {
+// of the repository's, newest first. asking is the set of sessions with a
+// prompt or question waiting on the reader.
+export function SessionList({ sessions, available, usage, asking, activeId, added = {}, onSelect, onNew, onClose, onRename }) {
   const [filter, setFilter] = useState("");
   // The card is where the session on screen is named, so it is kept in sight.
   const listRef = useRef(null);
@@ -2718,7 +2908,7 @@ export function SessionList({ sessions, available, usage, notify, onNotify, acti
         onKeyDown={(e) => e.key === "Enter" && onSelect(s.id)}
       >
         <div className="session-row-head">
-          <span className={cx("session-dot", s.running && "live-" + s.running, s.busy && "busy")} />
+          <span className={cx("session-dot", s.running && "live-" + s.running, s.busy && "busy", asking?.has(s.id) && "asking")} />
           <SessionName
             key={s.title}
             title={s.title || s.prompt || "New session"}
@@ -2728,7 +2918,7 @@ export function SessionList({ sessions, available, usage, notify, onNotify, acti
           {isOpen(s) && (
             <button
               className="session-close"
-              title={closeHint(s.running)}
+              title={closeHint(s.running, s.temporary)}
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(s.id);
@@ -2745,8 +2935,17 @@ export function SessionList({ sessions, available, usage, notify, onNotify, acti
           </div>
         )}
         <div className="session-meta">
-          <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? s.status || "working" : "running in dv") : relTime(s.updated)}</span>
+          {asking?.has(s.id) ? (
+            <span className="session-asking">waiting on you</span>
+          ) : (
+            <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? s.status || "working" : "running in dv") : relTime(s.updated)}</span>
+          )}
           <SessionID id={s.id} />
+          {s.temporary && (
+            <span className="session-temporary" title="Temporary: it leaves the list once closed">
+              <IconTemporary size={11} />
+            </span>
+          )}
           {added[s.id]?.length > 0 && (
             <span className="session-added" title="Added from Diff or Files, to go with the next message">
               {added[s.id].length} added
@@ -2770,18 +2969,6 @@ export function SessionList({ sessions, available, usage, notify, onNotify, acti
     <>
       <div className="sidebar-filter">
         <input value={filter} placeholder="Filter by name or ID" onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
-        <button
-          className={cx("ghost", "notify-toggle", notify && "on")}
-          aria-pressed={!!notify}
-          onClick={onNotify}
-          title={
-            notify
-              ? "Desktop notifications are on: with this tab in the background, you are told when Claude asks or finishes. Click to turn them off."
-              : "Turn on desktop notifications, for when Claude asks or finishes while this tab is in the background"
-          }
-        >
-          <IconBell size={13} />
-        </button>
         <button className="ghost" onClick={onNew} title="New session" disabled={!available}>
           <IconPlus size={13} />
         </button>
