@@ -654,7 +654,7 @@ export default function AgentView({
   const runs = useMemo(() => runsOf(items, !!live?.busy, running), [items, live?.busy, running]);
   // What Claude left at work - agents, and commands in the background - over
   // the message box, each opening on what it is doing; peek is the call open.
-  const atWork = useMemo(() => items.filter((it) => peekable(it) && working(it, !!live?.busy, running)), [items, live?.busy, running]);
+  const atWork = useAtWork(items, !!live?.busy, running);
   const [peek, setPeek] = useState(null);
   const peekItem = peek && items.find((it) => it.toolId === peek);
   const peekRef = useRef(null);
@@ -1801,6 +1801,33 @@ export default function AgentView({
 // OpenCall opens the conversation page on a call, from the call's own line.
 const OpenCall = createContext(null);
 
+// LINGER_MS is how long a call that has finished stays over the message box,
+// so one ending is seen there rather than simply gone.
+const LINGER_MS = 10000;
+
+// useAtWork is what the agent left at work - its own agents, and commands in
+// the background - each with `done` once it has ended and is only lingering.
+function useAtWork(items, busy, running) {
+  const at = useMemo(() => items.filter((it) => peekable(it) && working(it, busy, running)), [items, busy, running]);
+  const [done, setDone] = useState([]); // [{ item, until }]
+  const was = useRef([]);
+  useEffect(() => {
+    const ids = new Set(at.map((c) => c.toolId));
+    const ended = was.current.filter((c) => !ids.has(c.toolId));
+    was.current = at;
+    if (!ended.length) return setDone((had) => (had.some((d) => ids.has(d.item.toolId)) ? had.filter((d) => !ids.has(d.item.toolId)) : had));
+    // One at work again - a command read once more - is at work, not done.
+    setDone((had) => [...had.filter((d) => !ids.has(d.item.toolId)), ...ended.map((item) => ({ item, until: Date.now() + LINGER_MS }))]);
+  }, [at]);
+  useEffect(() => {
+    if (!done.length) return;
+    const drop = () => setDone((had) => (had.some((d) => d.until <= Date.now()) ? had.filter((d) => d.until > Date.now()) : had));
+    const t = setTimeout(drop, Math.max(0, Math.min(...done.map((d) => d.until)) - Date.now()) + 50);
+    return () => clearTimeout(t);
+  }, [done]);
+  return useMemo(() => [...at, ...done.map((d) => ({ ...d.item, done: true }))], [at, done]);
+}
+
 // AtWork is what Claude left at work, over the message box: each agent, and
 // each command in the background, opens on what it is doing.
 // Where a selection is not offered: what is typed, and the edits' code, whose
@@ -1927,16 +1954,21 @@ function AtWork({ calls, open, root, onOpen }) {
       {calls.map((c) => {
         const agent = peekable(c) === "agent";
         const { what } = toolSummary(c.tool, c.input, root);
+        // A command is named by the command itself, as a terminal would: what
+        // it is doing is the reason to look, and its own words say it best.
+        const said = agent ? what : (c.input?.command || what || "").split("\n")[0];
+        const why = c.done ? "Finished - here a moment longer" : agent ? "See this agent's conversation as it goes" : "See this command's output as it comes";
+        const label = [!agent && c.input?.description, why].filter(Boolean).join(" · ");
         return (
           <button
             key={c.toolId}
-            className={cx("agent-at-work-call", open === c.toolId && "on")}
+            className={cx("agent-at-work-call", !agent && "mono", c.done && "done", open === c.toolId && "on")}
             onClick={() => onOpen(c.toolId)}
-            title={open === c.toolId ? "Back to the conversation (Esc)" : agent ? "See this agent's conversation as it goes" : "See this command's output as it comes"}
+            title={open === c.toolId ? "Back to the conversation (Esc)" : label}
           >
             <span className="agent-at-work-dot" />
             <span className="agent-at-work-kind">{agent ? c.input?.subagent_type || "Agent" : "Command"}</span>
-            <span className="agent-at-work-what">{what}</span>
+            <span className="agent-at-work-what">{said}</span>
           </button>
         );
       })}

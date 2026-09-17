@@ -4136,6 +4136,16 @@ button.ghost.agent-context {
   animation: at-work 1.6s ease-in-out infinite;
 }
 
+/* Finished, it rests here a moment: still, and the green of something added. */
+.agent-at-work-call.done .agent-at-work-dot {
+  background: var(--add);
+  animation: none;
+}
+
+.agent-at-work-call.mono .agent-at-work-what {
+  font-family: var(--font-mono);
+}
+
 @keyframes at-work {
   50% {
     opacity: 0.35;
