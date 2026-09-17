@@ -137,3 +137,81 @@ func TestInstallRefusesWhatItCannotRead(t *testing.T) {
 		t.Fatalf("the file was touched: %s", b)
 	}
 }
+
+func TestUninstallLeavesTheFileAsItWas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	os.WriteFile(path, []byte(theirs), 0o600)
+	// A space in the path would split it into a command that is not dv.
+	if _, err := Install(path, "/Applications/My Tools/dv"); err != nil {
+		t.Fatal(err)
+	}
+	if exe, err := Installed(path); err != nil || exe != "/Applications/My Tools/dv" {
+		t.Fatalf("installed: %q, %v", exe, err)
+	}
+	if changed, err := Install(path, "/Applications/My Tools/dv"); err != nil || changed {
+		t.Fatalf("installing again: %v, changed %v", err, changed)
+	}
+
+	if changed, err := Uninstall(path); err != nil || !changed {
+		t.Fatalf("uninstall: %v, changed %v", err, changed)
+	}
+	if b, _ := os.ReadFile(path); string(b) != theirs {
+		t.Fatalf("uninstall left:\n%s", b)
+	}
+	if exe, err := Installed(path); err != nil || exe != "" {
+		t.Fatalf("installed after uninstall: %q, %v", exe, err)
+	}
+	if changed, err := Uninstall(path); err != nil || changed {
+		t.Fatalf("again: %v, changed %v", err, changed)
+	}
+}
+
+func TestUninstallDropsTheHooksItEmptied(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	os.WriteFile(path, []byte(`{"model": "opus"}`), 0o644)
+	Install(path, "/opt/bin/dv")
+	if _, err := Uninstall(path); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "{\n  \"model\": \"opus\"\n}\n" {
+		t.Fatalf("uninstall left:\n%s", b)
+	}
+
+	none := filepath.Join(dir, "none.json")
+	if changed, err := Uninstall(none); err != nil || changed {
+		t.Fatalf("with no file: %v, changed %v", err, changed)
+	}
+	if _, err := os.Stat(none); err == nil {
+		t.Fatal("uninstall made a settings file")
+	}
+}
+
+func TestHealOnlyReplacesADvThatIsGone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	kept := filepath.Join(dir, "kept", "dv")
+	os.MkdirAll(filepath.Dir(kept), 0o755)
+	os.WriteFile(kept, nil, 0o755)
+	here := filepath.Join(dir, "here", "dv")
+
+	if old, err := Heal(path, here); err != nil || old != "" {
+		t.Fatalf("with no hooks: %q, %v", old, err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("heal installed hooks nobody asked for")
+	}
+
+	Install(path, kept)
+	if old, err := Heal(path, here); err != nil || old != "" {
+		t.Fatalf("with their dv there: %q, %v", old, err)
+	}
+
+	os.Remove(kept)
+	if old, err := Heal(path, here); err != nil || old != kept {
+		t.Fatalf("with their dv gone: %q, %v", old, err)
+	}
+	if exe, _ := Installed(path); exe != here {
+		t.Fatalf("hooks run %q", exe)
+	}
+}

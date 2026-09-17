@@ -546,7 +546,7 @@ const OFF_ON = [
 // onChange's patches. A phone always shows the diff unified, so it has no
 // layout to pick.
 export function SettingsOverlay({
-  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, settings, onChange, onClose,
+  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose,
 }) {
   return (
     <Modal onClose={onClose} centred className="settings">
@@ -583,6 +583,15 @@ export function SettingsOverlay({
           onPick={onNotices}
           choices={OFF_ON}
         />
+        {hooks && (
+          <Setting
+            label="Prompts from terminal sessions"
+            note={`A session running in a terminal asks here too, through hooks dv puts in ${hooks.path}.`}
+            value={hooks.on}
+            onPick={onHooks}
+            choices={OFF_ON}
+          />
+        )}
         <Setting
           label="Sessions opened by adding start temporary"
           note="A new session opened from Add, or from New session over selected text, starts temporary: once closed, it leaves the session list."

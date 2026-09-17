@@ -91,6 +91,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/claude/hook", guarded(s.handleClaudeHook))
 	mux.HandleFunc("GET /api/claude/requests", guarded(s.handleClaudeRequests))
 	mux.HandleFunc("POST /api/claude/requests/{id}", guarded(s.handleClaudeAnswer))
+	mux.HandleFunc("GET /api/claude/hooks", guarded(s.handleClaudeHooks))
+	mux.HandleFunc("POST /api/claude/hooks", guarded(s.handleClaudeSetHooks))
 
 	mux.HandleFunc("GET /api/agent/sessions", guarded(s.handleAgentSessions))
 	mux.HandleFunc("POST /api/agent/sessions", guarded(s.handleAgentCreate))

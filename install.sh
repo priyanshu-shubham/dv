@@ -58,4 +58,3 @@ case ":$PATH:" in
 *":$dir:"*) ;;
 *) echo "dv: $dir is not on your PATH; add it to run dv from anywhere" ;;
 esac
-echo "dv: run \`dv claude install\` once to see Claude Code's permission prompts in dv"

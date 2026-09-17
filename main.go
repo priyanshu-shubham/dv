@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -47,12 +46,10 @@ func run() error {
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n       dv claude install\n\n"+
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv reset [-y]\n\n"+
 			"Review the current repository's diff in a browser (outside git, read the\n"+
 			"folder's files). reset deletes the\n"+
-			"review's comments and viewed marks, to start it over. claude install\n"+
-			"adds hooks to Claude Code's settings so its permission prompts come up\n"+
-			"in the page too.\n\nflags:\n")
+			"review's comments and viewed marks, to start it over.\n\nflags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -90,6 +87,7 @@ func run() error {
 	if repo.IsGit() {
 		excludeNotes(repo)
 	}
+	healHooks()
 
 	ix := symindex.New(repo.Root, repo)
 	ix.BuildAsync()
@@ -205,47 +203,34 @@ func reset(dir string, args []string) error {
 	return nil
 }
 
-// claude is dv's side of Claude Code: install writes the hooks into its
-// settings, and hook is what those run.
+// claude is what Claude Code's hooks run. The page puts them in its settings
+// and takes them out.
 func claude(args []string) error {
-	switch strings.Join(args, " ") {
-	case "hook":
-		permit.RunHook(os.Stdin, os.Stdout)
-		return nil
-	case "install":
-		return installHooks()
+	if strings.Join(args, " ") != "hook" {
+		return fmt.Errorf("dv claude hook is for Claude Code to run; dv's hooks are added from its page")
 	}
-	return fmt.Errorf("usage: dv claude install (hook is for Claude Code to run)")
+	permit.RunHook(os.Stdin, os.Stdout)
+	return nil
 }
 
-func installHooks() error {
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
-	if err != nil {
-		return err
-	}
-	// `go run` builds into the temp dir and deletes the binary on exit, which
-	// would leave every tool call failing a hook.
-	if strings.HasPrefix(exe, os.TempDir()+string(filepath.Separator)) {
-		return fmt.Errorf("this dv is a temporary build (%s); install it and run that one", exe)
-	}
+// healHooks keeps Claude Code's hooks working after dv moves: they are pointed
+// at this dv once the one they ran is gone.
+func healHooks() {
 	path, err := permit.SettingsPath()
 	if err != nil {
-		return err
+		return
 	}
-	changed, err := permit.Install(path, exe)
+	exe, err := permit.Exe()
 	if err != nil {
-		return err
+		return
 	}
-	if !changed {
-		fmt.Println("dv: the hooks are already in " + path)
-		return nil
+	switch old, err := permit.Heal(path, exe); {
+	case old == "":
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "dv: warning: Claude Code's hooks run %s, which is gone, and could not be pointed here: %v\n", old, err)
+	default:
+		fmt.Printf("dv: Claude Code's hooks ran %s, which is gone; they run %s now\n", old, exe)
 	}
-	fmt.Printf("dv: added hooks to %s, running %s claude hook\n", path, exe)
-	fmt.Println("    Claude Code's permission prompts now come up in the dv open on the session's repository, too.")
-	return nil
 }
 
 func describe(threads, marks int) string {

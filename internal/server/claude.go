@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -102,6 +104,71 @@ func (s *Server) handleClaudeAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hooks is whether Claude Code's hooks reach a dv, which terminal sessions'
+// prompts need, and the settings file they go in.
+type hooks struct {
+	On   bool   `json:"on"`
+	Path string `json:"path"`
+}
+
+func claudeHooks() (hooks, error) {
+	path, err := permit.SettingsPath()
+	if err != nil {
+		return hooks{}, err
+	}
+	shown := path
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(path, home+string(filepath.Separator)) {
+		shown = "~" + path[len(home):]
+	}
+	exe, err := permit.Installed(path)
+	if err != nil {
+		return hooks{Path: shown}, err
+	}
+	_, err = os.Stat(exe)
+	return hooks{On: exe != "" && err == nil, Path: shown}, nil
+}
+
+func (s *Server) handleClaudeHooks(w http.ResponseWriter, r *http.Request) {
+	h, err := claudeHooks()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h)
+}
+
+func (s *Server) handleClaudeSetHooks(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := setHooks(req.On); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.handleClaudeHooks(w, r)
+}
+
+func setHooks(on bool) error {
+	path, err := permit.SettingsPath()
+	if err != nil {
+		return err
+	}
+	if !on {
+		_, err = permit.Uninstall(path)
+		return err
+	}
+	exe, err := permit.Exe()
+	if err != nil {
+		return err
+	}
+	_, err = permit.Install(path, exe)
+	return err
 }
 
 // guarded keeps other web pages away from what can let Claude run a command.

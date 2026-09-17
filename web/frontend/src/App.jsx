@@ -1048,6 +1048,15 @@ export default function App() {
     },
   });
   // Desktop notifications are the browser's to allow, asked when turned on.
+  // Hooks are asked after with the sessions, but Settings opens in any mode.
+  const setHooks = useCallback((hooks) => setAgent((a) => ({ ...a, hooks })), []);
+  useEffect(() => {
+    if (overlay?.type === "settings") api.claudeHooks().then(setHooks, () => {});
+  }, [overlay?.type, setHooks]);
+  const pickHooks = useCallback(
+    (on) => api.setClaudeHooks(on).then(setHooks, (e) => say(on ? "Could not add the hooks" : "Could not take the hooks out", e.message)),
+    [setHooks],
+  );
   const pickDesktopNotices = useCallback(
     async (on) => {
       if (!on || typeof Notification === "undefined") return setDesktopNotices(false);
@@ -1561,6 +1570,8 @@ export default function App() {
             onSymbol={onSymbol}
             onOpenFile={goTo}
             requests={requests}
+            hooks={agent.hooks}
+            onHooks={pickHooks}
             onSelect={selectSession}
             onNew={newSession}
             onStart={startSession}
@@ -1667,6 +1678,8 @@ export default function App() {
           phone={phone}
           notices={desktopNotices}
           onNotices={pickDesktopNotices}
+          hooks={agent.available ? agent.hooks : null}
+          onHooks={pickHooks}
           settings={settings}
           onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onClose={closeOverlay}

@@ -59,17 +59,158 @@ func SettingsPath() (string, error) {
 	return filepath.Join(dir, "settings.json"), nil
 }
 
+// Exe is the dv binary for hooks to run: this one, unless it will not be there.
+func Exe() (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return "", err
+	}
+	// `go run` builds into the temp dir and deletes the binary on exit, which
+	// would leave every tool call failing a hook.
+	if strings.HasPrefix(exe, os.TempDir()+string(filepath.Separator)) {
+		return "", fmt.Errorf("this dv is a temporary build (%s); install it and run that one", exe)
+	}
+	return exe, nil
+}
+
 // Install puts hooks running exe into the settings file at path, in place of
 // any an earlier install left there. The rest of the file is kept as it was,
 // down to the order of its keys. It reports whether the file changed.
 func Install(path, exe string) (bool, error) {
+	s, err := readSettings(path)
+	if err != nil {
+		return false, err
+	}
+	for _, ev := range hookEvents {
+		groups, err := s.groups(ev.name)
+		if err != nil {
+			return false, err
+		}
+		groups = slices.DeleteFunc(groups, isOurs)
+		mine := encode(group{Hooks: []handler{{Type: "command", Command: exe, Args: hookArgs, Timeout: ev.timeout}}})
+		s.hooks.set(ev.name, encode(append(groups, mine)))
+	}
+	return s.write()
+}
+
+// Uninstall takes dv's hooks out of the settings file at path, on any event,
+// and an event or hooks object they leave empty. It reports whether the file
+// changed.
+func Uninstall(path string) (bool, error) {
+	s, err := readSettings(path)
+	if err != nil {
+		return false, err
+	}
+	removed := false
+	for _, m := range slices.Clone(s.hooks) {
+		groups, err := s.groups(m.key)
+		if err != nil {
+			continue
+		}
+		kept := slices.DeleteFunc(slices.Clone(groups), isOurs)
+		switch {
+		case len(kept) == len(groups):
+			continue
+		case len(kept) == 0:
+			s.hooks.remove(m.key)
+		default:
+			s.hooks.set(m.key, encode(kept))
+		}
+		removed = true
+	}
+	if !removed {
+		return false, nil
+	}
+	if len(s.hooks) == 0 {
+		s.top.remove("hooks")
+	}
+	return s.write()
+}
+
+// Installed returns the dv binary the hooks in the settings file at path run,
+// or "" when it has none of dv's.
+func Installed(path string) (string, error) {
+	s, err := readSettings(path)
+	if err != nil {
+		return "", err
+	}
+	for _, ev := range hookEvents {
+		groups, err := s.groups(ev.name)
+		if err != nil {
+			return "", err
+		}
+		for _, g := range groups {
+			if exe := dvRuns(g); exe != "" {
+				return exe, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// Heal points dv's hooks at exe when the binary they run is gone, as after dv
+// is moved. It returns that binary when it tried. A dv that is still there
+// keeps them, or two builds of dv would keep taking them from each other.
+func Heal(path, exe string) (string, error) {
+	old, err := Installed(path)
+	if err != nil || old == "" || old == exe || !filepath.IsAbs(old) {
+		return "", err
+	}
+	if _, err := os.Stat(old); !errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	_, err = Install(path, exe)
+	return old, err
+}
+
+// isOurs reports whether a hook group is one Install wrote.
+func isOurs(raw json.RawMessage) bool { return dvRuns(raw) != "" }
+
+// dvRuns returns the dv binary a hook group runs, if there is nothing in it but
+// dv serving its hook.
+func dvRuns(raw json.RawMessage) string {
+	var g group
+	if json.Unmarshal(raw, &g) != nil || len(g.Hooks) == 0 {
+		return ""
+	}
+	var exe string
+	for _, h := range g.Hooks {
+		exe = h.Command
+		if len(h.Args) == 0 {
+			// A shell line, as written by hand.
+			cmd := strings.Fields(h.Command)
+			if len(cmd) != 3 || !slices.Equal(cmd[1:], hookArgs) {
+				return ""
+			}
+			exe = cmd[0]
+		} else if !slices.Equal(h.Args, hookArgs) {
+			return ""
+		}
+		if strings.TrimSuffix(filepath.Base(exe), ".exe") != "dv" {
+			return ""
+		}
+	}
+	return exe
+}
+
+// settings is a Claude Code settings file, read to change its hooks.
+type settings struct {
+	path       string
+	orig       []byte
+	top, hooks fields
+}
+
+func readSettings(path string) (*settings, error) {
 	// A settings file linked in from dotfiles stays a link.
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
 	}
 	orig, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
+		return nil, err
 	}
 	src := orig
 	if len(bytes.TrimSpace(src)) == 0 {
@@ -77,53 +218,40 @@ func Install(path, exe string) (bool, error) {
 	}
 	top, err := objectFields(src)
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	hooks, err := objectFields(top.get("hooks"))
 	if err != nil {
-		return false, fmt.Errorf("%s: hooks: %w", path, err)
+		return nil, fmt.Errorf("%s: hooks: %w", path, err)
 	}
+	return &settings{path, orig, top, hooks}, nil
+}
 
-	for _, ev := range hookEvents {
-		var groups []json.RawMessage
-		if raw := hooks.get(ev.name); raw != nil {
-			if err := json.Unmarshal(raw, &groups); err != nil {
-				return false, fmt.Errorf("%s: hooks.%s: %w", path, ev.name, err)
-			}
+func (s *settings) groups(event string) ([]json.RawMessage, error) {
+	var groups []json.RawMessage
+	if raw := s.hooks.get(event); raw != nil {
+		if err := json.Unmarshal(raw, &groups); err != nil {
+			return nil, fmt.Errorf("%s: hooks.%s: %w", s.path, event, err)
 		}
-		groups = slices.DeleteFunc(groups, isOurs)
-		mine := encode(group{Hooks: []handler{{Type: "command", Command: exe, Args: hookArgs, Timeout: ev.timeout}}})
-		hooks.set(ev.name, encode(append(groups, mine)))
 	}
-	top.set("hooks", hooks.marshal())
+	return groups, nil
+}
 
+// write saves the file with its hooks as they now are, unless that changes
+// nothing but layout. It reports whether it wrote.
+func (s *settings) write() (bool, error) {
+	if len(s.hooks) > 0 {
+		s.top.set("hooks", s.hooks.marshal())
+	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, top.marshal(), "", "  "); err != nil {
+	if err := json.Indent(&out, s.top.marshal(), "", "  "); err != nil {
 		return false, err
 	}
 	out.WriteByte('\n')
-	if same(orig, out.Bytes()) {
+	if same(s.orig, out.Bytes()) {
 		return false, nil
 	}
-	return true, writeFile(path, out.Bytes())
-}
-
-// isOurs reports whether a hook group is one Install wrote: nothing in it but
-// dv serving its hook.
-func isOurs(raw json.RawMessage) bool {
-	var g group
-	if json.Unmarshal(raw, &g) != nil || len(g.Hooks) == 0 {
-		return false
-	}
-	for _, h := range g.Hooks {
-		cmd := strings.Fields(h.Command)
-		ok := len(cmd) == 1 && slices.Equal(h.Args, hookArgs) ||
-			len(cmd) == 3 && len(h.Args) == 0 && slices.Equal(cmd[1:], hookArgs)
-		if !ok || filepath.Base(cmd[0]) != "dv" {
-			return false
-		}
-	}
-	return true
+	return true, writeFile(s.path, out.Bytes())
 }
 
 // encode is json.Marshal without its HTML escaping, which would turn every &&
@@ -211,6 +339,10 @@ func (f *fields) set(key string, v json.RawMessage) {
 		}
 	}
 	*f = append(*f, member{key, v})
+}
+
+func (f *fields) remove(key string) {
+	*f = slices.DeleteFunc(*f, func(m member) bool { return m.key == key })
 }
 
 func (f fields) marshal() json.RawMessage {

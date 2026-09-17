@@ -42,8 +42,11 @@ func session(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 	opts := s.agent.Options()
+	// Asked with the sessions so the page hears of hooks put in from a terminal.
+	hooks, _ := claudeHooks()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available": agent.Available(),
+		"hooks":     hooks,
 		"sessions":  s.agent.Sessions(),
 		"models":    opts.Models,
 		"modes":     agentModes,

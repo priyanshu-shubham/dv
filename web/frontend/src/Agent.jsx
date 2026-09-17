@@ -453,7 +453,7 @@ function prettyModel(id) {
 export default function AgentView({
   id, session, available, models, modes, defaultMode, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
-  requests, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, offline, active = true,
+  requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, offline, active = true,
 }) {
   // A session shows from its latest compaction until the reader asks for what
   // came before: by session, where it is shown from then.
@@ -1507,7 +1507,17 @@ export default function AgentView({
         <div className="agent-readonly agent-lost">
           Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back.
         </div>
-      ) : peekItem ? null : readOnly ? (
+      ) : peekItem ? null : readOnly && hooks?.on === false ? (
+        // Asked here, where the prompts would have come up, rather than when dv
+        // is installed or first run: hooks go in Claude Code's settings for good.
+        <div className="agent-readonly">
+          This session is open in a terminal, and only the terminal can talk to it. For its prompts to come up here as
+          well, dv needs hooks in {hooks.path}.{" "}
+          <button className="link" onClick={() => onHooks(true)}>
+            Add them
+          </button>
+        </div>
+      ) : readOnly ? (
         <div className="agent-readonly">
           This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it.
         </div>

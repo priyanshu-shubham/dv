@@ -34,8 +34,8 @@ another directory. On Windows, take the zip from the
 [releases page](https://github.com/priyanshu-shubham/dv/releases).
 
 dv needs `git` for the diff. `rg` is used for text search when present, with a
-built-in scanner as the fallback. If you use Claude Code, run
-`dv claude install` once. To build it yourself, see [From source](#from-source).
+built-in scanner as the fallback. To build it yourself, see
+[From source](#from-source).
 
 ## What it does
 
@@ -365,20 +365,19 @@ of an option shows beside the list, *Something else* takes your own answer, and
 sums up your answers, with rows to send them or cancel. Half-answered questions
 keep their place if you put them away or reload.
 
-For terminal sessions this works through Claude Code's hooks, which one command
-puts in place:
+For terminal sessions this works through Claude Code's hooks. dv does not add
+them on its own: a terminal session open in the Agent view offers to, and
+*Prompts from terminal sessions* in Settings turns them on and off. Turn it off
+before removing dv, or the hooks are left running a binary that is not there.
 
-```
-dv claude install
-```
-
-That adds three hooks to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`),
-beside any you have, and running it again after moving dv updates them rather
-than adding more. Each runs `dv claude hook`, which looks for a dv open on the
-session's repository and does nothing when there is none, so Claude Code
-behaves as it always has wherever dv is not open. `PermissionRequest` is the
-question; the two `PostToolUse` hooks are how dv hears that the terminal
-answered first, and how a Yes's note reaches Claude.
+The setting adds three hooks to `~/.claude/settings.json` (or
+`$CLAUDE_CONFIG_DIR`), beside any you have, and adding them again updates them
+rather than adding more. If dv moves, the next dv to start points the hooks at
+itself once the binary they ran is gone. Each runs `dv claude hook`, which
+looks for a dv open on the session's repository and does nothing when there is
+none, so Claude Code behaves as it always has wherever dv is not open.
+`PermissionRequest` is the question; the two `PostToolUse` hooks are how dv
+hears that the terminal answered first, and how a Yes's note reaches Claude.
 
 ## From source
 
@@ -411,9 +410,6 @@ into `dist/` without publishing anything.
 -no-open      don't open a browser
 -version      print the version
 ```
-
-`dv claude install` puts dv's hooks in Claude Code's settings; see *Claude
-Code's prompts* above. `dv claude hook` is what those hooks run.
 
 `dv reset` deletes the review — every comment and viewed mark — after asking.
 `-y` skips the question, and is needed when stdin is not a terminal. A dv

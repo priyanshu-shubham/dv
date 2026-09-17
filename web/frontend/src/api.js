@@ -123,6 +123,11 @@ export const api = {
   claudeAnswer: (id, answer) =>
     req(`/api/claude/requests/${id}`, { method: "POST", body: JSON.stringify(answer) }),
 
+  // claudeHooks: { on, path }, whether terminal sessions' prompts can reach dv
+  // through hooks in the Claude Code settings file at path.
+  claudeHooks: () => req("/api/claude/hooks"),
+  setClaudeHooks: (on) => req("/api/claude/hooks", { method: "POST", body: JSON.stringify({ on }) }),
+
   agentSessions: () => req("/api/agent/sessions"),
   // agentCommands is the slash commands a session takes: { commands: [{ name, description, argumentHint }] }.
   agentCommands: () => req("/api/agent/commands"),
