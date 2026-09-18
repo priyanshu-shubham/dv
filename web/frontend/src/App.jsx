@@ -21,6 +21,7 @@ import { asMedia } from "./Preview.jsx";
 import { agentName, cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, usePref } from "./prefs.js";
 import { boot } from "./boot.js";
+import { setTabIcon, tabDot } from "./favicon.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
@@ -1070,10 +1071,11 @@ export default function App() {
     [agent.sessions, agentId, setAgentId, loadSessions],
   );
 
+  const elsewhere = useHubActivity();
   const ended = useNotices({
     requests,
     sessions: activity,
-    elsewhere: useHubActivity(),
+    elsewhere,
     looking: mode === "agent" ? agentId : null,
     desktop: desktopNotices,
     go: openFolderSession,
@@ -1112,10 +1114,13 @@ export default function App() {
   // checkouts that share a name.
   useEffect(() => {
     const n = requests.length;
-    const repo = meta ? `dv - ${meta.repo} (${meta.place})` : "dv";
+    const who = settings.tabName?.trim() || "dv";
+    const repo = meta ? `${who} - ${meta.repo} (${meta.place})` : who;
     const note = n > 0 ? `${agentName(requests[0].via)} is waiting` : ended > 0 && "Finished";
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
-  }, [requests, ended, meta]);
+  }, [requests, ended, meta, settings.tabName]);
+  const dot = tabDot(requests, elsewhere, ended);
+  useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   // Shift+Up and Down go through the open sessions in the order the list has
   // them. The message box keeps them for selecting text, unless it is empty.

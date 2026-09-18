@@ -10,6 +10,7 @@ import { cx, LRM, modKey, statusLabel, useCopy, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml } from "./highlight.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
+import { TAB_COLORS, tabIconURL } from "./favicon.js";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -609,6 +610,12 @@ const OFF_ON = [
   [true, "On"],
 ];
 
+const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
+  c,
+  <img src={tabIconURL(c)} width={16} height={16} alt="" />,
+  c ? c[0].toUpperCase() + c.slice(1) : "dv's own",
+]);
+
 // SettingsOverlay is dv's preferences, kept in this browser: the page's own,
 // as the header also sets them, and `settings`, which only this sets through
 // onChange's patches. A phone always shows the diff unified, so it has no
@@ -643,6 +650,25 @@ export function SettingsOverlay({
           value={settings.sidebar || "left"}
           onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
           choices={[["left", "Left"], ["right", "Right"]]}
+        />
+        <label className="settings-row">
+          <div className="settings-text">
+            <div>Name in the tab</div>
+            <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's. Every dv on this computer uses it.</div>
+          </div>
+          <input
+            value={settings.tabName || ""}
+            placeholder="dv"
+            maxLength={40}
+            spellCheck={false}
+            onChange={(e) => onChange({ tabName: e.target.value || undefined })}
+          />
+        </label>
+        <Setting
+          label="Tab icon"
+          value={settings.tabColor || ""}
+          onPick={(v) => onChange({ tabColor: v || undefined })}
+          choices={TAB_ICONS}
         />
         <div className="menu-label">Diff</div>
         {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
@@ -688,7 +714,8 @@ export function SettingsOverlay({
   );
 }
 
-// Setting is one preference and its choices, [value, label] pairs.
+// Setting is one preference and its choices, [value, label] pairs, with a
+// tooltip third where the label is a picture.
 function Setting({ label, note, value, onPick, choices }) {
   return (
     <div className="settings-row">
@@ -697,8 +724,8 @@ function Setting({ label, note, value, onPick, choices }) {
         {note && <div className="settings-note">{note}</div>}
       </div>
       <span className="seg">
-        {choices.map(([v, name]) => (
-          <button key={String(v)} className={cx(v === value && "on")} aria-pressed={v === value} onClick={() => onPick(v)}>
+        {choices.map(([v, name, title]) => (
+          <button key={String(v)} className={cx(v === value && "on")} aria-pressed={v === value} aria-label={title} title={title} onClick={() => onPick(v)}>
             {name}
           </button>
         ))}

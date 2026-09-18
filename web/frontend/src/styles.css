@@ -2796,6 +2796,12 @@ mark {
   margin-left: auto;
 }
 
+.settings-row > input {
+  flex: 0 1 200px;
+  min-width: 0;
+  margin-left: auto;
+}
+
 .settings-note {
   margin-top: 2px;
   color: var(--fg-3);
@@ -2830,6 +2836,12 @@ mark {
   .settings-row > .seg > button {
     flex: 1 1 auto;
     height: 36px;
+  }
+
+  .settings-row > input {
+    flex: none;
+    height: 36px;
+    margin-left: 0;
   }
 }
 

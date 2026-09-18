@@ -6,6 +6,7 @@ import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconX } from "./icons.jsx";
+import { setTabIcon, tabDot } from "./favicon.js";
 
 const POLL_MS = 2000;
 const BUSY_POLL_MS = 700;
@@ -32,11 +33,13 @@ export default function Hub() {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.code = settings.codeColors || "github";
   }, [theme, settings.codeColors]);
+  useEffect(() => {
+    document.title = `${settings.tabName?.trim() || "dv"} hub`;
+  }, [settings.tabName]);
 
   // "settings", "folder" or "clone", or { worktree } or { hooks }, a folder.
   const [dialog, setDialog] = useState(null);
   useEffect(() => {
-    document.title = "dv hub";
     const onKey = (e) => {
       if (e.key !== "," || e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || document.querySelector(".backdrop")) return;
       e.preventDefault();
@@ -61,7 +64,10 @@ export default function Hub() {
 
   // What the folders are doing, for notices about any of them: the hub's page
   // is on none of them.
-  useNotices({ elsewhere: useHubActivity(), desktop: notices, go: openFolderSession });
+  const elsewhere = useHubActivity();
+  const ended = useNotices({ elsewhere, desktop: notices, go: openFolderSession });
+  const dot = tabDot(null, elsewhere, ended);
+  useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   const pickNotices = async (on) => {
     if (!on || typeof Notification === "undefined") return setNotices(false);

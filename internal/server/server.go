@@ -7,7 +7,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -33,6 +35,21 @@ var staticFS embed.FS
 
 //go:embed index.html
 var indexHTML []byte
+
+// assetVersion is a hash of the two bundles, put on the page's URLs for them.
+// A proxy in front of dv can stretch their no-cache into hours - Cloudflare's
+// default does - and a reload fetches the page again but not what it loads.
+var assetVersion = func() string {
+	h := sha256.New()
+	for _, name := range []string{"static/bundle.js", "static/bundle.css"} {
+		b, err := staticFS.ReadFile(name)
+		if err != nil {
+			return ""
+		}
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}()
 
 // AssetsBuilt reports whether the UI bundle made it into the binary. Without it
 // dv still starts and still serves the page shell, and the browser silently
@@ -271,6 +288,11 @@ func WritePage(w http.ResponseWriter, boot Boot) {
 	const root = `<div id="root"></div>`
 	script := `<script id="dv-boot" type="application/json">` + string(b) + "</script>\n"
 	page := bytes.Replace(indexHTML, []byte(root), []byte(script+root), 1)
+	if assetVersion != "" {
+		for _, src := range []string{`"/static/bundle.js"`, `"/static/bundle.css"`} {
+			page = bytes.Replace(page, []byte(src), []byte(src[:len(src)-1]+"?v="+assetVersion+`"`), 1)
+		}
+	}
 	// The theme is on <html> from the first frame, before any script has run.
 	var theme string
 	var settings struct {
@@ -314,10 +336,12 @@ func Answers(url, root string) bool {
 }
 
 // cacheHeaders lets the browser keep chunk-*.js forever (esbuild content-hashes
-// those names) while always revalidating the two stable bundle names.
+// those names), and the two bundles when asked for at this build's version.
+// Anything else, a bundle at another version included, is revalidated.
 func cacheHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/"), "chunk-") {
+		chunk := strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/"), "chunk-")
+		if chunk || assetVersion != "" && r.URL.Query().Get("v") == assetVersion {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
