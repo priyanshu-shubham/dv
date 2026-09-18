@@ -6,6 +6,8 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -26,6 +28,29 @@ func TestNewer(t *testing.T) {
 		if got := Newer(c.a, c.b); got != c.want {
 			t.Errorf("Newer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+func TestReplaceAndRollback(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "dv")
+	os.WriteFile(exe, []byte("old"), 0o755)
+	if err := replace(exe, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "new" {
+		t.Fatalf("installed %q, want new", b)
+	}
+	if b, _ := os.ReadFile(previous(exe)); string(b) != "old" {
+		t.Fatalf("kept %q aside, want old", b)
+	}
+	if err := rollback(exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatalf("after rollback %q, want old", b)
+	}
+	if _, err := os.Stat(previous(exe)); !os.IsNotExist(err) {
+		t.Fatalf("the copy aside is still there after rollback: %v", err)
 	}
 }
 

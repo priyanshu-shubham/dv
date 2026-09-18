@@ -105,20 +105,29 @@ func part(s []string, i int) int {
 	return n
 }
 
+// Path is where the running dv is installed, as found when it started. Asked
+// later it could name the old binary, which Install moves aside: on Linux a
+// running program's path follows its file through a rename.
+var Path, pathErr = func() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
+}()
+
 var installing sync.Mutex
 
 // Install puts release version in place of the binary running now, which
-// takes it on its next start.
+// takes it on its next start. The one it replaces is kept until Commit or
+// Rollback.
 func Install(ctx context.Context, version string) error {
 	installing.Lock()
 	defer installing.Unlock()
 
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	exe, err := Path, pathErr
 	if err != nil {
-		return fmt.Errorf("cannot tell where dv is installed: %w", err)
+		return fmt.Errorf("Cannot tell where dv is installed: %w", err)
 	}
 	name, ext := "dv", ".tar.gz"
 	if runtime.GOOS == "windows" {
@@ -211,9 +220,9 @@ func extract(archive []byte, ext, name string) ([]byte, error) {
 	return nil, fmt.Errorf("the release's archive has no %s in it", name)
 }
 
-// replace writes the new binary beside the old one and renames it over it, so
-// no moment has half a binary at the path. Windows will not rename over a
-// program that is running, but will move it aside.
+// replace writes the new binary beside the old one and renames it into place,
+// so no moment has half a binary at the path. The old one is moved aside
+// rather than written over, which Windows will do to a program still running.
 func replace(exe string, bin []byte) error {
 	dir := filepath.Dir(exe)
 	tmp, err := os.CreateTemp(dir, ".dv.new-*")
@@ -231,17 +240,28 @@ func replace(exe string, bin []byte) error {
 	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
 		return err
 	}
-	if runtime.GOOS == "windows" {
-		old := exe + ".old"
-		os.Remove(old) // the one moved aside last time, no longer running
-		if err := os.Rename(exe, old); err != nil {
-			return err
-		}
-		if err := os.Rename(tmp.Name(), exe); err != nil {
-			os.Rename(old, exe)
-			return err
-		}
-		return nil
+	prev := previous(exe)
+	os.Remove(prev) // one left by an update Windows could not delete while it ran
+	if err := os.Rename(exe, prev); err != nil {
+		return err
 	}
-	return os.Rename(tmp.Name(), exe)
+	if err := os.Rename(tmp.Name(), exe); err != nil {
+		os.Rename(prev, exe)
+		return err
+	}
+	return nil
+}
+
+func previous(exe string) string { return exe + ".previous" }
+
+// Rollback puts back the binary Install replaced, the new one having failed
+// its trial.
+func Rollback() error { return rollback(Path) }
+
+func rollback(exe string) error { return os.Rename(previous(exe), exe) }
+
+// Commit lets go of the binary Install replaced, the new one having passed.
+// Windows will not delete it while it runs; the next Install does.
+func Commit() {
+	os.Remove(previous(Path))
 }

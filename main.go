@@ -30,10 +30,16 @@ import (
 	"dv/internal/permit"
 	"dv/internal/server"
 	"dv/internal/store"
+	"dv/internal/update"
 )
 
 func main() {
-	os.Unsetenv(restartEnv) // not for the sessions dv starts, nor the next restart
+	// Not for the sessions dv starts, nor the next restart.
+	os.Unsetenv(restartEnv)
+	os.Unsetenv(update.TrialEnv)
+	if trial {
+		time.AfterFunc(time.Minute, func() { os.Exit(1) }) // should what started it not stop it
+	}
 	err := run()
 	// Only now, with run's deferred cleanup done: sessions stopped, pages closed
 	// and the prompts' routing to this dv taken down.
@@ -52,6 +58,14 @@ func main() {
 const restartEnv = "DV_RESTART_ADDR"
 
 var restartAddr = os.Getenv(restartEnv)
+
+// trial is a dv started by a running one to see that it starts and serves
+// before that one hands over (update.Try). It listens on a port of its own and
+// touches nothing another dv shares: where Claude Code's prompts are routed,
+// the hooks, a browser.
+var trial = os.Getenv(update.TrialEnv) != ""
+
+const trialAddr = "127.0.0.1:0"
 
 // errRestart is how serve says dv is to run again; addr is where it listened.
 type errRestart struct{ addr string }
@@ -103,7 +117,7 @@ func run() error {
 	}
 	// Open in another dv, a hub's included, it is opened there rather than
 	// twice: each would take Claude Code's prompts to be its own.
-	if s, ok := store.Announced(repo.Root); ok && server.Answers(s.URL, repo.Root) {
+	if s, ok := store.Announced(repo.Root); ok && !trial && server.Answers(s.URL, repo.Root) {
 		fmt.Printf("\n  \033[1m%s\033[0m is already open in dv\n  \033[1;32m%s\033[0m\n\n", repo.Name(), s.URL)
 		if !*noOpen {
 			openBrowser(s.URL)
@@ -114,7 +128,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	healHooks()
+	if !trial {
+		healHooks()
+	}
 
 	srv, err := server.Open(repo.Root, user)
 	if err != nil {
@@ -139,7 +155,9 @@ func run() error {
 		openBrowser(url)
 	}
 
-	if unannounce, err := store.Announce(repo.Root, url); err != nil {
+	if trial {
+		fmt.Println(update.TrialMark + ln.Addr().String())
+	} else if unannounce, err := store.Announce(repo.Root, url); err != nil {
 		fmt.Fprintln(os.Stderr, "dv: warning: Claude Code's prompts cannot find this dv:", err)
 	} else {
 		defer unannounce()
@@ -170,9 +188,12 @@ func runHub(args []string) error {
 		return err
 	}
 	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
+	if trial {
+		addr = trialAddr
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		if url := "http://" + addr; hubAnswers(url) {
+		if url := "http://" + addr; !trial && hubAnswers(url) {
 			fmt.Printf("\n  dv hub is already running\n  \033[1;32m%s\033[0m\n\n", url)
 			if !*noOpen {
 				openBrowser(url)
@@ -182,7 +203,9 @@ func runHub(args []string) error {
 		return fmt.Errorf("%w (-port picks another)", err)
 	}
 	url := "http://" + ln.Addr().String()
-	healHooks()
+	if !trial {
+		healHooks()
+	}
 
 	h := hub.New(url, user, folders)
 	defer h.Close()
@@ -190,6 +213,11 @@ func runHub(args []string) error {
 	fmt.Printf("  \033[1;32m%s\033[0m\n\n  ctrl-c to stop\n\n", url)
 	if !*noOpen {
 		openBrowser(url)
+	}
+	// Asked for nothing but its page, a trial opens no folder, so announces
+	// none: where Claude Code's prompts go stays with the hub running.
+	if trial {
+		fmt.Println(update.TrialMark + ln.Addr().String())
 	}
 	return serve(ln, h.Handler())
 }
@@ -355,6 +383,9 @@ func homePort(root string) int {
 }
 
 func listen(host string, port int, root string) (net.Listener, error) {
+	if trial {
+		return net.Listen("tcp", trialAddr)
+	}
 	if restartAddr != "" {
 		return net.Listen("tcp", restartAddr)
 	}
@@ -379,7 +410,7 @@ func listen(host string, port int, root string) (net.Listener, error) {
 // openBrowser makes a best effort and stays silent on failure — the URL is
 // already printed, which is the fallback.
 func openBrowser(url string) {
-	if restartAddr != "" {
+	if restartAddr != "" || trial {
 		return
 	}
 	var cmd *exec.Cmd

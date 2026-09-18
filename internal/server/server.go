@@ -302,16 +302,26 @@ var binaryStamp = func() string {
 
 func thisRun() Run { return Run{started, Version, binaryStamp, assetVersion} }
 
-// HandleRestart says which run this is, and on POST restarts. It is the whole
-// process's, a hub's folders and all, so a hub serves it at its root too.
+// HandleRestart says which run this is, and on POST restarts, once the binary
+// installed has shown in a trial that it starts; if not, this dv keeps
+// running. It is the whole process's, a hub's folders and all, so a hub
+// serves it at its root too.
 func HandleRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		select {
-		case Restart <- struct{}{}:
-		default:
+		if err := update.Try(r.Context(), ""); err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Errorf("%w. This one keeps running.", err))
+			return
 		}
+		restart()
 	}
 	writeJSON(w, http.StatusOK, thisRun())
+}
+
+func restart() {
+	select {
+	case Restart <- struct{}{}:
+	default:
+	}
 }
 
 // HandleUpdateCheck says whether a newer release than this dv is out. Builds
@@ -330,8 +340,9 @@ func HandleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleUpdateInstall installs the release asked for, {"version"}, over this
-// dv and restarts into it. Newer is also what keeps the version to digits and
-// dots, as it goes into the download's URL.
+// dv and restarts into it - or, failing its trial, puts the binary it replaced
+// back. Newer is also what keeps the version to digits and dots, as it goes
+// into the download's URL.
 func HandleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Version string `json:"version"`
@@ -344,10 +355,17 @@ func HandleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	select {
-	case Restart <- struct{}{}:
-	default:
+	if err := update.Try(r.Context(), req.Version); err != nil {
+		if back := update.Rollback(); back != nil {
+			err = fmt.Errorf("%w. Putting v%s back failed too: %v", err, Version, back)
+		} else {
+			err = fmt.Errorf("%w. dv stays on v%s.", err, Version)
+		}
+		writeErr(w, http.StatusInternalServerError, err)
+		return
 	}
+	update.Commit()
+	restart()
 	writeJSON(w, http.StatusOK, thisRun())
 }
 
