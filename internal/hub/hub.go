@@ -69,6 +69,8 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/prefs", server.Guarded(setPrefs))
 	mux.HandleFunc("GET /api/restart", server.Guarded(server.HandleRestart))
 	mux.HandleFunc("POST /api/restart", server.Guarded(server.HandleRestart))
+	mux.HandleFunc("GET /api/update", server.Guarded(server.HandleUpdateCheck))
+	mux.HandleFunc("POST /api/update", server.Guarded(server.HandleUpdateInstall))
 	mux.HandleFunc("GET /api/hub/folders", server.Guarded(h.handleFolders))
 	mux.HandleFunc("POST /api/hub/folders", server.Guarded(h.handleAdd))
 	mux.HandleFunc("PATCH /api/hub/folders/{slug}", server.Guarded(h.handleUpdate))

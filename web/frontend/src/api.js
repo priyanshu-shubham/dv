@@ -240,6 +240,10 @@ export const api = {
   // restarts with all its folders.
   run: () => req("/api/restart", {}, ""),
   restart: () => req("/api/restart", { method: "POST", body: "{}" }, ""),
+  // updateCheck: { version, latest, newer }, or just { version: "dev" } for a
+  // build of one's own; update installs latest and restarts into it.
+  updateCheck: () => req("/api/update", {}, ""),
+  update: (version) => req("/api/update", { method: "POST", body: JSON.stringify({ version }) }, ""),
 
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
   // user's settings' version; with details, each git folder has its remote and

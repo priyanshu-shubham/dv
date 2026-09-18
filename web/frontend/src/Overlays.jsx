@@ -625,6 +625,7 @@ const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
 export function SettingsOverlay({
   theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
   working = 0,
+  update,
 }) {
   return (
     <Modal onClose={onClose} centred className="settings">
@@ -711,28 +712,52 @@ export function SettingsOverlay({
           choices={OFF_ON}
         />
         <div className="menu-label">Server</div>
-        <RestartRow working={working} />
+        {boot.run.version !== "dev" && (
+          <Setting
+            label="Check for updates"
+            note="Asks GitHub which release is newest when a page opens, at most every six hours."
+            value={settings.updateCheck !== false}
+            onPick={(on) => onChange({ updateCheck: on ? undefined : false })}
+            choices={OFF_ON}
+          />
+        )}
+        <RestartRow working={working} update={update} />
       </div>
     </Modal>
   );
 }
 
+// useUpdate is the newer release, if one is out: asked as the page loads and
+// on coming back to the tab, of a server that keeps its answer for hours. A
+// build of one's own is never checked.
+export function useUpdate(off) {
+  const [found, setFound] = useState(null);
+  useEffect(() => {
+    if (off || boot.run.version === "dev") return setFound(null);
+    const check = () => document.hidden || api.updateCheck().then((u) => setFound(u.newer ? u : null), () => {});
+    check();
+    document.addEventListener("visibilitychange", check);
+    return () => document.removeEventListener("visibilitychange", check);
+  }, [off]);
+  return found;
+}
+
 const RESTART_WAIT_MS = 60000;
 
-// RestartRow runs dv again from the binary installed now, and reloads the page
-// once the new run answers. working is how many sessions dv runs are busy,
-// which the restart stops.
-function RestartRow({ working }) {
-  const [state, setState] = useState(""); // "", "restarting", or what went wrong
-  const restart = async () => {
+// RestartRow runs dv again from the binary installed now, or first installs
+// update, the newer release; then it reloads the page once the new run
+// answers. working is how many sessions dv runs are busy, which it stops.
+function RestartRow({ working, update }) {
+  const [state, setState] = useState(""); // "", "restarting", "updating", or what went wrong
+  const go = (install) => async () => {
     const which = working === 1 ? "A session is" : `${working} sessions are`;
     if (working && !confirm(`${which} still working. Restart dv and stop ${working === 1 ? "it" : "them"}?`)) return;
-    setState("restarting");
+    setState(install ? "updating" : "restarting");
     try {
       const was = await api.run();
       sessionStorage.setItem(RESTART_KEY, JSON.stringify(was));
       // The old run can close the connection before its answer is out.
-      await api.restart().catch((e) => {
+      await (install ? api.update(update.latest) : api.restart()).catch((e) => {
         if (!(e instanceof TypeError)) throw e;
       });
       for (const until = Date.now() + RESTART_WAIT_MS; Date.now() < until; ) {
@@ -747,18 +772,34 @@ function RestartRow({ working }) {
       setState(e.message);
     }
   };
-  const failed = state && state !== "restarting";
+  const busy = state === "restarting" || state === "updating";
+  const failed = state && !busy;
+  const note = update ? (
+    <>
+      v{update.latest} is out; this is v{update.version}.{" "}
+      <a className="link" href={`https://github.com/priyanshu-shubham/dv/releases/tag/v${update.latest}`} target="_blank" rel="noopener">
+        What is new
+      </a>
+    </>
+  ) : (
+    "Runs dv again from the version installed now, in the same terminal. Sessions it runs stop, and carry on at your next message."
+  );
   return (
     <div className="settings-row">
       <div className="settings-text">
         <div>Restart</div>
-        <div className={cx("settings-note", failed && "prompt-error")}>
-          {failed ? state : "Runs dv again from the version installed now, in the same terminal. Sessions it runs stop, and carry on at your next message."}
-        </div>
+        <div className={cx("settings-note", failed && "prompt-error")}>{failed ? state : note}</div>
       </div>
-      <button className="btn" disabled={state === "restarting"} onClick={restart}>
-        {state === "restarting" ? "Restarting…" : "Restart"}
-      </button>
+      <span className="settings-actions">
+        {update && (
+          <button className="primary" disabled={busy} onClick={go(true)}>
+            {state === "updating" ? "Updating…" : "Update and restart"}
+          </button>
+        )}
+        <button className="btn" disabled={busy} onClick={go(false)}>
+          {state === "restarting" ? "Restarting…" : "Restart"}
+        </button>
+      </span>
     </div>
   );
 }

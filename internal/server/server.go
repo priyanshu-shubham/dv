@@ -25,6 +25,7 @@ import (
 	"dv/internal/permit"
 	"dv/internal/store"
 	"dv/internal/symindex"
+	"dv/internal/update"
 )
 
 // The bundle is built by `make build`, not checked in - only the .keep beside
@@ -220,6 +221,8 @@ func (s *Server) Handler(base string) http.Handler {
 
 	mux.HandleFunc("GET /api/restart", Guarded(HandleRestart))
 	mux.HandleFunc("POST /api/restart", Guarded(HandleRestart))
+	mux.HandleFunc("GET /api/update", Guarded(HandleUpdateCheck))
+	mux.HandleFunc("POST /api/update", Guarded(HandleUpdateInstall))
 
 	mux.HandleFunc("GET /api/symbols", s.handleSymbols)
 	mux.HandleFunc("GET /api/symbols/status", s.handleSymbolStatus)
@@ -307,6 +310,43 @@ func HandleRestart(w http.ResponseWriter, r *http.Request) {
 		case Restart <- struct{}{}:
 		default:
 		}
+	}
+	writeJSON(w, http.StatusOK, thisRun())
+}
+
+// HandleUpdateCheck says whether a newer release than this dv is out. Builds
+// of one's own, "dev", are not checked.
+func HandleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if Version == "dev" {
+		writeJSON(w, http.StatusOK, map[string]string{"version": Version})
+		return
+	}
+	latest, err := update.Latest(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": Version, "latest": latest, "newer": update.Newer(latest, Version)})
+}
+
+// HandleUpdateInstall installs the release asked for, {"version"}, over this
+// dv and restarts into it. Newer is also what keeps the version to digits and
+// dots, as it goes into the download's URL.
+func HandleUpdateInstall(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !update.Newer(req.Version, Version) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a release newer than this dv, %s", req.Version, Version))
+		return
+	}
+	if err := update.Install(r.Context(), req.Version); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	select {
+	case Restart <- struct{}{}:
+	default:
 	}
 	writeJSON(w, http.StatusOK, thisRun())
 }

@@ -5,7 +5,7 @@ import Header, { AUTO } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay } from "./Overlays.jsx";
+import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import AgentView from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
@@ -1120,6 +1120,7 @@ export default function App() {
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
   }, [requests, ended, meta, settings.tabName]);
   const dot = tabDot(requests, elsewhere, ended);
+  const update = useUpdate(settings.updateCheck === false);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   // Shift+Up and Down go through the open sessions in the order the list has
@@ -1438,6 +1439,7 @@ export default function App() {
         arrived={arrived}
         onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
         bellOn={promptOpen}
+        update={update}
         comments={threads.filter((t) => !t.resolved).length}
         commentsOn={showComments}
         onComments={() => (phone ? setPanel((p) => (p === "comments" ? null : "comments")) : setCommentsOpen((o) => !o))}
@@ -1746,6 +1748,7 @@ export default function App() {
           onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onClose={closeOverlay}
           working={[activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length}
+          update={update}
         />
       )}
     </div>

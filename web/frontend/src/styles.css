@@ -433,7 +433,13 @@ button.link {
   font-size: var(--fs-sm);
 }
 
-button.link:hover {
+a.link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+button.link:hover,
+a.link:hover {
   text-decoration: underline;
 }
 
@@ -2802,7 +2808,10 @@ mark {
   margin-left: auto;
 }
 
-.settings-row > .btn {
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -2842,11 +2851,19 @@ mark {
     height: 36px;
   }
 
-  .settings-row > input,
-  .settings-row > .btn {
+  .settings-row > input {
     flex: none;
     height: 36px;
     margin-left: 0;
+  }
+
+  .settings-actions {
+    margin-left: 0;
+  }
+
+  .settings-actions > button {
+    flex: 1 1 auto;
+    height: 36px;
   }
 }
 
@@ -5540,6 +5557,22 @@ button.ghost.composer-add {
   .prompt-option .hint {
     display: none;
   }
+}
+
+/* A newer release is out: said in Settings, where the update is. */
+.topbar .icon.has-update {
+  position: relative;
+}
+
+.topbar .icon.has-update::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 /* The header's bell: what is waiting, one click from the request. */

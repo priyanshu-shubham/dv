@@ -17,7 +17,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // menu button.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, sideOn, onSide,
+  comments, commentsOn, onComments, sideOn, onSide, update,
 }) {
   const agent = mode === "agent";
   return (
@@ -82,7 +82,7 @@ export default function Header({
       <button className="icon wide-only" onClick={onHelp} title="Keyboard shortcuts (?)">
         <IconKeyboard size={14} />
       </button>
-      <button className="icon" onClick={onSettings} title="Settings (,)">
+      <button className={cx("icon", update && "has-update")} onClick={onSettings} title={update ? `Settings (,): dv v${update.latest} is out` : "Settings (,)"}>
         <IconSettings size={14} />
       </button>
       </div>

@@ -879,6 +879,7 @@ export default function AgentView({
   // The message shows at once, and from the blank session is carried into the
   // one made for it.
   const send = async () => {
+    if (lost) return; // the note over the box says why; the draft stays
     if (draft.startsWith("!")) return runShell(draft.slice(1).trim());
     // A command goes alone; what was added and the pictures wait in the box for the next message.
     const command = commandOf(draft, commands);
@@ -1552,7 +1553,7 @@ export default function AgentView({
             <button
               className="composer-send"
               onClick={send}
-              disabled={!canSend}
+              disabled={!canSend || lost}
               title={busy ? `Send: ${name} reads it once the step it is on is done (Enter)` : "Send (Enter, Shift+Enter for a new line)"}
             >
               <IconArrowUp size={15} />
@@ -1755,11 +1756,15 @@ export default function AgentView({
       </div>
 
       {atWork.length > 0 && <AtWork calls={atWork} open={peekItem?.toolId} root={root} onOpen={(call) => setPeek(peekItem?.toolId === call ? null : call)} />}
-      {lost && id ? (
+      {lost && id && (
         <div className="agent-readonly agent-lost">
-          Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back.
+          Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back
+          {readOnly ? "." : "; until then, a message waits in the box."}
         </div>
-      ) : peekItem ? null : readOnly && agentKind !== "codex" && hooks?.on === false ? (
+      )}
+      {/* The box stays through a lost connection: taken out, it would take the
+          focus and the cursor of someone still typing with it. */}
+      {peekItem ? null : readOnly && agentKind !== "codex" && hooks?.on === false ? (
         // Asked here, where the prompts would have come up, rather than when dv
         // is installed or first run: hooks go in Claude Code's settings for good.
         <div className="agent-readonly">

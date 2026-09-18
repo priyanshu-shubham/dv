@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
-import { Modal, SettingsOverlay } from "./Overlays.jsx";
+import { Modal, SettingsOverlay, useUpdate } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
@@ -67,6 +67,7 @@ export default function Hub() {
   const elsewhere = useHubActivity();
   const ended = useNotices({ elsewhere, desktop: notices, go: openFolderSession });
   const dot = tabDot(null, elsewhere, ended);
+  const update = useUpdate(settings.updateCheck === false);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   const pickNotices = async (on) => {
@@ -204,7 +205,11 @@ export default function Hub() {
         </div>
         <div className="topbar-title" />
         <div className="topbar-right">
-          <button className="icon" onClick={() => setDialog("settings")} title="Settings, for every folder (,)">
+          <button
+            className={cx("icon", update && "has-update")}
+            onClick={() => setDialog("settings")}
+            title={update ? `Settings, for every folder (,): dv v${update.latest} is out` : "Settings, for every folder (,)"}
+          >
             <IconSettings size={14} />
           </button>
         </div>
@@ -300,6 +305,7 @@ export default function Hub() {
           onClose={() => setDialog(null)}
           keys={false}
           working={(elsewhere || []).flatMap((f) => f.sessions || []).filter((s) => s.busy && s.running === "dv").length}
+          update={update}
         />
       )}
       {dialog === "folder" && (
