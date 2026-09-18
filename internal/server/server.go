@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -217,6 +218,9 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("GET /api/prefs", Guarded(s.handlePrefs))
 	mux.HandleFunc("PATCH /api/prefs", Guarded(s.handleSetPref))
 
+	mux.HandleFunc("GET /api/restart", Guarded(HandleRestart))
+	mux.HandleFunc("POST /api/restart", Guarded(HandleRestart))
+
 	mux.HandleFunc("GET /api/symbols", s.handleSymbols)
 	mux.HandleFunc("GET /api/symbols/status", s.handleSymbolStatus)
 	mux.HandleFunc("POST /api/symbols/refresh", s.handleSymbolRefresh)
@@ -260,6 +264,25 @@ func (s *Server) Handler(base string) http.Handler {
 		WritePage(w, Boot{Base: base, Prefs: s.allPrefs(), PrefsVersion: s.prefsVersion()})
 	})
 	return mux
+}
+
+// Restart asks main to stop dv and run it again in place, from the binary now
+// installed at its path, which is how an update is taken.
+var Restart = make(chan struct{}, 1)
+
+// started tells one run of dv from the next, for a page waiting out a restart.
+var started = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+// HandleRestart says which run this is, and on POST restarts. It is the whole
+// process's, a hub's folders and all, so a hub serves it at its root too.
+func HandleRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		select {
+		case Restart <- struct{}{}:
+		default:
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"started": started})
 }
 
 // Static serves the UI bundle.

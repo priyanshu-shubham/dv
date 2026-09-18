@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,11 +33,30 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	os.Unsetenv(restartEnv) // not for the sessions dv starts, nor the next restart
+	err := run()
+	// Only now, with run's deferred cleanup done: sessions stopped, pages closed
+	// and the prompts' routing to this dv taken down.
+	if again := (errRestart{}); errors.As(err, &again) {
+		fmt.Printf("  restarting dv\n\n")
+		err = restart(again.addr)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "dv:", err)
 		os.Exit(1)
 	}
 }
+
+// restartEnv carries a restarting dv's address to the one it starts, which
+// takes the same address, since its pages are open on it, and opens no browser.
+const restartEnv = "DV_RESTART_ADDR"
+
+var restartAddr = os.Getenv(restartEnv)
+
+// errRestart is how serve says dv is to run again; addr is where it listened.
+type errRestart struct{ addr string }
+
+func (errRestart) Error() string { return "restart" }
 
 func run() error {
 	var (
@@ -198,12 +218,20 @@ func serve(ln net.Listener, handler http.Handler) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var again atomic.Bool
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-server.Restart:
+			again.Store(true)
+		}
 		httpSrv.Close()
 	}()
 	if err := httpSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	if again.Load() {
+		return errRestart{ln.Addr().String()}
 	}
 	return nil
 }
@@ -326,6 +354,9 @@ func homePort(root string) int {
 }
 
 func listen(host string, port int, root string) (net.Listener, error) {
+	if restartAddr != "" {
+		return net.Listen("tcp", restartAddr)
+	}
 	if port != 0 {
 		return net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	}
@@ -347,6 +378,9 @@ func listen(host string, port int, root string) (net.Listener, error) {
 // openBrowser makes a best effort and stays silent on failure — the URL is
 // already printed, which is the fallback.
 func openBrowser(url string) {
+	if restartAddr != "" {
+		return
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

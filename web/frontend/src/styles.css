@@ -2802,6 +2802,10 @@ mark {
   margin-left: auto;
 }
 
+.settings-row > .btn {
+  margin-left: auto;
+}
+
 .settings-note {
   margin-top: 2px;
   color: var(--fg-3);
@@ -2838,7 +2842,8 @@ mark {
     height: 36px;
   }
 
-  .settings-row > input {
+  .settings-row > input,
+  .settings-row > .btn {
     flex: none;
     height: 36px;
     margin-left: 0;

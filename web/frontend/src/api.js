@@ -205,6 +205,11 @@ export const api = {
   setPref: (where, key, value, keepalive) =>
     req("/api/prefs", { method: "PATCH", body: JSON.stringify({ where, key, value }), keepalive }),
 
+  // started names this run of dv; restart runs it again from the binary now
+  // installed. At the root, as a hub restarts with all its folders.
+  started: () => req("/api/restart", {}, ""),
+  restart: () => req("/api/restart", { method: "POST", body: "{}" }, ""),
+
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
   // user's settings' version; with details, each git folder has its remote and
   // branch too.

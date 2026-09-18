@@ -1745,6 +1745,7 @@ export default function App() {
           settings={settings}
           onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onClose={closeOverlay}
+          working={[activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length}
         />
       )}
     </div>

@@ -299,6 +299,7 @@ export default function Hub() {
           onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onClose={() => setDialog(null)}
           keys={false}
+          working={(elsewhere || []).flatMap((f) => f.sessions || []).filter((s) => s.busy && s.running === "dv").length}
         />
       )}
       {dialog === "folder" && (

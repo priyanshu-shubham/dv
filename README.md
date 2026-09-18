@@ -74,6 +74,9 @@ fallback.
 
 To build it yourself: `make install`, with Go 1.24+ and Node.
 
+A running dv picks up a newly installed one with Settings → Restart, or
+`curl -X POST -H 'Content-Type: application/json' <dv's address>/api/restart`.
+
 ## Hub
 
 ```

@@ -624,6 +624,7 @@ const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
 // keys to toggle the diff with (keys false).
 export function SettingsOverlay({
   theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
+  working = 0,
 }) {
   return (
     <Modal onClose={onClose} centred className="settings">
@@ -709,8 +710,53 @@ export function SettingsOverlay({
           onPick={(on) => onChange({ addedTemporary: on })}
           choices={OFF_ON}
         />
+        <div className="menu-label">Server</div>
+        <RestartRow working={working} />
       </div>
     </Modal>
+  );
+}
+
+const RESTART_WAIT_MS = 60000;
+
+// RestartRow runs dv again from the binary installed now, and reloads the page
+// once the new run answers. working is how many sessions dv runs are busy,
+// which the restart stops.
+function RestartRow({ working }) {
+  const [state, setState] = useState(""); // "", "restarting", or what went wrong
+  const restart = async () => {
+    const which = working === 1 ? "A session is" : `${working} sessions are`;
+    if (working && !confirm(`${which} still working. Restart dv and stop ${working === 1 ? "it" : "them"}?`)) return;
+    setState("restarting");
+    try {
+      const { started } = await api.started();
+      // The old run can close the connection before its answer is out.
+      await api.restart().catch((e) => {
+        if (!(e instanceof TypeError)) throw e;
+      });
+      for (const until = Date.now() + RESTART_WAIT_MS; Date.now() < until; ) {
+        await new Promise((r) => setTimeout(r, 400));
+        const now = await api.started().catch(() => null);
+        if (now && now.started !== started) return location.reload();
+      }
+      setState("dv did not come back within a minute; its terminal says why.");
+    } catch (e) {
+      setState(e.message);
+    }
+  };
+  const failed = state && state !== "restarting";
+  return (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>Restart</div>
+        <div className={cx("settings-note", failed && "prompt-error")}>
+          {failed ? state : "Runs dv again from the version installed now, in the same terminal. Sessions it runs stop, and carry on at your next message."}
+        </div>
+      </div>
+      <button className="btn" disabled={state === "restarting"} onClick={restart}>
+        {state === "restarting" ? "Restarting…" : "Restart"}
+      </button>
+    </div>
   );
 }
 
