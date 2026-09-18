@@ -4,14 +4,20 @@ import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { agentName, cx, isTyping, LRM, splitPath, useCopy, usePersisted } from "./util.js";
-import { usePref } from "./prefs.js";
+import { readPref, usePref } from "./prefs.js";
 import { AgentIcon, IconFile, IconX } from "./icons.jsx";
 
 const NO_COMMENTS = [];
 
 // Keys this soon after a request comes up were meant for whatever had the
-// focus before it, and a stray 1 or Enter would answer for the reader.
+// focus before it, and a stray 1 or Enter would answer for the reader. Clicks
+// too: the options may have just moved in under a pointer aimed elsewhere.
 const ARM_MS = 400;
+
+// numbersAnswer is whether an option's number answers with it at once, as the
+// terminal's does, or only moves to it.
+const numbersAnswer = () => readPref("user", "settings", NO_SETTINGS).numbersAnswer !== false;
+const NO_SETTINGS = {};
 
 // useAgentEvents is the requests waiting on the reader, and the open sessions'
 // activity, null until first heard.
@@ -169,7 +175,7 @@ export function Request({
   const choose = useCallback(
     (i) => {
       const o = options[i];
-      if (!o) return;
+      if (!o || Date.now() < armed.current) return;
       setSel(i);
       // A comment still being written would be left out of the answer.
       const unsaved = bodyRef.current?.querySelector(".composer[data-draft] textarea");
@@ -183,11 +189,12 @@ export function Request({
     [options, answer, note, comments, req],
   );
 
-  // Each request is met at Yes, with the keys held off for a moment.
+  // Each request is met at Yes, held off for a moment when it shows and again
+  // when it takes the keys.
   useEffect(() => {
+    armed.current = Date.now() + ARM_MS;
     if (!active) return;
     setSel(0);
-    armed.current = Date.now() + ARM_MS;
     const g = typeof grab === "function" ? grab() : grab;
     if (g) (asking ? questionsRef : listRef).current?.focus({ preventScroll: true });
   }, [active, req.id]);
@@ -237,7 +244,11 @@ export function Request({
       else if (e.key === "Escape") {
         if (onLater) onLater();
         else handled = false;
-      } else if (/^[1-9]$/.test(e.key)) choose(Number(e.key) - 1);
+      } else if (/^[1-9]$/.test(e.key)) {
+        const i = Number(e.key) - 1;
+        if (numbersAnswer()) choose(i);
+        else if (i < options.length) setSel(i);
+      }
       else if (e.key === "c" || e.key === "a") {
         const cell = e.key === "c" && bodyRef.current?.querySelector("[data-line][data-side]:hover");
         if (cell) cell.closest(".prompt-card").dispatchEvent(commentEvent(cell));
@@ -302,7 +313,9 @@ export function Request({
                   aria-selected={i === sel}
                   className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && "no")}
                   disabled={busy}
-                  onMouseEnter={() => setSel(i)}
+                  // Not mouseenter: that also fires when a scroll carries a row
+                  // under a pointer at rest, which would change what Enter answers.
+                  onMouseMove={() => setSel(i)}
                   onClick={() => choose(i)}
                   title={o.title}
                 >
@@ -407,8 +420,9 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
   const written = (q, o = other) => (!q.multiSelect || otherOn[q.question] ? (o[q.question] || "").trim() : "");
   const said = (q, p = picked, o = other) => [...(p[q.question] || []), written(q, o)].filter(Boolean);
   const ready = (p = picked, o = other) => n > 0 && questions.every((q) => said(q, p, o).length > 0);
+  const early = () => Date.now() < armed.current;
   const submit = (p = picked, o = other) => {
-    if (busy || !ready(p, o)) return;
+    if (busy || early() || !ready(p, o)) return;
     // A note, and the drawing of an option picked, go as the terminal sends them.
     const annotations = {};
     for (const q of questions) {
@@ -422,13 +436,15 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
       annotations: Object.keys(annotations).length ? annotations : undefined,
     });
   };
-  const cancel = () => busy || onAnswer({ allow: false });
+  const cancel = () => busy || early() || onAnswer({ allow: false });
   const go = (i) => {
     setTab(Math.max(0, Math.min(many ? n : 0, i)));
     rootRef.current?.focus({ preventScroll: true });
   };
   // The last tab comes up on Submit, or on the first question still unanswered.
   const cursor = cursors[tab] ?? (tab === n ? (ready() ? n : Math.max(0, questions.findIndex((x) => !said(x).length))) : 0);
+  // Every move is a write to the stored place, so only one onto another row counts.
+  const hover = (row) => () => row !== cursor && setCursors((c) => ({ ...c, [tab]: row }));
   // A question's rows: its options, then something else, the note, and where
   // several are taken, Submit. The two text rows take the focus.
   const moveTo = (row) => {
@@ -442,6 +458,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
   const onward = (p, o) => (many ? go(tab + 1) : submit(p, o));
   // A single choice is one option or what was written, never both.
   const pick = (label) => {
+    if (early()) return;
     const q = questions[tab];
     const had = picked[q.question] || [];
     const labels = !q.multiSelect ? [label] : had.includes(label) ? had.filter((l) => l !== label) : [...had, label];
@@ -468,7 +485,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
     const inNote = e.target === noteRef.current;
     const typing = inNote || e.target === otherRef.current;
     if ((!typing && isTyping(e.target)) || e.altKey) return false;
-    if (Date.now() < armed.current) return !typing;
+    if (early()) return !typing;
     if (e.metaKey || e.ctrlKey) {
       if (e.key !== "Enter") return false;
       submit();
@@ -521,7 +538,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
       if (move) moveTo((cursor + move + rows) % rows);
       else if (number && number <= k) {
         setCursors((c) => ({ ...c, [tab]: number - 1 }));
-        pick(q.options[number - 1].label);
+        if (numbersAnswer()) pick(q.options[number - 1].label);
       } else if (e.key === "Enter" || e.key === " ") {
         if (cursor < k) pick(q.options[cursor].label);
         else if (cursor <= k + 1) moveTo(cursor);
@@ -566,7 +583,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
                   <button
                     key={x.question}
                     className={cx("palette-row", "prompt-option", "choice", cursor === i && "on")}
-                    onMouseEnter={() => setCursors((c) => ({ ...c, [n]: i }))}
+                    onMouseMove={hover(i)}
                     onClick={() => go(i)}
                     title={`${x.question} - click to change`}
                   >
@@ -582,7 +599,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
               <button
                 className={cx("palette-row", "prompt-option", cursor === n && "on")}
                 disabled={busy}
-                onMouseEnter={() => setCursors((c) => ({ ...c, [n]: n }))}
+                onMouseMove={hover(n)}
                 onClick={() => submit()}
               >
                 <span className="badge">↵</span>
@@ -592,7 +609,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
               <button
                 className={cx("palette-row", "prompt-option", "no", cursor === n + 1 && "on")}
                 disabled={busy}
-                onMouseEnter={() => setCursors((c) => ({ ...c, [n]: n + 1 }))}
+                onMouseMove={hover(n + 1)}
                 onClick={cancel}
               >
                 <span className="badge">✕</span>
@@ -620,7 +637,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
                     aria-selected={chosen}
                     className={cx("palette-row", "prompt-option", "choice", i === cursor && "on", chosen && "picked")}
                     disabled={busy}
-                    onMouseEnter={() => setCursors((c) => ({ ...c, [tab]: i }))}
+                    onMouseMove={hover(i)}
                     onClick={() => pick(o.label)}
                   >
                     <span className="badge">{chosen ? "✓" : i + 1}</span>
@@ -670,7 +687,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
               <button
                 className={cx("palette-row", "prompt-option", cursor === q.options.length + 2 && "on")}
                 disabled={busy}
-                onMouseEnter={() => setCursors((c) => ({ ...c, [tab]: q.options.length + 2 }))}
+                onMouseMove={hover(q.options.length + 2)}
                 onClick={() => onward(picked, other)}
               >
                 <span className="badge">↵</span>

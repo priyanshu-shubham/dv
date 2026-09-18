@@ -432,6 +432,11 @@ export function DiffBody({
     // rest, and a double tap is a search, not a selection to comment on.
     let settle = 0;
     let lastTap = null;
+    // The browser selects in DOM order, which in split runs through both
+    // columns of every row, so only the column pressed in stays selectable.
+    const onPointerDown = (e) => {
+      if (e.button === 0) root.dataset.selecting = e.target.closest?.(".cell")?.dataset.side || "";
+    };
     const onSelection = () => {
       clearTimeout(settle);
       if (lastPointer === "touch") settle = setTimeout(commentOnSelection, SELECTION_SETTLE_MS);
@@ -450,11 +455,13 @@ export function DiffBody({
         lastTap = { at: now, x: e.clientX, y: e.clientY };
       }
     };
+    root.addEventListener("pointerdown", onPointerDown);
     root.addEventListener("mouseup", onMouseUp);
     root.addEventListener("pointerup", onPointerUp);
     document.addEventListener("selectionchange", onSelection);
     return () => {
       clearTimeout(settle);
+      root.removeEventListener("pointerdown", onPointerDown);
       root.removeEventListener("mouseup", onMouseUp);
       root.removeEventListener("pointerup", onPointerUp);
       document.removeEventListener("selectionchange", onSelection);
@@ -1030,7 +1037,7 @@ function anchorNodes(anchor, ctx, key) {
 
 function Cell({ side, line, ctx, ranges, kind }) {
   if (!line || (side === "old" ? line.o : line.n) < 0) {
-    return <div className="cell blank" />;
+    return <div className="cell blank" data-side={side} />;
   }
   const idx = side === "old" ? line.o : line.n;
   const html = side === "old" ? ctx.oldHtml[idx] : ctx.newHtml[idx];

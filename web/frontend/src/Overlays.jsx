@@ -155,7 +155,7 @@ export function FilePalette({ initialQuery = "", changed, onOpen, onClose, onBac
             <button
               key={h.path}
               className={cx("palette-row", "file-hit", i === sel && "on")}
-              onMouseEnter={() => setSel(i)}
+              onMouseMove={() => setSel(i)}
               onClick={() => onOpen(h.path, q)}
               title={st ? `${h.path} - ${statusLabel[st].toLowerCase()} in this diff` : h.path}
             >
@@ -337,7 +337,7 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
               <button
                 key={`${h.file}:${h.line}:${h.name}`}
                 className={cx("palette-row", i === sel && "on")}
-                onMouseEnter={() => setSel(i)}
+                onMouseMove={() => setSel(i)}
                 onClick={() => open(i)}
               >
                 <span className={cx("kind", "kind-" + h.kind)}>{h.kind}</span>
@@ -354,7 +354,7 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
             {moreDefs > 0 && (
               <button
                 className={cx("palette-row", "search-more", sel === shownDefs.length && "on")}
-                onMouseEnter={() => setSel(shownDefs.length)}
+                onMouseMove={() => setSel(shownDefs.length)}
                 onClick={() => setAllDefs(true)}
               >
                 {moreDefs} more definition{moreDefs === 1 ? "" : "s"}
@@ -383,7 +383,7 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
                 <button
                   key={i}
                   className={cx("search-hit", at === sel && "on")}
-                  onMouseEnter={() => setSel(at)}
+                  onMouseMove={() => setSel(at)}
                   onClick={() => open(at)}
                 >
                   <span className="ln">{h.line}</span>
@@ -669,6 +669,13 @@ export function SettingsOverlay({
             choices={OFF_ON}
           />
         )}
+        <Setting
+          label="Number keys answer prompts"
+          note="An option's number answers with it at once, as in the terminal. Off, it moves to the option, and Enter answers."
+          value={settings.numbersAnswer !== false}
+          onPick={(on) => onChange({ numbersAnswer: on ? undefined : false })}
+          choices={OFF_ON}
+        />
         <Setting
           label="Sessions opened by adding start temporary"
           note="A new session opened from Add, or from New session over selected text, starts temporary: once closed, it leaves the session list."

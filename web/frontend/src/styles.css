@@ -1591,6 +1591,11 @@ a.logo.to-hub:hover > svg {
   border-left: 1px solid var(--border-soft);
 }
 
+.diff-split[data-selecting="old"] .cell[data-side="new"],
+.diff-split[data-selecting="new"] .cell[data-side="old"] {
+  user-select: none;
+}
+
 .cell {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

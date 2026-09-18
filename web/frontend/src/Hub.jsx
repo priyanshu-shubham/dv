@@ -923,7 +923,7 @@ function Combo({ value, options, onChange, onEnter, disabled, ...rest }) {
           // Pressing in the list must not take the focus, and the list with it, from the box.
           <div className="model-list hub-combo-list" ref={listRef} style={at} onMouseDown={(e) => e.preventDefault()}>
             {shown.map((o, i) => (
-              <button key={o.value} className={cx(i === sel && "on")} onMouseEnter={() => setSel(i)} onClick={() => pick(o)}>
+              <button key={o.value} className={cx(i === sel && "on")} onMouseMove={() => setSel(i)} onClick={() => pick(o)}>
                 <span className="model-name">
                   {o.value}
                   {o.tag && <span className="model-tag">{o.tag}</span>}
@@ -1100,7 +1100,7 @@ function FolderPicker({ start, error, action, onSubmit, note }) {
             key={row.make ? "\0make" : row.name}
             className={cx("palette-row", i === sel && "on")}
             disabled={row.make && making}
-            onMouseEnter={() => setSel(i)}
+            onMouseMove={() => setSel(i)}
             onClick={() => enter(row)}
           >
             {row.make && <IconPlus size={12} className="dim" />}

@@ -1382,7 +1382,7 @@ export default function AgentView({
                 key={c.name}
                 className={cx(i === pick && "on")}
                 onMouseDown={(e) => e.preventDefault()}
-                onMouseEnter={() => setPick(i)}
+                onMouseMove={() => setPick(i)}
                 onClick={() => complete(c)}
               >
                 <span className="model-name">
@@ -3261,7 +3261,7 @@ function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewi
           <button
             key={prompt ? r.label : r.key}
             className={cx("palette-row", i === sel && "on")}
-            onMouseEnter={() => setSel(i)}
+            onMouseMove={() => setSel(i)}
             onClick={() => choose(i)}
           >
             {prompt ? (
