@@ -270,8 +270,34 @@ func (s *Server) Handler(base string) http.Handler {
 // installed at its path, which is how an update is taken.
 var Restart = make(chan struct{}, 1)
 
-// started tells one run of dv from the next, for a page waiting out a restart.
+// Version is dv's, as main has it: a release's number, or "dev".
+var Version = "dev"
+
+// Run is which run of dv answers, for a page to tell that dv restarted and say
+// what changed. Builds of one's own are all "dev", so they are told apart by
+// the binary's modification time; UI changes only when the page's code did.
+type Run struct {
+	Started string `json:"started"`
+	Version string `json:"version"`
+	Binary  string `json:"binary"`
+	UI      string `json:"ui"`
+}
+
 var started = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+var binaryStamp = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	fi, err := os.Stat(exe)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(fi.ModTime().UnixNano(), 36)
+}()
+
+func thisRun() Run { return Run{started, Version, binaryStamp, assetVersion} }
 
 // HandleRestart says which run this is, and on POST restarts. It is the whole
 // process's, a hub's folders and all, so a hub serves it at its root too.
@@ -282,7 +308,7 @@ func HandleRestart(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"started": started})
+	writeJSON(w, http.StatusOK, thisRun())
 }
 
 // Static serves the UI bundle.
@@ -298,10 +324,12 @@ type Boot struct {
 	Base         string                                `json:"base"`
 	Prefs        map[string]map[string]json.RawMessage `json:"prefs"`
 	PrefsVersion string                                `json:"prefsVersion,omitempty"`
+	Run          Run                                   `json:"run"` // filled in by WritePage
 }
 
 // WritePage sends the SPA shell with boot in it.
 func WritePage(w http.ResponseWriter, boot Boot) {
+	boot.Run = thisRun()
 	// Marshal escapes <, > and &, so nothing in a value can close the script.
 	b, err := json.Marshal(boot)
 	if err != nil {

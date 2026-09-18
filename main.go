@@ -76,6 +76,7 @@ func run() error {
 	}
 	flag.Parse()
 	codex.ClientVersion = version
+	server.Version = version
 
 	if *showVersion {
 		fmt.Println("dv " + version)

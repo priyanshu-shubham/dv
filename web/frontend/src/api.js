@@ -2,6 +2,10 @@ import { boot } from "./boot.js";
 
 const base = boot.base;
 
+// RESTART_KEY holds, in the tab that asked for a restart, the run it replaces:
+// that tab reloads itself, then says what changed.
+export const RESTART_KEY = "dv:restart";
+
 // Thin wrapper over the Go API. Every call throws on a non-2xx response with
 // the server's error message, which the UI surfaces directly. The hub's own
 // calls go to its root, as a folder's page makes them too.
@@ -16,13 +20,43 @@ async function req(path, opts = {}, at = base) {
   return data;
 }
 
+const REOPEN_MS = 3000;
+
+// stream follows server-sent events until the returned func is called, and
+// tells the page each time it is back after a drop ("dv:reconnected"), since
+// dv may have restarted meanwhile. The browser retries a dropped connection
+// itself, but gives up for good on an error answered in dv's place - a
+// tunnel's 502 while dv is down - which reopen retries, for the streams a page
+// keeps for as long as it is open.
+function stream(url, onMessage, onError, reopen) {
+  let es;
+  let timer = 0;
+  let opened = false;
+  let stopped = false;
+  const open = () => {
+    es = new EventSource(url);
+    es.onmessage = onMessage;
+    es.onopen = () => {
+      if (opened) window.dispatchEvent(new Event("dv:reconnected"));
+      opened = true;
+    };
+    es.onerror = () => {
+      onError?.();
+      if (reopen && es.readyState === EventSource.CLOSED && !stopped) timer = setTimeout(open, REOPEN_MS);
+    };
+  };
+  open();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    es.close();
+  };
+}
+
 // follow reads a stream of JSON events until the returned func is called. It
 // reconnects on its own after a drop, and the first event after is a reset.
-function follow(path, onEvent, onDrop, at = base) {
-  const es = new EventSource(at + path);
-  es.onmessage = (e) => onEvent(JSON.parse(e.data));
-  es.onerror = () => onDrop?.();
-  return () => es.close();
+function follow(path, onEvent, onDrop, at = base, reopen = false) {
+  return stream(at + path, (e) => onEvent(JSON.parse(e.data)), onDrop, reopen);
 }
 
 const scopeQuery = (scope) => {
@@ -118,14 +152,10 @@ export const api = {
   // claudeEvents follows the Claude Code prompts waiting on the reader, and what
   // the open sessions are doing: { requests } or { sessions }, each whole, as a
   // stream rather than a poll so they still arrive while the tab is hidden.
-  claudeEvents: (on) => {
-    const es = new EventSource(base + "/api/claude/requests");
-    es.onmessage = (e) => on(JSON.parse(e.data));
-    // It reconnects on its own and is sent both afresh; until then nothing
-    // shown could be answered.
-    es.onerror = () => on({ requests: [] });
-    return () => es.close();
-  },
+  // It reconnects on its own and is sent both afresh; until then nothing shown
+  // could be answered.
+  claudeEvents: (on) =>
+    stream(base + "/api/claude/requests", (e) => on(JSON.parse(e.data)), () => on({ requests: [] }), true),
 
   // answer: { allow, note, suggestion } where suggestion indexes the request's
   // suggestions to apply along with an allow.
@@ -205,9 +235,10 @@ export const api = {
   setPref: (where, key, value, keepalive) =>
     req("/api/prefs", { method: "PATCH", body: JSON.stringify({ where, key, value }), keepalive }),
 
-  // started names this run of dv; restart runs it again from the binary now
-  // installed. At the root, as a hub restarts with all its folders.
-  started: () => req("/api/restart", {}, ""),
+  // run is which run of dv answers now: { started, version, binary, ui };
+  // restart runs it again from the binary installed. At the root, as a hub
+  // restarts with all its folders.
+  run: () => req("/api/restart", {}, ""),
   restart: () => req("/api/restart", { method: "POST", body: "{}" }, ""),
 
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
@@ -229,7 +260,7 @@ export const api = {
   // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
   // hubActivity follows every folder open in the hub: { folders: [{ slug,
   // name, sessions, requests }] }, for notices about the folders not on screen.
-  hubActivity: (onEvent, onDrop) => follow("/api/hub/activity", onEvent, onDrop, ""),
+  hubActivity: (onEvent, onDrop) => follow("/api/hub/activity", onEvent, onDrop, "", true),
   hubDirs: (path) => req(`/api/hub/dirs?${new URLSearchParams({ path })}`),
   // hubMakeDir: { path, place }; a folder already there is taken as made.
   hubMakeDir: (into, name) => req("/api/hub/dirs", { method: "POST", body: JSON.stringify({ in: into, name }) }),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api.js";
+import { api, RESTART_KEY } from "./api.js";
 import { boot } from "./boot.js";
 import { commentsOn, NO_EXPAND, noop } from "./CodeView.jsx";
 import { CONTEXT_LINES } from "./Header.jsx";
@@ -729,18 +729,21 @@ function RestartRow({ working }) {
     if (working && !confirm(`${which} still working. Restart dv and stop ${working === 1 ? "it" : "them"}?`)) return;
     setState("restarting");
     try {
-      const { started } = await api.started();
+      const was = await api.run();
+      sessionStorage.setItem(RESTART_KEY, JSON.stringify(was));
       // The old run can close the connection before its answer is out.
       await api.restart().catch((e) => {
         if (!(e instanceof TypeError)) throw e;
       });
       for (const until = Date.now() + RESTART_WAIT_MS; Date.now() < until; ) {
         await new Promise((r) => setTimeout(r, 400));
-        const now = await api.started().catch(() => null);
-        if (now && now.started !== started) return location.reload();
+        const now = await api.run().catch(() => null);
+        if (now && now.started !== was.started) return location.reload();
       }
+      sessionStorage.removeItem(RESTART_KEY);
       setState("dv did not come back within a minute; its terminal says why.");
     } catch (e) {
+      sessionStorage.removeItem(RESTART_KEY);
       setState(e.message);
     }
   };

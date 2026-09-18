@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { headline } from "./AgentPrompt.jsx";
-import { api } from "./api.js";
+import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
 import { agentName, cx } from "./util.js";
@@ -15,7 +15,57 @@ const SETTLE_MS = 1500;
 const DONE_MS = 8000;
 
 // Below the header, clear of the message box.
-export const Notices = () => <Toaster position="top-right" offset={{ top: 46, right: 14 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />;
+export function Notices() {
+  useRestartNotice();
+  return <Toaster position="top-right" offset={{ top: 46, right: 14 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />;
+}
+
+// useRestartNotice tells of dv having restarted, seen as the page's connection
+// to it coming back from another run. The tab that asked reloads itself and
+// says so after; any other still has its old page, so offers a reload when
+// the page changed.
+function useRestartNotice() {
+  useEffect(() => {
+    const asked = sessionStorage.getItem(RESTART_KEY);
+    sessionStorage.removeItem(RESTART_KEY);
+    if (asked) {
+      const was = JSON.parse(asked);
+      if (was.started !== boot.run.started) {
+        toast.custom((t) => <Notice id={t} kind="done" title="dv restarted" detail={restartedOn(was, boot.run)} />, { duration: DONE_MS });
+      }
+    }
+    let seen = boot.run.started;
+    const onBack = async () => {
+      if (sessionStorage.getItem(RESTART_KEY)) return; // asked here: this tab reloads
+      const now = await api.run().catch(() => null);
+      if (!now || now.started === seen) return;
+      seen = now.started;
+      const stale = now.ui !== boot.run.ui;
+      toast.custom(
+        (t) => (
+          <Notice
+            id={t}
+            kind="done"
+            title="dv restarted"
+            detail={restartedOn(boot.run, now) + (stale ? " This page is the one from before." : "")}
+            actions={stale ? [{ label: "Reload", primary: true, run: () => location.reload() }] : []}
+          />
+        ),
+        { id: "restart", duration: stale ? Infinity : DONE_MS },
+      );
+    };
+    window.addEventListener("dv:reconnected", onBack);
+    return () => window.removeEventListener("dv:reconnected", onBack);
+  }, []);
+}
+
+const named = (v) => (/^\d/.test(v) ? "v" + v : v);
+
+function restartedOn(was, now) {
+  if (now.version !== was.version) return `Now ${named(now.version)}, was ${named(was.version)}.`;
+  if (now.binary !== was.binary) return "Now a new build.";
+  return now.version === "dev" ? "Still the same build." : `Still ${named(now.version)}.`;
+}
 
 function Notice({ id, kind, agent, title, detail, last, actions }) {
   return (
