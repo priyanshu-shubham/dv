@@ -22,6 +22,7 @@ import (
 
 	"dv/internal/agent"
 	"dv/internal/gitx"
+	"dv/internal/notify"
 	"dv/internal/permit"
 	"dv/internal/store"
 	"dv/internal/symindex"
@@ -75,11 +76,15 @@ type Server struct {
 	index  *symindex.Index
 	permit *permit.Broker
 	agent  *agent.Manager
+	saved  *store.Sessions // what dv keeps of the sessions, the agent's too
+
+	notices     *notify.Folder
+	stopNotices context.CancelFunc
 }
 
-// Open readies a review of the repository or folder holding dir, and starts
-// indexing its symbols.
-func Open(dir string, user *store.Prefs) (*Server, error) {
+// Open readies a review of the repository or folder holding dir. Its
+// sessions' notices go to notices, if any.
+func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error) {
 	repo, err := gitx.Open(dir)
 	if err != nil {
 		return nil, err
@@ -103,13 +108,28 @@ func Open(dir string, user *store.Prefs) (*Server, error) {
 	if repo.IsGit() {
 		excludeNotes(repo)
 	}
-	ix := symindex.New(repo.Root, repo)
-	ix.BuildAsync()
+	ix := symindex.New(repo.Root, repo) // built once a page wants it
 	broker := permit.New(repo.Root)
-	return &Server{
+	s := &Server{
 		repo: repo, store: st, viewed: vw, prefs: prefs, user: user, index: ix,
-		permit: broker, agent: agent.New(repo.Root, broker, sessions),
-	}, nil
+		permit: broker, agent: agent.New(repo.Root, broker, sessions), saved: sessions, notices: notices,
+		stopNotices: func() {},
+	}
+	if notices != nil {
+		notices.Serve(talk{s})
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			s.raiseNotices(ctx)
+		}()
+		// Waited for, so nothing is raised after the folder's notices are settled.
+		s.stopNotices = func() {
+			cancel()
+			<-done
+		}
+	}
+	return s, nil
 }
 
 func excludeNotes(repo *gitx.Repo) {
@@ -126,7 +146,14 @@ func (s *Server) Repo() *gitx.Repo { return s.repo }
 func (s *Server) CommentsPath() string { return s.store.Path() }
 
 // Close stops the Claude Code sessions dv is running.
-func (s *Server) Close() { s.agent.Close() }
+func (s *Server) Close() {
+	s.stopNotices()
+	if s.notices != nil {
+		s.notices.Close()
+	}
+	s.index.Close()
+	s.agent.Close()
+}
 
 // Status is what a hub shows of a review it serves.
 type Status struct {
@@ -164,6 +191,17 @@ type Live struct {
 }
 
 func (s *Server) Live() Live { return Live{Sessions: s.agent.Activity(), Requests: s.Waiting()} }
+
+// InUse is whether anything goes on in the folder that letting it go would
+// stop or miss: a session running, here or in a terminal, or a request waiting.
+func (s *Server) InUse() bool {
+	for _, a := range s.agent.Activity() {
+		if a.Running != "" {
+			return true
+		}
+	}
+	return len(s.permit.Waiting()) > 0
+}
 
 func (s *Server) Status() Status {
 	var st Status
@@ -433,6 +471,7 @@ func Answers(url, root string) bool {
 	if err != nil {
 		return false
 	}
+	store.MarkLocal(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false

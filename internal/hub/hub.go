@@ -12,8 +12,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"dv/internal/gitx"
+	"dv/internal/notify"
 	"dv/internal/server"
 	"dv/internal/store"
 )
@@ -22,24 +24,39 @@ type Hub struct {
 	url     string // where this hub listens, which reviews announce themselves under
 	user    *store.Prefs
 	folders *store.Folders
+	notices *notify.Center
 
-	mu   sync.Mutex
-	open map[string]*review // by slug
-	jobs map[string]*job    // by id
+	idleAfter time.Duration
+	stop      chan struct{}
+
+	mu     sync.Mutex
+	open   map[string]*review   // by slug
+	jobs   map[string]*job      // by id
+	usedAt map[string]time.Time // when each folder's use was last written down
 }
 
 type review struct {
 	srv        *server.Server
 	handler    http.Handler
 	unannounce func()
+	// Guarded by the hub's mu: requests under way, and when the last began or ended.
+	requests int
+	asked    time.Time
 }
 
-func New(url string, user *store.Prefs, folders *store.Folders) *Hub {
-	return &Hub{url: url, user: user, folders: folders, open: map[string]*review{}, jobs: map[string]*job{}}
+func New(url string, user *store.Prefs, folders *store.Folders, notices *notify.Center) *Hub {
+	h := &Hub{
+		url: url, user: user, folders: folders, notices: notices, idleAfter: idleAfter, stop: make(chan struct{}),
+		open: map[string]*review{}, jobs: map[string]*job{}, usedAt: map[string]time.Time{},
+	}
+	notices.SetHub(h)
+	go h.sweepIdle()
+	return h
 }
 
 // Close stops every review and job, and the Claude Code sessions dv runs.
 func (h *Hub) Close() {
+	close(h.stop)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for slug, rv := range h.open {
@@ -116,6 +133,7 @@ func (h *Hub) serveReview(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	defer h.asking(slug, rv)()
 	http.StripPrefix("/"+slug, rv.handler).ServeHTTP(w, r)
 }
 
@@ -147,12 +165,12 @@ func (h *Hub) review(slug string) (*review, error) {
 	if rv := h.open[slug]; rv != nil {
 		return rv, nil
 	}
-	srv, err := server.Open(f.Path, h.user)
+	srv, err := server.Open(f.Path, h.user, h.notices.Folder(slug, displayName(f)))
 	if err != nil {
 		return nil, err
 	}
 	base := "/" + slug
-	rv := &review{srv: srv, handler: srv.Handler(base)}
+	rv := &review{srv: srv, handler: srv.Handler(base), asked: time.Now()}
 	if rv.unannounce, err = store.Announce(srv.Repo().Root, h.url+base); err != nil {
 		fmt.Fprintln(os.Stderr, "dv: warning: Claude Code's prompts cannot find", f.Path+":", err)
 	}
@@ -274,8 +292,8 @@ func (h *Hub) handleRemove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handleClose stops a review this hub serves, and the sessions dv runs in it,
-// until it is next opened.
+// handleClose is the page's Stop sessions: it lets the folder go, and with it
+// the sessions dv runs there. The next thing to ask for it opens it again.
 func (h *Hub) handleClose(w http.ResponseWriter, r *http.Request) {
 	h.closeReview(r.PathValue("slug"))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

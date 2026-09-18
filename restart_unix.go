@@ -16,5 +16,5 @@ func restart(addr string) error {
 	if update.Path == "" {
 		return errors.New("cannot tell where dv is installed, to run it again")
 	}
-	return syscall.Exec(update.Path, os.Args, append(os.Environ(), restartEnv+"="+addr))
+	return syscall.Exec(update.Path, os.Args, append(append(os.Environ(), update.Carry...), restartEnv+"="+addr))
 }

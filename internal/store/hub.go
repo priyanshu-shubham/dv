@@ -17,6 +17,9 @@ type Folder struct {
 	Path  string    `json:"path"`
 	Name  string    `json:"name,omitempty"` // what its card says, "" for the folder's own name
 	Added time.Time `json:"added"`
+	// Used is when a page was last on it or a session last ran in it, written
+	// down at most every minute, which the hub's page lists them by.
+	Used time.Time `json:"used,omitzero"`
 	// WorktreeOf is the main checkout of the repository this is a linked
 	// worktree of, whose card it is listed under.
 	WorktreeOf string `json:"worktreeOf,omitempty"`

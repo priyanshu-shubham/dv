@@ -419,6 +419,26 @@ func (t *codexThread) items() []Item {
 }
 
 // last is the thread's latest words, for its row.
+// reply is what Codex said last, whole and as written, "" if the reader has
+// spoken since.
+func (t *codexThread) reply() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, turn := range slices.Backward(t.turns) {
+		for _, it := range slices.Backward(turn.Items) {
+			switch it.Type {
+			case "agentMessage":
+				if s := strings.TrimSpace(it.Text); s != "" {
+					return s
+				}
+			case "userMessage":
+				return ""
+			}
+		}
+	}
+	return ""
+}
+
 func (t *codexThread) last() (text, by string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -876,6 +896,25 @@ func (t *codexThread) fail(err error) {
 }
 
 // unqueue takes back a message still held.
+// progress is whether a message is still held back, and whether a turn runs.
+func (t *codexThread) progress(uuid string) (queued, busy bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.ContainsFunc(t.held, func(h *heldMessage) bool { return h.uuid == uuid }), t.active != ""
+}
+
+func (t *codexThread) picked() (model, effort string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.asked.model != nil {
+		model = *t.asked.model
+	}
+	if t.asked.effort != nil {
+		effort = *t.asked.effort
+	}
+	return model, effort
+}
+
 func (t *codexThread) unqueue(uuid string) bool {
 	t.mu.Lock()
 	i := slices.IndexFunc(t.held, func(h *heldMessage) bool { return h.uuid == uuid })

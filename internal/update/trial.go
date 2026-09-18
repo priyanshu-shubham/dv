@@ -12,7 +12,14 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"dv/internal/store"
 )
+
+// Carry is what a dv started from this one - a trial, or the one it restarts
+// as - is given in its environment beyond this one's, which lost it so the
+// sessions it starts would not have it.
+var Carry []string
 
 // TrialEnv marks a dv started by Try, and TrialMark begins the line in which
 // it says where it listens.
@@ -35,7 +42,7 @@ func Try(ctx context.Context, want string) error {
 	ctx, cancel := context.WithTimeout(ctx, trialWait)
 	defer cancel()
 	cmd := exec.Command(Path, os.Args[1:]...)
-	cmd.Env = append(os.Environ(), TrialEnv+"=1")
+	cmd.Env = append(append(os.Environ(), Carry...), TrialEnv+"=1")
 	var said tail
 	cmd.Stderr = &said
 	out, err := cmd.StdoutPipe()
@@ -81,6 +88,7 @@ func serves(ctx context.Context, url, want string) error {
 		if err != nil {
 			return err
 		}
+		store.MarkLocal(req)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("The new dv started but did not answer: %w", err)

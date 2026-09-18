@@ -139,6 +139,45 @@ func summarize(path string) (Session, bool) {
 	return s, true
 }
 
+// lastReply is what Claude said last in a transcript, whole and as written:
+// its text since its last tool call, "" if the reader has spoken since.
+func lastReply(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	tail := make([]byte, min(fi.Size(), summaryEnds))
+	if _, err := f.ReadAt(tail, fi.Size()-int64(len(tail))); err != nil {
+		return ""
+	}
+	var said []string
+	eachLine(tail, func(r *rawEntry) bool {
+		switch {
+		case r.Sidechain:
+		case r.Type == "assistant" && !r.APIError:
+			var blocks []block
+			json.Unmarshal(r.Message.Content, &blocks)
+			for _, b := range blocks {
+				switch b.Type {
+				case "text":
+					said = append(said, strings.TrimSpace(b.Text))
+				case "tool_use":
+					said = nil
+				}
+			}
+		case promptOf(r) != "":
+			said = nil
+		}
+		return true
+	})
+	return strings.Join(said, "\n\n")
+}
+
 // eachLine decodes the lines that can matter to a summary, until fn says stop.
 func eachLine(b []byte, fn func(*rawEntry) bool) {
 	for len(b) > 0 {

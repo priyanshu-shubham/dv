@@ -33,13 +33,32 @@ export function tabIconURL(color, dot) {
   return "data:image/svg+xml," + encodeURIComponent(svg);
 }
 
+// tabIconJPEG is the icon as a picture for the Telegram bot, in base64: 640
+// pixels square, as Telegram likes them, on a dark ground with the icon clear
+// of the circle Telegram crops it to.
+export async function tabIconJPEG(color) {
+  const icon = new Image();
+  icon.src = tabIconURL(color);
+  await icon.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 640;
+  const g = canvas.getContext("2d");
+  g.fillStyle = "#0b0b0b";
+  g.fillRect(0, 0, 640, 640);
+  g.drawImage(icon, 120, 120, 400, 400);
+  const blob = await new Promise((done) => canvas.toBlob(done, "image/jpeg", 0.92));
+  let bytes = "";
+  for (const b of new Uint8Array(await blob.arrayBuffer())) bytes += String.fromCharCode(b);
+  return btoa(bytes);
+}
+
 export function setTabIcon(color, dot) {
   const link = document.querySelector('link[rel="icon"]');
   if (link) link.href = tabIconURL(color, dot);
 }
 
-// elsewhere is the hub's other folders, so any tab of a hub tells of them all.
-export function tabDot(requests, elsewhere, ended) {
-  if (requests?.length || elsewhere?.some((f) => f.requests?.length)) return "ask";
-  return ended > 0 ? "done" : "";
+// The notices are the whole hub's, so any tab of a hub tells of them all.
+export function tabDot(notices) {
+  if (notices.some((n) => n.kind === "ask")) return "ask";
+  return notices.some((n) => n.kind === "done") ? "done" : "";
 }

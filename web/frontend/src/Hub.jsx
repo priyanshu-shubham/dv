@@ -62,11 +62,9 @@ export default function Hub() {
   // The clone or worktree started here, which is opened once it is done.
   const [awaited, setAwaited] = useState(null);
 
-  // What the folders are doing, for notices about any of them: the hub's page
-  // is on none of them.
+  // What the folders are doing, for the sessions at work in them.
   const elsewhere = useHubActivity();
-  const ended = useNotices({ elsewhere, desktop: notices, go: openFolderSession });
-  const dot = tabDot(null, elsewhere, ended);
+  const dot = tabDot(useNotices({ desktop: notices, go: openFolderSession }));
   const update = useUpdate(settings.updateCheck === false);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
@@ -138,9 +136,8 @@ export default function Hub() {
   const act = (promise) => promise.then(load, (e) => (setError(e.message), load()));
   const sessions = (n) => (n === 1 ? "the Claude Code session" : `the ${n} Claude Code sessions`);
   const on = {
-    close: (f) => {
-      const n = f.open.sessions;
-      if (!n || confirm(`Close ${f.name}? It stops ${sessions(n)} dv runs there.`)) act(api.hubClose(f.slug));
+    stop: (f) => {
+      if (confirm(`Stop ${sessions(f.open.sessions)} dv runs in ${f.name}? Each carries on at your next message to it.`)) act(api.hubClose(f.slug));
     },
     remove: (f) => {
       const n = f.open?.sessions;
@@ -181,16 +178,16 @@ export default function Hub() {
   }, [folders]);
   const q = filter.trim().toLowerCase();
   const matches = (f) => !q || [f.name, f.place, f.remote?.label, f.status?.branch].join(" ").toLowerCase().includes(q);
-  // Open ones first, here or in another dv, and otherwise in the hub's order. A
-  // card counts as open when any of its worktrees is.
-  const live = (f) => (f.open || f.elsewhere ? 1 : 0);
+  // The latest used first - a page on it, a session running in it - and a
+  // card as recent as the latest of its worktrees.
+  const used = (f) => Date.parse(f.used || f.added) || 0;
   const shown = mains
     .map((main) => {
-      const worktrees = [...(worktreesOf.get(main.path) || [])].sort((a, b) => live(b) - live(a));
+      const worktrees = [...(worktreesOf.get(main.path) || [])].sort((a, b) => used(b) - used(a));
       return { main, worktrees: matches(main) ? worktrees : worktrees.filter(matches) };
     })
     .filter(({ main, worktrees }) => matches(main) || worktrees.length)
-    .sort((a, b) => Math.max(live(b.main), ...b.worktrees.map(live)) - Math.max(live(a.main), ...a.worktrees.map(live)));
+    .sort((a, b) => Math.max(used(b.main), ...b.worktrees.map(used)) - Math.max(used(a.main), ...a.worktrees.map(used)));
   const loose = jobs.filter((j) => j.kind === "clone" || !mains.some((m) => m.slug === j.of));
   const empty = data && !folders.length && !jobs.length;
 
@@ -399,15 +396,16 @@ function Entry({ folder: f, main, job, on }) {
     return () => clearTimeout(t);
   }, [copied]);
 
+  // dv opens a folder when asked for and lets it go when idle, which is not
+  // the reader's business; what runs in it is.
   const open = f.open;
+  const running = open?.sessions > 0;
   let state;
   if (f.missing) state = <span className="del">Not there anymore</span>;
   else if (f.elsewhere) state = <span title="Opened by a dv started on its own">Open in another dv at {f.elsewhere}</span>;
   else if (open?.waiting) state = <span className="session-asking">waiting on you</span>;
-  else if (open) {
-    const n = open.sessions;
-    state = <span>{open.working ? workingLabel(open) : n ? `${n === 1 ? "a session" : `${n} sessions`} running` : "open"}</span>;
-  }
+  else if (open?.working) state = <span>{workingLabel(open)}</span>;
+  else if (running) state = <span>{open.sessions === 1 ? "a session" : `${open.sessions} sessions`} running</span>;
   const menu = [
     { label: "Rename", run: () => setRenaming(true) },
     ...(!worktree && f.git && !f.missing
@@ -428,7 +426,7 @@ function Entry({ folder: f, main, job, on }) {
       {...(f.elsewhere && { target: "_blank", rel: "noopener" })}
     >
       <div className="session-row-head">
-        <span className={cx("session-dot", open && "live-dv", f.elsewhere && "live-terminal", open?.working && "busy", open?.waiting && "asking")} />
+        <span className={cx("session-dot", running && "live-dv", f.elsewhere && "live-terminal", open?.working && "busy", open?.waiting && "asking")} />
         {renaming ? (
           <Rename
             name={f.name}
@@ -449,9 +447,9 @@ function Entry({ folder: f, main, job, on }) {
             {copied ? "Copied" : "Copy address"}
           </button>
         )}
-        {open && (
-          <button className="mini hub-action" title="Close it here, until it is next opened" onClick={stop(() => on.close(f))}>
-            Close
+        {running && (
+          <button className="mini hub-action" title="Stop the sessions dv runs here" onClick={stop(() => on.stop(f))}>
+            Stop sessions
           </button>
         )}
         <CardMenu items={menu} />

@@ -1,23 +1,22 @@
-// Notices tell the reader what Claude's sessions want and have done, wherever
-// in the page they are: a toast for a session not on screen, and a desktop
-// notification as well while the tab is in the background, if they allowed it.
-import { useEffect, useMemo, useRef, useState } from "react";
+// Notices tell the reader what the agents want and have done, wherever in the
+// page they are: a toast for a session not on screen, and a desktop
+// notification as well while the page is not in front of them, if they allowed
+// it. dv decides what to tell and when (internal/notify); the page shows it.
+import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
-import { headline } from "./AgentPrompt.jsx";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { agentName, cx } from "./util.js";
+import { cx, PHONE, useMedia } from "./util.js";
 
-// A turn counts as over once idle has held this long: a terminal's record can
-// read idle for a moment between steps.
-const SETTLE_MS = 1500;
 const DONE_MS = 8000;
 
 // Below the header, clear of the message box.
 export function Notices() {
   useRestartNotice();
-  return <Toaster position="top-right" offset={{ top: 46, right: 14 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />;
+  return (
+    <Toaster position="top-right" offset={{ top: 46, right: 14 }} mobileOffset={{ top: 48 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />
+  );
 }
 
 // useRestartNotice tells of dv having restarted, seen as the page's connection
@@ -67,17 +66,34 @@ function restartedOn(was, now) {
   return now.version === "dev" ? "Still the same build." : `Still ${named(now.version)}.`;
 }
 
+// On a phone a tap anywhere on a notice does what its action marked opens
+// does, and that action's button goes.
 function Notice({ id, kind, agent, title, detail, last, actions }) {
+  const phone = useMedia(PHONE);
+  const opener = phone && actions?.find((a) => a.opens);
+  const shown = opener ? actions.filter((a) => a !== opener) : actions;
+  const down = useRef(null);
+  const onClick = (e) => {
+    // Swiping a notice away ends in a click as well.
+    const d = down.current;
+    if (e.target.closest("button") || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
+    toast.dismiss(id);
+    opener.run();
+  };
   return (
-    <div className={cx("notice", kind)}>
+    <div
+      className={cx("notice", kind, opener && "opens")}
+      onPointerDown={(e) => (down.current = { x: e.clientX, y: e.clientY })}
+      onClick={opener ? onClick : undefined}
+    >
       <span className="notice-icon">{kind === "done" ? <IconCheck size={13} /> : <AgentIcon agent={agent} size={13} />}</span>
       <div className="notice-body">
         <div className="notice-title">{title}</div>
         {detail && <div className="notice-detail">{detail}</div>}
         {last && <div className="notice-last">{last}</div>}
-        {actions?.length > 0 && (
+        {shown?.length > 0 && (
           <div className="notice-actions">
-            {actions.map((a) => (
+            {shown.map((a) => (
               <button
                 key={a.label}
                 className={a.primary ? "primary" : "ghost"}
@@ -102,9 +118,8 @@ function Notice({ id, kind, agent, title, detail, last, actions }) {
 // say is a notice of the page's own.
 export const say = (title, detail) => toast.custom((t) => <Notice id={t} kind="info" title={title} detail={detail} />, { duration: 6000 });
 
-// useHubActivity is what the hub's folders are doing, for notices about the
-// ones this page is not on: every folder on the hub's own page, the others on a
-// folder's. Outside a hub there is nothing to follow.
+// useHubActivity is what the hub's folders are doing: every folder on the hub's
+// own page, the others on a folder's. Outside a hub there is nothing to follow.
 export function useHubActivity() {
   const [folders, setFolders] = useState(null);
   useEffect(() => {
@@ -114,146 +129,148 @@ export function useHubActivity() {
   return folders;
 }
 
-// useNotices raises them. looking is the session on screen in the Agent view,
-// which says for itself what it is doing; review opens a request's window, open
-// goes to a session, and go to one in another of the hub's folders, which
-// elsewhere carries. It returns how many turns ended while the tab was hidden.
-export function useNotices({ requests, sessions, elsewhere, looking, desktop, review, open, go }) {
-  const told = useRef(new Set()); // keys told of on the desktop, if at all
-  const toasted = useRef(new Set()); // keys with a toast up
-  const busy = useRef(new Map()); // folder -> session id -> busy, as last heard
-  const settling = useRef(new Map()); // key -> timer
-  const shown = useRef(new Map()); // desktop notifications by tag
-  const [ended, setEnded] = useState(0);
-  const now = useRef();
-  now.current = { requests, elsewhere, looking, desktop, review, open, go };
-  // A folder's own sessions are one scope, each other folder another; a key
-  // names a session within its scope, since a folder of one's own is "".
-  const scopes = useMemo(
-    () => [{ at: "", requests: requests || [], sessions }, ...(elsewhere || []).map((f) => ({ at: f.slug, name: f.name, requests: f.requests || [], sessions: f.sessions }))],
-    [requests, sessions, elsewhere],
-  );
+// This page, to dv's notices, for as long as it is open.
+const PAGE = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-  const notify = (tag, title, body, onClick) => {
-    if (!now.current.desktop || !document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    try {
-      const n = new Notification(title, { body, tag });
-      n.onclick = () => {
-        window.focus();
-        onClick();
-        n.close();
-      };
-      shown.current.set(tag, n);
-    } catch {}
-  };
-  const unnotify = (tag) => {
-    toast.dismiss(tag);
-    shown.current.get(tag)?.close();
-    shown.current.delete(tag);
-  };
+// Using the page is said at most this often; while it has the reader, it says
+// so this often anyway, or dv takes it for one left open somewhere asleep.
+const INPUT_MS = 2000;
+const HEARTBEAT_MS = 30000;
 
-  // A request has a toast while its session is not on screen - including one
-  // that came while it was, and is still waiting when the reader moves off -
-  // and is told of on the desktop once. Both go once it is answered, wherever.
+const inFront = () => document.visibilityState === "visible" && document.hasFocus();
+
+// A reply comes whole, for the phone; here it is its start, on one line.
+const oneLine = (s = "") => s.replace(/\s+/g, " ").trim().slice(0, 240);
+
+// usePresence tells dv whether the reader is at this page and when they last
+// used it - a key, a click, a scroll, coming back to it - which is what puts
+// off sending a notice on to their phone, and counts a turn's end as seen.
+function usePresence() {
   useEffect(() => {
-    const waiting = new Set();
-    for (const s of scopes) for (const r of s.requests) waiting.add(s.at + ":" + r.id);
-    for (const key of told.current) {
-      if (!waiting.has(key)) {
-        unnotify("ask:" + key);
-        told.current.delete(key);
-        toasted.current.delete(key);
-      }
-    }
-    for (const s of scopes) {
-      for (const r of s.requests) {
-        const key = s.at + ":" + r.id;
-        const tag = "ask:" + key;
-        const title = `${agentName(r.via)} wants to ${headline(r)}`;
-        const session = r.title || "a new session";
-        const where = s.at ? `in ${s.name}: ${session}` : `in ${session}`;
-        const goThere = () => (s.at ? now.current.go(s.at, r.session) : now.current.open(r.session));
-        if (!told.current.has(key)) {
-          told.current.add(key);
-          notify(tag, title, where, goThere);
-        }
-        if (!s.at && r.session === looking) {
-          toast.dismiss(tag);
-          toasted.current.delete(key);
-        } else if (!toasted.current.has(key)) {
-          toasted.current.add(key);
-          toast.custom(
-            (t) => (
-              <Notice
-                id={t}
-                kind="ask"
-                agent={r.via}
-                title={title}
-                detail={where}
-                actions={
-                  s.at
-                    ? [{ label: "Open session", primary: true, run: goThere }]
-                    : [
-                        { label: "Review", primary: true, run: () => now.current.review(r.id) },
-                        { label: "Open session", run: goThere },
-                      ]
-                }
-              />
-            ),
-            { id: tag, duration: Infinity },
-          );
-        }
-      }
-    }
-  }, [scopes, looking]);
-
-  // A session going from busy to idle, and staying there, finished its turn. A
-  // folder first heard of only has its sessions noted: nothing ended here yet.
-  useEffect(() => {
-    for (const scope of scopes) {
-      if (!scope.sessions) continue;
-      const was = busy.current.get(scope.at);
-      busy.current.set(scope.at, new Map(scope.sessions.map((s) => [s.id, !!s.busy])));
-      if (!was) continue;
-      for (const s of scope.sessions) {
-        const key = scope.at + ":" + s.id;
-        if (s.busy) {
-          clearTimeout(settling.current.get(key));
-          settling.current.delete(key);
-          continue;
-        }
-        if (!was.get(s.id) || settling.current.has(key)) continue;
-        const timer = setTimeout(() => {
-          settling.current.delete(key);
-          const { requests, elsewhere, looking } = now.current;
-          const asked = scope.at ? (elsewhere || []).find((f) => f.slug === scope.at)?.requests : requests;
-          // Waiting on the reader is not the end of a turn.
-          if (busy.current.get(scope.at)?.get(s.id) !== false || (asked || []).some((r) => r.session === s.id)) return;
-          const tag = "done:" + key;
-          const title = `${agentName(s.agent)} finished`;
-          const session = s.title || "A session";
-          const where = scope.at ? `${scope.name}: ${session}` : session;
-          const goThere = () => (scope.at ? now.current.go(scope.at, s.id) : now.current.open(s.id));
-          if (scope.at || s.id !== looking) {
-            toast.custom((t) => <Notice id={t} kind="done" title={title} detail={where} last={s.last} actions={[{ label: "Open session", run: goThere }]} />, {
-              id: tag,
-              duration: DONE_MS,
-            });
-          }
-          if (document.hidden) setEnded((n) => n + 1);
-          notify(tag, `${title}: ${where}`, s.last || "", goThere);
-        }, SETTLE_MS);
-        settling.current.set(key, timer);
-      }
-    }
-  }, [scopes]);
-
-  useEffect(() => {
-    const onVisible = () => document.hidden || setEnded(0);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    let used = 0;
+    let said = 0;
+    let timer = 0;
+    const report = (input) => {
+      clearTimeout(timer);
+      timer = 0;
+      if (input) said = Date.now();
+      api.presence({ page: PAGE, focused: inFront(), input, ago: input ? Date.now() - used : 0 }).catch(() => {});
+    };
+    const onInput = () => {
+      used = Date.now();
+      if (!timer) timer = setTimeout(() => report(true), Math.max(0, said + INPUT_MS - used));
+    };
+    const onFocus = () => (inFront() ? onInput() : report(false));
+    const inputs = ["keydown", "pointerdown", "wheel", "touchstart"];
+    for (const e of inputs) window.addEventListener(e, onInput, { capture: true, passive: true });
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    const beat = setInterval(() => inFront() && report(false), HEARTBEAT_MS);
+    onFocus();
+    return () => {
+      for (const e of inputs) window.removeEventListener(e, onInput, { capture: true });
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+      clearInterval(beat);
+      clearTimeout(timer);
+    };
   }, []);
-  useEffect(() => () => settling.current.forEach(clearTimeout), []);
+}
 
-  return ended;
+// useNotices shows dv's notices in the page: a toast for each, but for a
+// request in the session on screen, which asks there itself; and a desktop
+// notification for one dv marks loud, if the page is not in front of the
+// reader. looking is the session on screen in the Agent view; review opens a
+// request of this page's folder in its window, open goes to one of its
+// sessions, and go to a session in another of the hub's folders. It returns
+// the notices open.
+export function useNotices({ looking, desktop, review, open, go }) {
+  usePresence();
+  const [notices, setNotices] = useState([]);
+  useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
+  const toasted = useRef(new Map()); // kinds, by notice
+  const told = useRef(new Map()); // desktop notifications, by notice
+  const now = useRef();
+  now.current = { desktop, review, open, go };
+
+  useEffect(() => {
+    const ids = new Set(notices.map((n) => n.id));
+    // A request's go once it is answered, wherever. A turn's end keeps its
+    // toast for its time, and its notification until it is dismissed.
+    for (const [id, kind] of toasted.current) {
+      if (ids.has(id)) continue;
+      toasted.current.delete(id);
+      if (kind === "ask") toast.dismiss(id);
+    }
+    for (const [id, { kind, shown }] of told.current) {
+      if (ids.has(id)) continue;
+      told.current.delete(id);
+      if (kind === "ask") shown?.close();
+    }
+
+    for (const n of notices) {
+      const own = n.folder === slug;
+      const asking = n.kind === "ask";
+      const session = n.where || (asking ? "a new session" : "A session");
+      const where = own ? session : `${n.place}: ${session}`;
+      const goThere = () => (own ? now.current.open(n.session) : now.current.go(n.folder, n.session));
+      const onScreen = own && n.session === looking;
+
+      if (n.loud && !told.current.has(n.id)) {
+        const shown = inFront() ? null : notify(n.id, asking ? n.title : `${n.title}: ${where}`, asking ? `in ${where}` : oneLine(n.body), goThere);
+        told.current.set(n.id, { kind: n.kind, shown });
+      }
+      // A request waits on screen until the reader moves off it; a turn's end
+      // there was seen.
+      if (asking && onScreen) {
+        toast.dismiss(n.id);
+        toasted.current.delete(n.id);
+        continue;
+      }
+      if (toasted.current.has(n.id)) continue;
+      toasted.current.set(n.id, n.kind);
+      if (onScreen) continue;
+      const actions = !asking
+        ? [{ label: "Open session", opens: true, run: goThere }]
+        : own
+          ? [
+              { label: "Review", primary: true, run: () => now.current.review(n.request) },
+              { label: "Open session", opens: true, run: goThere },
+            ]
+          : [{ label: "Open session", primary: true, opens: true, run: goThere }];
+      toast.custom(
+        (t) => (
+          <Notice
+            id={t}
+            kind={n.kind}
+            agent={n.agent}
+            title={n.title}
+            detail={asking ? `in ${where}` : where}
+            last={asking ? "" : oneLine(n.body)}
+            actions={actions}
+          />
+        ),
+        { id: n.id, duration: asking ? Infinity : DONE_MS },
+      );
+    }
+
+    function notify(tag, title, body, onClick) {
+      if (!now.current.desktop || typeof Notification === "undefined" || Notification.permission !== "granted") return null;
+      try {
+        const shown = new Notification(title, { body, tag });
+        shown.onclick = () => {
+          window.focus();
+          onClick();
+          shown.close();
+        };
+        return shown;
+      } catch {
+        return null;
+      }
+    }
+  }, [notices, looking]);
+
+  return notices;
 }

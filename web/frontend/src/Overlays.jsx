@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, RESTART_KEY } from "./api.js";
-import { boot } from "./boot.js";
+import { boot, slug } from "./boot.js";
 import { commentsOn, NO_EXPAND, noop } from "./CodeView.jsx";
 import { CONTEXT_LINES } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
-import { cx, LRM, modKey, statusLabel, useCopy, useDebounced } from "./util.js";
+import { cx, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced } from "./util.js";
 import { ensureLanguage, escapeHtml } from "./highlight.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
-import { TAB_COLORS, tabIconURL } from "./favicon.js";
+import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
+import { Picker } from "./Picker.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -676,18 +677,20 @@ export function SettingsOverlay({
         {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
         <Setting label="Context around each change" value={contextLines} onPick={onContext} choices={CONTEXT_LINES.map((n) => [n, n ? String(n) : "None"])} />
         <Setting label="Wrap long lines" note={phone || !keys ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
-        <div className="menu-label">Agent</div>
+        <div className="menu-label">Notifications</div>
         <Setting
           label="Desktop notifications"
           note={
             typeof Notification === "undefined"
               ? "This browser does not offer them here: they need https or localhost."
-              : "With this tab in the background, you are told when Claude asks or finishes."
+              : "You are told when an agent asks or finishes, if no dv page is in front of you."
           }
           value={!!notices}
           onPick={onNotices}
           choices={OFF_ON}
         />
+        <Telegram settings={settings} onChange={onChange} />
+        <div className="menu-label">Agent</div>
         {hooks && (
           <Setting
             label="Prompts from terminal sessions"
@@ -724,6 +727,274 @@ export function SettingsOverlay({
         <RestartRow working={working} update={update} />
       </div>
     </Modal>
+  );
+}
+
+// WorktreeSession starts a session in a new worktree of the folder, which the
+// hub makes on a branch named here, from what the folder has checked out, in
+// a folder beside it named for the branch - and sets up, as its hook says.
+// Once it is ready the page moves there, to a new session.
+export function WorktreeSession({ repo, from, onClose }) {
+  const [branch, setBranch] = useState("");
+  const [job, setJob] = useState(null); // the hub's, once started
+  const [error, setError] = useState("");
+  const b = branch.trim();
+  const create = async () => {
+    if (!b || job) return;
+    setError("");
+    try {
+      setJob(await api.hubWorktree(slug, { branch: b, here: true }));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  useEffect(() => {
+    if (!job?.id) return;
+    let timer;
+    const look = async () => {
+      const data = await api.hubFolders().catch(() => null);
+      const running = data?.jobs.find((j) => j.id === job.id);
+      const made = !running && data?.folders.find((f) => f.path === job.path);
+      if (made) return openFolderSession(made.slug, "");
+      if (running?.error) return setError(running.error);
+      if (running) setJob((j) => ({ ...j, step: running.step, progress: running.progress }));
+      timer = setTimeout(look, 600);
+    };
+    look();
+    return () => clearTimeout(timer);
+  }, [job?.id]);
+  const note = job
+    ? `${job.step || "Creating"}${job.progress ? `: ${job.progress}` : ""}…`
+    : `Starts from ${from}, in ${b ? `${repo}-${b.replaceAll("/", "-")}` : "a folder named for it"} beside ${repo}. What is not committed here stays behind.`;
+  return (
+    <Modal onClose={onClose} centred className="hub-form">
+      <div className="viewer-head">
+        <span className="path">New session in a worktree</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={onClose}>
+          <IconX size={13} />
+        </button>
+      </div>
+      <div className="settings-body hub-form-body">
+        <label className="hub-field">
+          <span>Branch</span>
+          <input
+            autoFocus
+            value={branch}
+            placeholder="fix/login"
+            disabled={!!job}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(e) => setBranch(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") create();
+            }}
+          />
+        </label>
+      </div>
+      {error && <div className="hub-picker-error">{error}</div>}
+      <div className="hub-picker-foot">
+        <span className="hub-picker-note">{note}</span>
+        <button className="primary" disabled={!b || (!!job && !error)} onClick={create}>
+          {job && !error ? "Creating…" : "Create"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+const SEND_AFTER = [
+  [0, "Right away"],
+  [30, "30 s"],
+  [60, "1 min"],
+  [300, "5 min"],
+];
+
+const CHAT_WORKTREE = [
+  [false, "The folder"],
+  [true, "A new worktree"],
+];
+
+const CHAT_MODES = [
+  ["", "Usual", "The mode a new session begins in, in dv"],
+  ["default", "Ask", "Ask before edits"],
+  ["acceptEdits", "Edits", "Accept edits"],
+  ["plan", "Plan"],
+  ["auto", "Auto"],
+];
+
+const onThisComputer = (origin) => /^https?:\/\/(localhost|127\.[\d.]+|\[::1\])(:\d+)?$/.test(origin);
+
+// Telegram sets up the bot dv sends notices through: made with BotFather, its
+// token pasted here, then the reader's chat connected by pressing Start in
+// it, which this looks for every few seconds until it happens. A dv with no
+// Telegram - a trial run - shows nothing.
+function Telegram({ settings, onChange }) {
+  const [st, setSt] = useState(null);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState("");
+  const [said, setSaid] = useState(null); // { text, bad }
+  const load = useCallback(() => api.telegram().then(setSt, () => setSt((s) => s ?? undefined)), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  // A hub's folders, which a session started from Telegram can go to; a lone
+  // dv has its own alone.
+  const [folders, setFolders] = useState(null);
+  useEffect(() => {
+    api.hubFolders().then((r) => setFolders(r.folders.filter((f) => !f.missing)), () => {});
+  }, []);
+  useEffect(() => {
+    if (!st?.connect) return;
+    const timer = setInterval(load, 2000);
+    return () => clearInterval(timer);
+  }, [st?.connect, load]);
+  if (!st) return null;
+
+  const act = (what, run, done) => async () => {
+    setBusy(what);
+    setSaid(null);
+    try {
+      setSt(await run());
+      if (done) setSaid({ text: done });
+    } catch (e) {
+      setSaid({ text: e.message, bad: true });
+    } finally {
+      setBusy("");
+    }
+  };
+  const setUp = act("setup", () => api.telegramSetUp(token.trim()).then((s) => (setToken(""), s)));
+  const remove = act("remove", () => (confirm(`Stop sending to Telegram, and forget @${st.bot}?`) ? api.telegramRemove() : Promise.resolve(st)));
+  const note = (text) => <div className={cx("settings-note", said?.bad && "prompt-error")}>{said?.text || text}</div>;
+
+  if (!st.bot) {
+    return (
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Telegram</div>
+          {note(
+            <>
+              {st.lost && "The token kept for Telegram cannot be read on this computer, so set it up again. "}
+              Notices on your phone, with buttons to answer them, and each session in a thread of its own to write to. In Telegram, send /newbot to{" "}
+              <a className="link" href="https://t.me/BotFather" target="_blank" rel="noopener">
+                @BotFather
+              </a>
+              , turn on topics for the new bot in BotFather's Mini App (Open, pick the bot, then Bot Settings), and paste the bot's token here.
+            </>,
+          )}
+        </div>
+        <input
+          type="password"
+          value={token}
+          placeholder="Bot token"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => {
+            setToken(e.target.value);
+            setSaid(null);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && token.trim() && !busy && setUp()}
+        />
+        <span className="settings-actions">
+          <button className="primary" disabled={!token.trim() || !!busy} onClick={setUp}>
+            {busy ? "Checking…" : "Set up"}
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  const removeButton = (
+    <button className="btn" disabled={!!busy} onClick={remove}>
+      Remove
+    </button>
+  );
+  if (st.connect) {
+    return (
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Telegram</div>
+          {note(`Open @${st.bot} in Telegram and press Start to connect your chat. This page notices once you have.`)}
+        </div>
+        <span className="settings-actions">
+          <button className="primary" onClick={() => window.open(st.connect, "_blank", "noopener")}>
+            Open Telegram
+          </button>
+          {removeButton}
+        </span>
+      </div>
+    );
+  }
+
+  const links =
+    st.origin && !onThisComputer(st.origin)
+      ? ` Its links open ${st.origin}.`
+      : " To have its messages link to dv, send a test from the address your phone opens dv at.";
+  return (
+    <>
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Telegram</div>
+          {note(`Sending to ${st.chat} through @${st.bot}.${st.sender ? ` The dv at ${st.sender} sends for this computer.` : ""}${links}`)}
+          {st.noTopics && <div className="settings-note prompt-error">{st.noTopics}</div>}
+        </div>
+        <span className="settings-actions">
+          <button className="btn" disabled={!!busy} onClick={act("test", api.telegramTest, "Sent. It should be in Telegram now.")}>
+            {busy === "test" ? "Sending…" : "Send a test"}
+          </button>
+          <button
+            className="btn"
+            disabled={!!busy}
+            title="Makes the bot's picture this computer's tab icon, to tell its bot from another's"
+            onClick={act(
+              "picture",
+              async () => api.telegramPicture(await tabIconJPEG(settings.tabColor)),
+              "Its picture is now the tab icon. Telegram can take a minute to show it.",
+            )}
+          >
+            {busy === "picture" ? "Setting…" : "Use tab icon as picture"}
+          </button>
+          {removeButton}
+        </span>
+      </div>
+      <Setting
+        label="Send to Telegram after"
+        note="How long you go without using dv before what an agent asks, or its finished turn, goes to Telegram. Answering or looking in dv first keeps it here."
+        value={settings.notifyAfter ?? 60}
+        onPick={(v) => onChange({ notifyAfter: v === 60 ? undefined : v })}
+        choices={SEND_AFTER}
+      />
+      {folders?.length > 1 && (
+        <div className="settings-row">
+          <div className="settings-text">
+            <div>Folder for new sessions</div>
+            <div className="settings-note">Where writing to the bot starts one, unless the message says, as “notes: …” does.</div>
+          </div>
+          <Picker
+            label={folders.find((f) => f.slug === settings.chatFolder)?.name || "Ask each time"}
+            choices={[{ id: "", label: "Ask each time" }, ...folders.map((f) => ({ id: f.slug, label: f.name, description: f.place }))]}
+            value={settings.chatFolder ?? ""}
+            onPick={(v) => onChange({ chatFolder: v || undefined })}
+          />
+        </div>
+      )}
+      <Setting
+        label="Start them in"
+        note="“wt: …” or “here: …” in a message says otherwise."
+        value={!!settings.chatWorktree}
+        onPick={(v) => onChange({ chatWorktree: v || undefined })}
+        choices={CHAT_WORKTREE}
+      />
+      <Setting
+        label="Mode they begin in"
+        note="What they ask still comes to you in Telegram."
+        value={settings.chatMode ?? ""}
+        onPick={(v) => onChange({ chatMode: v || undefined })}
+        choices={CHAT_MODES}
+      />
+    </>
   );
 }
 

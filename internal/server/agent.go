@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -283,22 +282,18 @@ func (s *Server) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	}
 	var images []agent.Image
 	for _, img := range req.Images {
-		if !agent.ImageTypes[img.MediaType] {
-			writeErr(w, http.StatusBadRequest, fmt.Errorf("Claude takes PNG, JPEG, GIF and WebP images, not %s", img.MediaType))
+		image := agent.Image{MediaType: img.MediaType, Data: img.Data}
+		if err := image.Check(); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		// Claude's limit is on the image as sent, in base64.
-		if base64.StdEncoding.EncodedLen(len(img.Data)) > 5<<20 {
-			writeErr(w, http.StatusBadRequest, fmt.Errorf("an image is over the 5 MB Claude takes"))
-			return
-		}
-		images = append(images, agent.Image{MediaType: img.MediaType, Data: img.Data})
+		images = append(images, image)
 	}
 	if req.UUID != "" && !sessionID.MatchString(req.UUID) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a uuid", req.UUID))
 		return
 	}
-	uuid, err := s.agent.Send(id, req.UUID, req.Text, images)
+	uuid, err := s.sendVia(id, req.UUID, req.Text, images, "")
 	if err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return

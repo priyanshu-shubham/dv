@@ -5,7 +5,7 @@ import Header, { AUTO } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate } from "./Overlays.jsx";
+import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import AgentView from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
@@ -1060,6 +1060,9 @@ export default function App() {
     setAgentId("");
     requestAnimationFrame(() => document.querySelector(".agent-composer textarea")?.focus());
   }, [setAgentId]);
+  // A session in a new worktree, which only a hub makes, of a repository.
+  const [worktreeOpen, setWorktreeOpen] = useState(false);
+  const newWorktree = boot.base && meta?.git ? () => (setPanel(null), setWorktreeOpen(true)) : null;
   const closeSession = useCallback(
     async (id) => {
       const row = agent.sessions.find((x) => x.id === id);
@@ -1072,10 +1075,7 @@ export default function App() {
   );
 
   const elsewhere = useHubActivity();
-  const ended = useNotices({
-    requests,
-    sessions: activity,
-    elsewhere,
+  const notices = useNotices({
     looking: mode === "agent" ? agentId : null,
     desktop: desktopNotices,
     go: openFolderSession,
@@ -1085,6 +1085,7 @@ export default function App() {
     },
     open: (id) => {
       setPromptOpen(false);
+      setPanel(null);
       selectSession(id);
       switchMode("agent");
     },
@@ -1109,6 +1110,7 @@ export default function App() {
     [setDesktopNotices],
   );
 
+  const dot = tabDot(notices);
   // The waiting note trails so a narrow tab still shows which repository it
   // is; the count up front is enough to catch the eye. The path is for
   // checkouts that share a name.
@@ -1116,10 +1118,10 @@ export default function App() {
     const n = requests.length;
     const who = settings.tabName?.trim() || "dv";
     const repo = meta ? `${who} - ${meta.repo} (${meta.place})` : who;
-    const note = n > 0 ? `${agentName(requests[0].via)} is waiting` : ended > 0 && "Finished";
+    const ended = dot === "done";
+    const note = n > 0 ? `${agentName(requests[0].via)} is waiting` : ended && "Finished";
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
-  }, [requests, ended, meta, settings.tabName]);
-  const dot = tabDot(requests, elsewhere, ended);
+  }, [requests, dot, meta, settings.tabName]);
   const update = useUpdate(settings.updateCheck === false);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
@@ -1423,6 +1425,7 @@ export default function App() {
     <AttachTarget.Provider value={attachTarget}>
     {/* Out of the page's grid, whose rows are the header's and the rest's. */}
     <Notices />
+    {worktreeOpen && <WorktreeSession repo={meta.repo} from={meta.head?.branch || meta.head?.sha || "HEAD"} onClose={() => setWorktreeOpen(false)} />}
     <div className={cx("app", offline && "offline")}>
       <Header
         meta={meta}
@@ -1433,6 +1436,10 @@ export default function App() {
         resolvedScope={diff?.scope}
         onScope={setScope}
         onSearch={() => openOverlay({ type: "search" })}
+        onOpenFile={() => {
+          setPanel(null);
+          openOverlay({ type: "files" });
+        }}
         onHelp={() => openOverlay({ type: "help" })}
         onSettings={() => openOverlay({ type: "settings" })}
         waiting={requests.length}
@@ -1445,6 +1452,13 @@ export default function App() {
         onComments={() => (phone ? setPanel((p) => (p === "comments" ? null : "comments")) : setCommentsOpen((o) => !o))}
         sideOn={phone && panel === "side"}
         onSide={() => setPanel((p) => (p === "side" ? null : "side"))}
+        sideRight={sideRight}
+        onNewSession={() => {
+          setPanel(null);
+          startSession();
+        }}
+        onNewWorktree={newWorktree}
+        canStart={agent.available || !!agent.codex?.available}
       />
 
       <div
@@ -1493,6 +1507,7 @@ export default function App() {
               if (phone) setPanel(null);
               startSession();
             },
+            onNewWorktree: newWorktree,
             onClose: closeSession,
             onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
           }}

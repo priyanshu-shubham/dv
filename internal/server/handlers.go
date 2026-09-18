@@ -491,6 +491,8 @@ func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSymbols(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	// Built the first time it is asked, which that question waits for.
+	s.index.Ready()
 	s.index.EnsureFresh(5 * time.Minute)
 
 	// from is the file the reader is in. It does not narrow the search, it
@@ -516,6 +518,7 @@ func (s *Server) handleSymbolStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSymbolRefresh(w http.ResponseWriter, r *http.Request) {
+	s.index.Use()
 	s.index.BuildAsync()
 	writeJSON(w, http.StatusOK, s.index.Status())
 }

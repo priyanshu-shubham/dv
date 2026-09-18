@@ -36,6 +36,9 @@ type Request struct {
 	At          time.Time         `json:"at"`
 	// Previews are Claude Code's one file, or each of those a Codex patch changes.
 	Previews []*Preview `json:"previews,omitempty"`
+	// Headline finishes "Claude wants to": what, and to what.
+	Headline string   `json:"headline"`
+	Options  []Option `json:"options"`
 }
 
 // Answer is the reader's decision on a request.
@@ -160,6 +163,7 @@ func (b *Broker) Put(ctx context.Context, req *Request) *Answer {
 }
 
 func (b *Broker) put(ctx context.Context, req *Request, thread string) *Answer {
+	req.Headline, req.Options = req.headline(), req.options()
 	w := &waiter{req: req, thread: thread, answer: make(chan *Answer, 1)}
 	b.mu.Lock()
 	b.waiting = append(b.waiting, w)

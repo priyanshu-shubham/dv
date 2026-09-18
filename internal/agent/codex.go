@@ -195,6 +195,16 @@ func cleanPrompt(s string) string {
 }
 
 // title names a thread for a prompt shown away from it.
+func (c *codexSide) reply(id string) string {
+	c.mu.Lock()
+	t := c.threads[id]
+	c.mu.Unlock()
+	if t == nil {
+		return ""
+	}
+	return t.reply()
+}
+
 func (c *codexSide) title(id string) string {
 	c.mu.Lock()
 	t := c.threads[id]

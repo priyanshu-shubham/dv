@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"dv/internal/gitx"
@@ -97,48 +99,74 @@ func startPoint(repo *gitx.Repo, base string) string {
 	return "HEAD"
 }
 
-// handleWorktree makes a worktree beside the repository: { branch, base, name }.
-// An existing branch, local or on a remote, is checked out; any other is made,
-// from base. name is the new folder's, "" for <repo>-<branch>. Once git has
-// made it the worktree is added to the hub and the repository's setup hook runs
-// in it.
+// worktreeReq is a worktree to make. Here starts its branch from what the
+// folder asked from has checked out, in place of base.
+type worktreeReq struct {
+	Branch string `json:"branch"`
+	Base   string `json:"base"`
+	Name   string `json:"name"`
+	Here   bool   `json:"here"`
+}
+
+// handleWorktree makes a worktree beside the repository: { branch, base, name,
+// here }. An existing branch, local or on a remote, is checked out; any other
+// is made, from base. name is the new folder's, "" for <repo>-<branch>, or the
+// first of <repo>-<branch>-2, -3... not taken. Once git has made it the
+// worktree is added to the hub and the repository's setup hook runs in it.
 func (h *Hub) handleWorktree(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Branch string `json:"branch"`
-		Base   string `json:"base"`
-		Name   string `json:"name"`
-	}
+	var body worktreeReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	main, err := h.repoOf(r.PathValue("slug"))
+	j, status, err := h.makeWorktree(r.PathValue("slug"), body, false)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, err)
+		writeErr(w, status, err)
 		return
+	}
+	h.mu.Lock()
+	v := j.view()
+	h.mu.Unlock()
+	writeJSON(w, http.StatusOK, v)
+}
+
+// makeWorktree starts the job making a worktree of the repository slug is in,
+// or says why it cannot, with the HTTP status for it. fresh makes a new branch
+// whatever the name: one taken is numbered on, as a name made up for the
+// reader is.
+func (h *Hub) makeWorktree(slug string, req worktreeReq, fresh bool) (*job, int, error) {
+	main, err := h.repoOf(slug)
+	if err != nil {
+		return nil, http.StatusNotFound, err
 	}
 	repo, err := gitx.Open(main.Path)
 	if err != nil || !repo.IsGit() {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("%s is not a git repository", server.HomeRelative(main.Path)))
-		return
+		return nil, http.StatusBadRequest, fmt.Errorf("%s is not a git repository", server.HomeRelative(main.Path))
 	}
-	branch, base := strings.TrimSpace(body.Branch), strings.TrimSpace(body.Base)
+	branch, base := strings.TrimSpace(req.Branch), strings.TrimSpace(req.Base)
+	if fresh {
+		branch = freeBranch(repo, branch)
+	}
 	if err := repo.ValidBranch(branch); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
+		return nil, http.StatusBadRequest, err
 	}
-	name := strings.TrimSpace(body.Name)
+	if f, ok := h.folders.Get(slug); req.Here && ok {
+		if here, err := gitx.Open(f.Path); err == nil {
+			head := here.Head()
+			base = cmp.Or(head.Branch, head.SHA)
+		}
+	}
+	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = filepath.Base(main.Path) + "-" + strings.ReplaceAll(branch, "/", "-")
+		name = filepath.Base(h.freePath(filepath.Join(filepath.Dir(main.Path), name)))
 	}
 	if err := plainName(name); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
+		return nil, http.StatusBadRequest, err
 	}
 	path := filepath.Join(filepath.Dir(main.Path), name)
-	if _, err := os.Lstat(path); err == nil || h.busy(path) != nil {
-		writeErr(w, http.StatusConflict, fmt.Errorf("%s already exists", server.HomeRelative(path)))
-		return
+	if h.taken(path) {
+		return nil, http.StatusConflict, fmt.Errorf("%s already exists", server.HomeRelative(path))
 	}
 	args := []string{"worktree", "add", "--", path, branch}
 	if !repo.HasBranch(branch) && (base != "" || !repo.HasRemoteBranch(branch)) {
@@ -146,7 +174,7 @@ func (h *Hub) handleWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	j := &job{Kind: "worktree", Title: branch, Path: path, Place: server.HomeRelative(path), Of: main.Slug, Step: "Creating"}
-	writeJSON(w, http.StatusOK, h.start(j, func(ctx context.Context) (string, error) {
+	h.start(j, func(ctx context.Context) (string, error) {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir, cmd.Env = main.Path, quietGit()
 		if err := h.run(j, cmd); err != nil {
@@ -160,7 +188,32 @@ func (h *Hub) handleWorktree(w http.ResponseWriter, r *http.Request) {
 		j.Slug = f.Slug
 		h.mu.Unlock()
 		return h.setup(ctx, j, main, path, branch)
-	}))
+	})
+	return j, 0, nil
+}
+
+func (h *Hub) taken(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil || h.busy(path) != nil
+}
+
+// freePath is path, or path-2, -3... the first not taken.
+func (h *Hub) freePath(path string) string {
+	free := path
+	for i := 2; h.taken(free); i++ {
+		free = path + "-" + strconv.Itoa(i)
+	}
+	return free
+}
+
+// freeBranch is branch, or branch-2, -3... the first no branch here or on a
+// remote has.
+func freeBranch(repo *gitx.Repo, branch string) string {
+	name := branch
+	for i := 2; repo.HasBranch(name) || repo.HasRemoteBranch(name); i++ {
+		name = branch + "-" + strconv.Itoa(i)
+	}
+	return name
 }
 
 // setup runs the repository's setup hook in a worktree, for j.

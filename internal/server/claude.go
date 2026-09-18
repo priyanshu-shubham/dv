@@ -88,7 +88,14 @@ func (s *Server) handleClaudeAnswer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if !s.permit.Answer(r.PathValue("id"), a) {
+	id := r.PathValue("id")
+	if s.notices != nil {
+		s.notices.Outcome(id, "Answered in dv")
+	}
+	if !s.permit.Answer(id, a) {
+		if s.notices != nil {
+			s.notices.Outcome(id, "")
+		}
 		writeErr(w, http.StatusConflict, fmt.Errorf("Claude is no longer waiting on this; it was answered in the terminal"))
 		return
 	}

@@ -16,6 +16,6 @@ func restart(addr string) error {
 	}
 	cmd := exec.Command(update.Path, os.Args[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = append(os.Environ(), restartEnv+"="+addr)
+	cmd.Env = append(append(os.Environ(), update.Carry...), restartEnv+"="+addr)
 	return cmd.Start()
 }

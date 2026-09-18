@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -27,6 +28,8 @@ import (
 	"dv/internal/codex"
 	"dv/internal/gitx"
 	"dv/internal/hub"
+	"dv/internal/notify"
+	"dv/internal/notify/telegram"
 	"dv/internal/permit"
 	"dv/internal/server"
 	"dv/internal/store"
@@ -37,6 +40,10 @@ func main() {
 	// Not for the sessions dv starts, nor the next restart.
 	os.Unsetenv(restartEnv)
 	os.Unsetenv(update.TrialEnv)
+	os.Unsetenv(authEnv)
+	if authKey != "" {
+		update.Carry = []string{authEnv + "=" + authKey}
+	}
 	if trial {
 		time.AfterFunc(time.Minute, func() { os.Exit(1) }) // should what started it not stop it
 	}
@@ -59,6 +66,13 @@ const restartEnv = "DV_RESTART_ADDR"
 
 var restartAddr = os.Getenv(restartEnv)
 
+// authEnv gives -auth's key out of the process list, which anyone on the
+// computer can read. The sessions dv starts do not get it; the dv it restarts
+// as, or tries, does.
+const authEnv = "DV_AUTH"
+
+var authKey = os.Getenv(authEnv)
+
 // trial is a dv started by a running one to see that it starts and serves
 // before that one hands over (update.Try). It listens on a port of its own and
 // touches nothing another dv shares: where Claude Code's prompts are routed,
@@ -78,10 +92,11 @@ func run() error {
 		host        = flag.String("host", "127.0.0.1", "address to bind")
 		dir         = flag.String("C", ".", "repository directory")
 		noOpen      = flag.Bool("no-open", false, "do not open a browser")
+		auth        = flag.String("auth", "", authUsage)
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv hub [-port n] [-host addr] [-no-open]\n       dv reset [-y]\n\n"+
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv hub [-port n] [-host addr] [-no-open] [-auth key]\n       dv reset [-y]\n\n"+
 			"Review the current repository's diff in a browser (outside git, read the\n"+
 			"folder's files). hub serves many folders from one port, with a page to\n"+
 			"add, clone and open them. reset deletes the\n"+
@@ -132,7 +147,10 @@ func run() error {
 		healHooks()
 	}
 
-	srv, err := server.Open(repo.Root, user)
+	notices := notify.New(server.NotifyAfter(user))
+	defer notices.Close()
+	notices.SetDefaults(server.ChatDefaults(user))
+	srv, err := server.Open(repo.Root, user, notices.Folder("", repo.Name()))
 	if err != nil {
 		return err
 	}
@@ -162,7 +180,54 @@ func run() error {
 	} else {
 		defer unannounce()
 	}
-	return serve(ln, srv.Handler(""))
+	tg, stop := sendOn(notices, url)
+	defer stop()
+	return serve(ln, withNotices(srv.Handler(""), notices, tg), cmp.Or(*auth, authKey))
+}
+
+const authUsage = "ask browsers for this key, as the password of HTTP basic auth (any user name); $" + authEnv + " gives it too, unseen by other users"
+
+// sendOn starts Telegram for a dv serving at url, and returns what stops it,
+// letting go of the bot for another dv to take. A trial leaves the bot to the
+// dv trying it.
+func sendOn(notices *notify.Center, url string) (*telegram.Telegram, func()) {
+	dir, err := store.ConfigDir()
+	keyDir, keyErr := store.DataDir()
+	if trial || err != nil || keyErr != nil {
+		return nil, func() {}
+	}
+	tg := telegram.New(notices, url, dir, keyDir)
+	notices.Add(tg)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		tg.Run(ctx)
+		close(done)
+	}()
+	return tg, func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// withNotices serves the notices, which are the whole process's - a hub's
+// folders and all - at its root, ahead of the pages and API of h.
+func withNotices(h http.Handler, notices *notify.Center, tg *telegram.Telegram) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/notify", server.Guarded(notices.HandleStream))
+	mux.HandleFunc("POST /api/notify/presence", server.Guarded(notices.HandlePresence))
+	if tg != nil {
+		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
+		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))
+		mux.HandleFunc("DELETE /api/notify/telegram", server.Guarded(tg.HandleRemove))
+		mux.HandleFunc("POST /api/notify/telegram/test", server.Guarded(tg.HandleTest))
+		mux.HandleFunc("POST /api/notify/telegram/picture", server.Guarded(tg.HandlePicture))
+	}
+	mux.Handle("/", h)
+	return mux
 }
 
 // hubPort is the hub's address, just under the ports lone dvs take.
@@ -174,6 +239,7 @@ func runHub(args []string) error {
 	port := fl.Int("port", hubPort, "port to listen on")
 	host := fl.String("host", "127.0.0.1", "address to bind (0.0.0.0 to reach it from other devices)")
 	noOpen := fl.Bool("no-open", false, "do not open a browser")
+	auth := fl.String("auth", "", authUsage)
 	fl.Parse(args)
 
 	if !server.AssetsBuilt() {
@@ -207,7 +273,10 @@ func runHub(args []string) error {
 		healHooks()
 	}
 
-	h := hub.New(url, user, folders)
+	notices := notify.New(server.NotifyAfter(user))
+	defer notices.Close()
+	notices.SetDefaults(server.ChatDefaults(user))
+	h := hub.New(url, user, folders, notices)
 	defer h.Close()
 	fmt.Printf("\n  \033[1mdv hub\033[0m — %s\n", count(len(folders.List()), "folder"))
 	fmt.Printf("  \033[1;32m%s\033[0m\n\n  ctrl-c to stop\n\n", url)
@@ -219,12 +288,19 @@ func runHub(args []string) error {
 	if trial {
 		fmt.Println(update.TrialMark + ln.Addr().String())
 	}
-	return serve(ln, h.Handler())
+	tg, stop := sendOn(notices, url)
+	defer stop()
+	return serve(ln, withNotices(h.Handler(), notices, tg), cmp.Or(*auth, authKey))
 }
 
 func hubAnswers(url string) bool {
 	c := http.Client{Timeout: time.Second}
-	resp, err := c.Get(url + "/api/hub/folders")
+	req, err := http.NewRequest(http.MethodGet, url+"/api/hub/folders", nil)
+	if err != nil {
+		return false
+	}
+	store.MarkLocal(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return false
 	}
@@ -236,7 +312,16 @@ var errNoBundle = errors.New("this binary has no UI bundle in it - run `make bui
 
 // serve runs until interrupted. Stopping has to return through the caller's
 // deferred unannounce, or the next hook goes looking for a dv that is not there.
-func serve(ln net.Listener, handler http.Handler) error {
+// Given a key, it asks browsers for it.
+func serve(ln net.Listener, handler http.Handler, key string) error {
+	if key != "" {
+		local, err := store.LocalToken()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dv: warning: Claude Code's hooks cannot get past the key, as dv could not make them a token of their own:", err)
+		}
+		handler = server.RequireKey(handler, key, local)
+		fmt.Printf("  asking browsers for its key\n\n")
+	}
 	httpSrv := &http.Server{
 		Handler: handler,
 		// No write timeout: a session's events stream for as long as the page is

@@ -3,9 +3,11 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -35,6 +37,26 @@ func ConfigDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "dv"), nil
+}
+
+// DataDir is where dv keeps what is to stay on this computer, apart from the
+// settings, which get copied and synced: $XDG_DATA_HOME or ~/.local/share, and
+// on Windows the AppData that does not roam.
+func DataDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		if dir := os.Getenv("LocalAppData"); dir != "" {
+			return filepath.Join(dir, "dv"), nil
+		}
+		return "", errors.New("%LocalAppData% is not set")
+	}
+	if dir := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(dir) {
+		return filepath.Join(dir, "dv"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share", "dv"), nil
 }
 
 // OpenUserPrefs loads the user's settings, shared by every dv they run.

@@ -8,12 +8,13 @@ import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
+import { Picker, useRoom } from "./Picker.jsx";
 import { AttachTarget } from "./Threads.jsx";
-import { agentName, cx, duration, isTyping, LRM, menuRoom, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
+import { agentName, cx, duration, isTyping, LRM, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import {
-  AgentIcon, IconArrowUp, IconBack, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary, IconUndo,
-  IconX,
+  AgentIcon, IconArrowUp, IconBack, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary,
+  IconUndo, IconX,
 } from "./icons.jsx";
 
 const md = new MarkdownIt({ html: false, linkify: true });
@@ -31,6 +32,7 @@ const KEYS_SETTLE_MS = 1000;
 // How long after sending Esc takes the message back instead of stopping the
 // agent. dv holds a message sent to Codex mid-turn for as long (holdFor).
 const TAKE_BACK_MS = 2000;
+const UNDO_ARMS_MS = 200;
 const UNDER_PX = 40; // the bar naming the message the view is under, and its gap
 // Claude scales down anything bigger itself; past this, the upload is only slower.
 const IMAGE_PX = 2000;
@@ -207,8 +209,13 @@ function splitContext(text) {
     path: unattr(path),
     lines,
   }));
-  return { text: text.slice(0, m.index), refs };
+  return { text: text.slice(0, m.index), refs, via: VIA.exec(m[1])?.[1] };
 }
+
+// The server notes in a message where it was written - a chat app, or dv again
+// after one - which the page did not put there.
+const VIA = /<via app="([^"]*)">[\s\S]*?<\/via>/;
+const withoutVia = (text) => text.replace(new RegExp("\\n?" + VIA.source), "").replace(/\n*<dv-context>\n*<\/dv-context>\s*$/, "");
 
 function Chip({ kind, path, lines, onClick, onRemove }) {
   const name = splitPath(path)[1];
@@ -630,7 +637,7 @@ export default function AgentView({
   const said = useMemo(() => {
     const n = new Map();
     for (const it of items) {
-      const key = it.kind === "shell" ? "!" + it.text : it.kind === "prompt" || it.kind === "command" ? it.text : null;
+      const key = it.kind === "shell" ? "!" + it.text : it.kind === "prompt" || it.kind === "command" ? withoutVia(it.text) : null;
       if (key !== null) n.set(key, (n.get(key) || 0) + 1);
     }
     return n;
@@ -1172,12 +1179,26 @@ export default function AgentView({
       lastEsc.current = 0;
       return;
     }
+    if (!undoLast()) {
+      if (busy && (running === "dv" || shellRunning)) interrupt();
+      return;
+    }
+    lastEsc.current = 0;
+  };
+  // Takes back what is queued, or the message sent a moment ago, reporting
+  // whether there was one.
+  const undoLast = () => {
     const s = lastSent.current;
     if (queued.length) takeBackQueued();
-    else if (s?.session === id && !s.queued && now - s.at < TAKE_BACK_MS && running === "dv") takeBack(s);
-    else if (busy && (running === "dv" || shellRunning)) return interrupt();
-    else return;
-    lastEsc.current = 0;
+    else if (s?.session === id && !s.queued && Date.now() - s.at < TAKE_BACK_MS && running === "dv") takeBack(s);
+    else return false;
+    return true;
+  };
+  // For a moment after sending, the send button takes the message back, as
+  // Esc does: the one way to on a phone. A tap too soon for that is the one
+  // that sent it, come down twice.
+  const tapUndo = () => {
+    if (Date.now() - (lastSent.current?.at || 0) >= UNDO_ARMS_MS) undoLast();
   };
   const onEscape = useCallback(() => escape.current(), []);
   useEffect(() => {
@@ -1349,6 +1370,8 @@ export default function AgentView({
   const [dropping, setDropping] = useState(false);
   const fileRef = useRef(null);
   const canSend = !!(draft.trim() || images.length || attached.length);
+  // A phone's keyboard shows Enter as a new line, and there the button sends.
+  const enterSends = !useMedia(TOUCH);
   const command = useMemo(() => commandOf(draft, commands), [draft, commands]);
   const shell = draft.startsWith("!");
   const menuRef = useRef(null);
@@ -1464,7 +1487,7 @@ export default function AgentView({
                 return;
               }
             }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (enterSends || e.metaKey || e.ctrlKey)) {
               e.preventDefault();
               send();
             } else if (e.key === "Escape") {
@@ -1545,7 +1568,11 @@ export default function AgentView({
             </button>
           )}
           <span className="spacer" />
-          {busy && (running === "dv" || shellRunning) && !canSend ? (
+          {justSent && lastSent.current?.session === id && !canSend && !lost ? (
+            <button className="composer-send" onClick={tapUndo} title="Take back what you sent (Esc)">
+              <IconUndo size={14} />
+            </button>
+          ) : busy && (running === "dv" || shellRunning) && !canSend ? (
             <button className="composer-send stop" onClick={interrupt} title={shellRunning ? "Stop the command (Esc)" : `Stop what ${name} is doing (Esc)`}>
               <IconStop size={12} />
             </button>
@@ -2192,7 +2219,8 @@ const Item = memo(function Item(props) {
 // Prompt is what you said, set to the right. One still on its way in is
 // pending; its pictures are the ones sent, where the transcript's are fetched.
 function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind }) {
-  const { text, refs } = useMemo(() => splitContext(item.text), [item.text]);
+  const { text, refs, via: viaApp } = useMemo(() => splitContext(item.text), [item.text]);
+  const via = viaApp !== "dv" && viaApp;
   const n = item.images || 0;
   const srcs = pictures ? pictures.map(dataURL) : pending ? [] : Array.from({ length: n }, (_, i) => api.agentPromptImageURL(session, item.uuid, i));
   return (
@@ -2223,8 +2251,9 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
           ))}
         </div>
       )}
-      {(queued || hint) && (
+      {(queued || hint || via) && (
         <div className="agent-prompt-foot">
+          {via && <span title={`Sent from ${via}, where the reply was asked to be brief`}>via {via}</span>}
           {queued && <span title="Read once the step under way is done">Queued</span>}
           {hint && <span className="agent-prompt-hint">{hint}</span>}
         </div>
@@ -3085,57 +3114,6 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
   );
 }
 
-// useRoom is the way a composer menu opens and how tall it may be. The box is
-// at the foot of a session but halfway down a new one's page, where opening
-// upwards ran past the top of the pane.
-function useRoom(open, ref) {
-  const [room, setRoom] = useState(null);
-  useLayoutEffect(() => {
-    if (!open) return;
-    const pane = ref.current.closest(".agent-pane").getBoundingClientRect();
-    const h = ref.current.querySelector(".model-list").scrollHeight;
-    setRoom(menuRoom(ref.current.getBoundingClientRect(), h, pane.top, pane.bottom, false));
-  }, [open]);
-  return open && room;
-}
-
-// Picker is one of the composer's menus. pending marks a pick that waits for
-// the next turn.
-function Picker({ label, title, choices, value, pending, onPick }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
-  const room = useRoom(open, ref);
-  return (
-    <div className="model-menu" ref={ref}>
-      <button className="mini" onClick={() => setOpen((o) => !o)} title={title}>
-        {label}
-        {pending && <span className="composer-effort">next turn</span>}
-        <IconChevronDown size={10} />
-      </button>
-      {open && (
-        <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          {choices.map((c) => (
-            <button
-              key={c.id}
-              className={cx(c.id === value && "on")}
-              onClick={() => {
-                onPick(c.id);
-                setOpen(false);
-              }}
-            >
-              <span className="model-name">
-                {c.label}
-                {c.tag && <span className="model-tag">{c.tag}</span>}
-              </span>
-              {c.description && <span className="model-note">{c.description}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ModelPicker is the model and how hard it thinks, in one menu, as the
 // terminal's /model has them. onPick is given { model } or { effort }.
 function ModelPicker({ label, models, model, efforts, effort, pending, onPick }) {
@@ -3322,7 +3300,7 @@ function SessionID({ id }) {
 // SessionList is the sidebar in Agent mode: sessions open in dv, then the rest
 // of the repository's, newest first. asking is the set of sessions with a
 // prompt or question waiting on the reader.
-export function SessionList({ sessions, available, usage, asking, activeId, added = {}, onSelect, onNew, onClose, onRename }) {
+export function SessionList({ sessions, available, usage, asking, activeId, added = {}, onSelect, onNew, onNewWorktree, onClose, onRename }) {
   const [filter, setFilter] = useState("");
   // The card is where the session on screen is named, so it is kept in sight.
   const listRef = useRef(null);
@@ -3417,6 +3395,11 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
         <button className="ghost" onClick={onNew} title="New session (Alt+N)" disabled={!available}>
           <IconPlus size={13} />
         </button>
+        {onNewWorktree && (
+          <button className="ghost" onClick={onNewWorktree} title="New session in a worktree" disabled={!available}>
+            <IconBranch size={13} />
+          </button>
+        )}
       </div>
       <div className="file-list session-list" ref={listRef}>
         {open.length > 0 && <div className="session-group">Open</div>}

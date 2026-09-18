@@ -113,7 +113,7 @@ export function RequestTitle({ req }) {
     <>
       <AgentIcon agent={req.via} size={14} />
       <span className="prompt-title">
-        {agentName(req.via)} wants to {headline(req)}
+        {agentName(req.via)} wants to {req.headline}
       </span>
       {req.agent && (
         <span className="tag-generated" title="A subagent is asking">
@@ -153,7 +153,7 @@ export function Request({
   const what = describe(req);
   const asking = req.tool === "AskUserQuestion";
   const manyQuestions = asking && (req.input?.questions?.length || 0) > 1;
-  const options = useMemo(() => optionsFor(req), [req]);
+  const options = req.options;
   const modeOption = options.findIndex((o) => o.mode === "acceptEdits");
 
   const answer = useCallback(
@@ -1022,14 +1022,6 @@ function describe(req) {
   return { verb: "use", target: req.tool };
 }
 
-// headline finishes "Claude wants to" in the title bar: what, and to what.
-export function headline(req) {
-  const what = describe(req);
-  if (req.tool === "Bash" || req.tool === "PowerShell") return "run a command";
-  if (!what.target || req.tool === "ExitPlanMode") return what.verb;
-  return `${what.verb} ${what.path ? splitPath(what.target)[1] : what.target}`;
-}
-
 // question is the line the terminal would ask above its options.
 function question(req, what) {
   const name = what.path && what.target ? splitPath(what.target)[1] : "";
@@ -1049,58 +1041,6 @@ function question(req, what) {
       return "Start on this plan?";
   }
   return "Allow this?";
-}
-
-// optionsFor lists the answers in the terminal's order: yes, the suggestions
-// Claude Code offers with it, then no.
-function optionsFor(req) {
-  const plan = req.tool === "ExitPlanMode";
-  const offers = (req.suggestions || [])
-    .map((s, i) => ({ ...offer(s, plan), allow: true, suggestion: i }))
-    .filter((o) => o.label);
-  // A plan's yes always says how edits go from there.
-  const yes = plan && offers.length ? [] : [{ label: "Yes", allow: true }];
-  return [...yes, ...offers, { label: "No", allow: false }];
-}
-
-const WHERE = {
-  session: "this session",
-  localSettings: ".claude/settings.local.json",
-  projectSettings: ".claude/settings.json",
-  userSettings: "~/.claude/settings.json",
-  codexRules: "Codex's rules",
-};
-
-// offer turns one of Claude Code's suggestions into the option the terminal
-// shows for it. One dv cannot put into words is left out.
-function offer(s, plan) {
-  const where = WHERE[s.destination] || "";
-  if (s.type === "setMode" && plan) {
-    const label = s.mode === "acceptEdits" ? "Yes, and accept edits" : s.mode === "default" ? "Yes, and ask before edits" : `Yes, in ${s.mode} mode`;
-    return { label, mode: s.mode };
-  }
-  if (s.type === "setMode") {
-    const label = s.mode === "acceptEdits" ? "Yes, allow all edits this session" : `Yes, and switch to ${s.mode} mode`;
-    return { label, mode: s.mode, where };
-  }
-  if (s.type === "addRules" && s.behavior === "allow" && s.rules?.length) {
-    const rules = s.rules.map((r) => (r.toolName === "Bash" && r.ruleContent ? r.ruleContent : r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName));
-    return { label: `Yes, and don't ask again for ${rules.map(shortRule).join(", ")}`, where, title: rules.join("\n") };
-  }
-  if (s.type === "addDirectories" && s.directories?.length) {
-    return { label: `Yes, and always allow access to ${s.directories.join(", ")}`, where };
-  }
-  return {};
-}
-
-// shortRule keeps an answer on one line: a rule can be a whole script, and the
-// answer says what it allows, not the script. The tooltip keeps all of it.
-const RULE_CHARS = 56;
-function shortRule(rule) {
-  const [first, ...rest] = rule.split("\n");
-  const line = first.trim();
-  if (line.length > RULE_CHARS) return line.slice(0, RULE_CHARS - 1).trimEnd() + "…";
-  return rest.length ? line + " …" : line;
 }
 
 function optionHint(o, said, no) {

@@ -2802,6 +2802,10 @@ mark {
   margin-left: auto;
 }
 
+.settings-row > .model-menu {
+  margin-left: auto;
+}
+
 .settings-row > input {
   flex: 0 1 200px;
   min-width: 0;
@@ -3727,6 +3731,13 @@ button.ghost.agent-context {
 
 .agent-prompt-hint {
   color: var(--fg-3);
+}
+
+/* No Esc to press: the send button takes a message back instead. */
+@media (hover: none) {
+  .agent-prompt-foot .agent-prompt-hint {
+    display: none;
+  }
 }
 
 /* Beside the bubble, out of the way of what it says. */
@@ -5144,6 +5155,11 @@ button.ghost.composer-add {
   font: var(--fs-sm) / 1.4 var(--font-ui);
 }
 
+/* Shaded over its own fill: the hover tokens are see-through. */
+.notice.opens:active {
+  background-image: linear-gradient(var(--bg-active), var(--bg-active));
+}
+
 .notice-icon {
   display: grid;
   flex: none;
@@ -5641,7 +5657,7 @@ button.ghost.back {
   }
 }
 
-.topbar .menu-toggle {
+.topbar .phone-only {
   display: none;
 }
 
@@ -5669,7 +5685,7 @@ button.ghost.back {
     display: none;
   }
 
-  .topbar .menu-toggle {
+  .topbar .phone-only {
     display: inline-flex;
   }
 

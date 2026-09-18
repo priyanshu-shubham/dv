@@ -245,6 +245,21 @@ export const api = {
   updateCheck: () => req("/api/update", {}, ""),
   update: (version) => req("/api/update", { method: "POST", body: JSON.stringify({ version }) }, ""),
 
+  // notices follows what the reader is told of - the whole process's, a hub's
+  // folders and all - as { notices }. page names this page, whose reader counts
+  // as at dv while it is open and says so through presence: { page, focused,
+  // input, ago }, ago in milliseconds since they last used it.
+  notices: (page, on) => follow(`/api/notify?page=${page}`, on, null, "", true),
+  presence: (report) => req("/api/notify/presence", { method: "POST", body: JSON.stringify(report) }, ""),
+  // telegram: { bot, chat, connect, origin, sending, sender }, {} with no bot
+  // set up. Links in its messages go to the page's address as it sets up or tests.
+  telegram: () => req("/api/notify/telegram", {}, ""),
+  telegramSetUp: (token) => req("/api/notify/telegram", { method: "POST", body: JSON.stringify({ token, origin: location.origin }) }, ""),
+  telegramRemove: () => req("/api/notify/telegram", { method: "DELETE" }, ""),
+  telegramTest: () => req("/api/notify/telegram/test", { method: "POST", body: JSON.stringify({ origin: location.origin }) }, ""),
+  // telegramPicture makes a JPEG, in base64, the bot's picture.
+  telegramPicture: (photo) => req("/api/notify/telegram/picture", { method: "POST", body: JSON.stringify({ photo }) }, ""),
+
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
   // user's settings' version; with details, each git folder has its remote and
   // branch too.
@@ -256,14 +271,16 @@ export const api = {
   hubClose: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/close`, { method: "POST", body: "{}" }),
   // hubBranches: { branches, base, repo, into }, what a new worktree is made with.
   hubBranches: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/branches`),
-  hubWorktree: (slug, wt) => req(`/api/hub/folders/${encodeURIComponent(slug)}/worktrees`, { method: "POST", body: JSON.stringify(wt) }),
+  // wt: { branch, base, name, here }, here starting the branch from what the
+  // folder has checked out. A folder's page asks it too, so it goes to the root.
+  hubWorktree: (slug, wt) => req(`/api/hub/folders/${encodeURIComponent(slug)}/worktrees`, { method: "POST", body: JSON.stringify(wt) }, ""),
   hubSetup: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/setup`, { method: "POST", body: "{}" }),
   // how: { skipTeardown, force }, force deleting it with uncommitted changes.
   hubDeleteWorktree: (slug, how = {}) =>
     req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
   // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
   // hubActivity follows every folder open in the hub: { folders: [{ slug,
-  // name, sessions, requests }] }, for notices about the folders not on screen.
+  // name, sessions, requests }] }.
   hubActivity: (onEvent, onDrop) => follow("/api/hub/activity", onEvent, onDrop, "", true),
   hubDirs: (path) => req(`/api/hub/dirs?${new URLSearchParams({ path })}`),
   // hubMakeDir: { path, place }; a folder already there is taken as made.

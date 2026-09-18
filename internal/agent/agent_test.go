@@ -488,6 +488,27 @@ func TestACompactionReadsTheSameWhicheverChainIsWritten(t *testing.T) {
 	}
 }
 
+func TestLastReply(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	call := map[string]any{"type": "tool_use", "id": "toolu_9", "name": "Bash", "input": map[string]any{"command": "go test"}}
+	result := map[string]any{"type": "user", "uuid": "u2", "parentUuid": "a2",
+		"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_9", "content": "ok"}}}}
+	said := line(t, user("u1", "", "run the tests")) +
+		line(t, assistant("a1", "u1", "msg_1", text("Running them."))) +
+		line(t, assistant("a2", "a1", "msg_1", call)) +
+		line(t, result) +
+		line(t, assistant("a3", "u2", "msg_2", text("## Done\n\nAll   **pass**.\n"))) +
+		line(t, assistant("a4", "a3", "msg_2", text("Nothing else to do.")))
+	os.WriteFile(path, []byte(said), 0o644)
+	if got := lastReply(path); got != "## Done\n\nAll   **pass**.\n\nNothing else to do." {
+		t.Fatalf("reply %q", got)
+	}
+	os.WriteFile(path, []byte(said+line(t, user("u3", "a4", "and lint?"))), 0o644)
+	if got := lastReply(path); got != "" {
+		t.Fatalf("reply %q after the reader spoke", got)
+	}
+}
+
 func TestSummaryTakesTheLatestTitleAndPrompt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(path, []byte(conversation(t)), 0o644)

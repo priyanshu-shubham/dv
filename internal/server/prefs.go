@@ -5,9 +5,39 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"dv/internal/notify"
 	"dv/internal/store"
 )
+
+// NotifyAfter reads how long the reader may go without using dv before a
+// notice is sent on to them: the setting notifyAfter, in seconds.
+func NotifyAfter(user *store.Prefs) func() time.Duration {
+	return func() time.Duration {
+		var s struct {
+			NotifyAfter *int `json:"notifyAfter"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		if s.NotifyAfter == nil {
+			return time.Minute
+		}
+		return time.Duration(*s.NotifyAfter) * time.Second
+	}
+}
+
+// ChatDefaults reads where a session begun from a chat app starts when its
+// message does not say: the settings chatFolder and chatWorktree.
+func ChatDefaults(user *store.Prefs) func() notify.Defaults {
+	return func() notify.Defaults {
+		var s struct {
+			ChatFolder   string `json:"chatFolder"`
+			ChatWorktree bool   `json:"chatWorktree"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return notify.Defaults{Folder: s.ChatFolder, Worktree: s.ChatWorktree}
+	}
+}
 
 func (s *Server) allPrefs() map[string]map[string]json.RawMessage {
 	return map[string]map[string]json.RawMessage{"user": s.user.All(), "repo": s.prefs.All()}

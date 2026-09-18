@@ -7,11 +7,18 @@ export const cx = (...parts) => parts.filter(Boolean).join(" ");
 // view with one of its sessions picked: the folders share this origin, so its
 // page reads both from here as it loads.
 export function openFolderSession(to, session) {
-  try {
-    localStorage.setItem(`dv:${to}:agentSession`, JSON.stringify(session));
-    localStorage.setItem(`dv:${to}:mode`, JSON.stringify("agent"));
-  } catch {}
+  pickSession(to, session);
   location.href = `/${to}/`;
+}
+
+// pickSession is where the page of the folder at slug ("" outside a hub) is
+// to open, before it loads.
+export function pickSession(slug, session) {
+  const prefix = slug ? `dv:${slug}:` : "dv:";
+  try {
+    localStorage.setItem(prefix + "agentSession", JSON.stringify(session));
+    localStorage.setItem(prefix + "mode", JSON.stringify("agent"));
+  } catch {}
 }
 
 // usePersisted keeps a small preference in localStorage so the viewer opens the

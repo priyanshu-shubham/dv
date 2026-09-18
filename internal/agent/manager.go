@@ -291,6 +291,19 @@ func (m *Manager) Title(id string) string {
 	return cmp.Or(row.Title, row.Prompt)
 }
 
+// Reply is what the agent said last in a session, whole and as written - the
+// Markdown of it - where Activity has the start of it on one line.
+func (m *Manager) Reply(id string) string {
+	if m.isCodex(id) {
+		return m.codex.reply(id)
+	}
+	path := transcriptFiles(m.root)[id]
+	if path == "" {
+		return ""
+	}
+	return lastReply(path)
+}
+
 // where says who has a session open: dv, a terminal, or nobody.
 func where(p *proc, r running) (string, bool) {
 	if p != nil {
@@ -513,6 +526,47 @@ func (m *Manager) send(id, message, text string, images []Image) (string, error)
 		return "", err
 	}
 	return p.send(cmp.Or(message, newUUID()), text, images)
+}
+
+// Progress is how far a session has got with a message sent to it: queued
+// behind the step the agent is on, or taken up while it is still busy.
+func (m *Manager) Progress(id, message string) (queued, busy bool) {
+	if m.isCodex(id) {
+		return m.codex.thread(id).progress(message)
+	}
+	m.mu.Lock()
+	p := m.procs[id]
+	m.mu.Unlock()
+	if p == nil {
+		return false, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.ContainsFunc(p.queued, func(q Queued) bool { return q.UUID == message }), p.busy
+}
+
+// AgentOf is who runs a session: "codex", or "" for Claude Code.
+func (m *Manager) AgentOf(id string) string {
+	if m.isCodex(id) {
+		return "codex"
+	}
+	return ""
+}
+
+// Picked is the model and effort asked for a session, "" for the agent's own.
+func (m *Manager) Picked(id string) (model, effort string) {
+	if m.isCodex(id) {
+		return m.codex.thread(id).picked()
+	}
+	m.mu.Lock()
+	p := m.procs[id]
+	m.mu.Unlock()
+	if p == nil {
+		return "", ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.model, p.effort
 }
 
 // Unqueue takes back a message still waiting for the step Claude is on, as Up

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dv/internal/gitx"
+	"dv/internal/notify"
 	"dv/internal/server"
 	"dv/internal/store"
 )
@@ -132,7 +133,9 @@ func TestHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	ts := httptest.NewUnstartedServer(nil)
-	h := New("http://"+ts.Listener.Addr().String(), user, list)
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	h := New("http://"+ts.Listener.Addr().String(), user, list, notices)
 	ts.Config.Handler = h.Handler()
 	ts.Start()
 	defer ts.Close()
@@ -163,7 +166,7 @@ func TestHub(t *testing.T) {
 	}
 
 	// Beta is open in a dv of its own, which keeps it.
-	own, err := server.Open(beta, user)
+	own, err := server.Open(beta, user, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,5 +367,95 @@ func TestHub(t *testing.T) {
 	}
 	if r := c.do("GET", "/alpha/api/ping", "", nil); r.StatusCode != http.StatusNotFound {
 		t.Fatalf("removed folder still answers: %d", r.StatusCode)
+	}
+}
+
+// A folder is let go an hour after the last request to it ends, and not while
+// one goes on; its use is written down.
+func TestLetsIdleFoldersGo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	alpha := filepath.Join(home, "code", "alpha")
+	repo(t, alpha)
+	user, _ := store.OpenUserPrefs()
+	list, _ := store.OpenFolders()
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	h := New("http://127.0.0.1:1", user, list, notices)
+	defer h.Close()
+	list.Add(store.Folder{Path: alpha})
+
+	if err := h.Open("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := list.Get("alpha"); f.Used.IsZero() {
+		t.Fatal("opening it did not count as using it")
+	}
+	later := time.Now().Add(59 * time.Minute)
+	h.sweep(later)
+	if h.opened("alpha") == nil {
+		t.Fatal("let go before an hour")
+	}
+	done := h.asking("alpha", h.opened("alpha"))
+	h.sweep(later.Add(2 * time.Hour))
+	if h.opened("alpha") == nil {
+		t.Fatal("let go while a page was asking")
+	}
+	done()
+	h.sweep(time.Now().Add(time.Hour))
+	if h.opened("alpha") != nil {
+		t.Fatal("kept an hour after the last request")
+	}
+	// Opened again for what asks for it: here, a session's last words.
+	if _, err := notices.Reply("alpha", "00000000-0000-0000-0000-000000000000"); err != nil || h.opened("alpha") == nil {
+		t.Fatalf("not opened again for its sessions: %v", err)
+	}
+}
+
+// A worktree for a session starts from where the folder asked from is, and
+// takes a name of its own when the one made up is taken.
+func TestWorktreeFromHere(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	alpha := filepath.Join(home, "code", "alpha")
+	repo(t, alpha)
+	user, _ := store.OpenUserPrefs()
+	list, _ := store.OpenFolders()
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	h := New("http://127.0.0.1:1", user, list, notices)
+	defer h.Close()
+	list.Add(store.Folder{Path: alpha})
+
+	// A worktree on a branch of its own, with a commit main does not have.
+	first, err := h.Worktree("alpha", "feature", false)
+	if err != nil || first.Name != "alpha-feature" || !first.Git {
+		t.Fatalf("first worktree: %+v, %v", first, err)
+	}
+	feature := filepath.Join(home, "code", "alpha-feature")
+	os.WriteFile(filepath.Join(feature, "b.txt"), []byte("b\n"), 0o644)
+	git(t, feature, "add", "b.txt")
+	git(t, feature, "commit", "-qm", "feature work")
+
+	// From it, a made-up branch taken already is numbered on, and so is its folder.
+	os.MkdirAll(filepath.Join(home, "code", "alpha-feature-2"), 0o755)
+	second, err := h.Worktree(first.Slug, "feature", true)
+	if err != nil || second.Name != "alpha-feature-2-2" {
+		t.Fatalf("second worktree: %+v, %v", second, err)
+	}
+	made := filepath.Join(home, "code", "alpha-feature-2-2")
+	if _, err := os.Stat(filepath.Join(made, "b.txt")); err != nil {
+		t.Fatal("the worktree did not start from the one it was made from")
+	}
+	out, _ := exec.Command("git", "-C", made, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "feature-2" {
+		t.Fatalf("on branch %q", out)
+	}
+	if places := h.Places(); len(places) != 3 {
+		t.Fatalf("places: %+v", places)
 	}
 }

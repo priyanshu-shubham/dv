@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -180,6 +181,18 @@ type Image struct {
 
 // ImageTypes are the kinds of image both Claude and a page take.
 var ImageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+
+// Check is whether img can be sent with a message.
+func (img Image) Check() error {
+	if !ImageTypes[img.MediaType] {
+		return fmt.Errorf("Claude takes PNG, JPEG, GIF and WebP images, not %s", img.MediaType)
+	}
+	// Claude's limit is on the image as sent, in base64.
+	if base64.StdEncoding.EncodedLen(len(img.Data)) > 5<<20 {
+		return errors.New("an image is over the 5 MB Claude takes")
+	}
+	return nil
+}
 
 // promptImage is the nth picture sent with a message, found by its uuid.
 func promptImage(path, uuid string, n int) (*Image, error) {

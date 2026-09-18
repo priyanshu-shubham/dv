@@ -3,6 +3,7 @@ package hub
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -41,12 +42,14 @@ type job struct {
 	Retry string `json:"retry,omitempty"`
 
 	cancel context.CancelFunc
+	ended  chan struct{} // closed once the work is over, err then its outcome
+	err    error
 }
 
 // view is j as the page gets it. Callers hold h.mu.
 func (j *job) view() job {
 	v := *j
-	v.cancel = nil
+	v.cancel, v.ended, v.err = nil, nil, nil
 	return v
 }
 
@@ -54,7 +57,7 @@ func (j *job) view() job {
 // what the page may offer to do about it.
 func (h *Hub) start(j *job, work func(ctx context.Context) (retry string, err error)) job {
 	ctx, cancel := context.WithCancel(context.Background())
-	j.ID, j.Started, j.cancel = newID(), time.Now().UTC(), cancel
+	j.ID, j.Started, j.cancel, j.ended = newID(), time.Now().UTC(), cancel, make(chan struct{})
 	h.mu.Lock()
 	h.jobs[j.ID] = j
 	v := j.view()
@@ -63,6 +66,8 @@ func (h *Hub) start(j *job, work func(ctx context.Context) (retry string, err er
 		retry, err := work(ctx)
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		j.err = cmp.Or(err, ctx.Err())
+		defer close(j.ended)
 		switch {
 		case ctx.Err() != nil:
 			delete(h.jobs, j.ID)

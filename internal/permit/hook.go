@@ -48,7 +48,13 @@ func RunHook(stdin io.Reader, stdout io.Writer) {
 	if !ok {
 		return
 	}
-	resp, err := client.Post(srv.URL+"/api/claude/hook", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/claude/hook", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	store.MarkLocal(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return
 	}

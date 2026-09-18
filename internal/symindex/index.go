@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -41,8 +42,15 @@ type Index struct {
 	files    int
 	builtAt  time.Time
 	building bool
+	built    chan struct{} // closed as the build running ends
 	buildErr error
+	idle     *time.Timer // lets the table go once pages stop using it
 }
+
+// idleAfter is how long the table is kept with no page using it. It is built
+// only when first looked in, so a folder open only for its agents, or never
+// searched, does without it.
+const idleAfter = 15 * time.Minute
 
 func New(root string, l Lister) *Index { return &Index{root: root, lister: l} }
 
@@ -68,14 +76,16 @@ func (ix *Index) Status() Status {
 	return s
 }
 
-// Build scans the repository. Concurrent calls collapse into the first one.
+// Build scans the repository. A call while one runs waits for that one.
 func (ix *Index) Build() {
 	ix.mu.Lock()
 	if ix.building {
+		running := ix.built
 		ix.mu.Unlock()
+		<-running
 		return
 	}
-	ix.building = true
+	ix.building, ix.built = true, make(chan struct{})
 	ix.mu.Unlock()
 
 	syms, files, err := ix.scan()
@@ -86,6 +96,59 @@ func (ix *Index) Build() {
 	if err == nil {
 		ix.syms, ix.files, ix.builtAt = syms, files, time.Now()
 	}
+	close(ix.built)
+	ix.mu.Unlock()
+}
+
+// Use says a page is using the index, which starts building it if it has not
+// been, and keeps it for idleAfter more.
+func (ix *Index) Use() {
+	ix.mu.Lock()
+	cold := ix.builtAt.IsZero() && !ix.building
+	if ix.idle == nil {
+		ix.idle = time.AfterFunc(idleAfter, ix.drop)
+	} else {
+		ix.idle.Reset(idleAfter)
+	}
+	ix.mu.Unlock()
+	if cold {
+		ix.BuildAsync()
+	}
+}
+
+// Ready waits for the table, built now if it has not been, for a question
+// that needs it answered in full.
+func (ix *Index) Ready() {
+	ix.Use()
+	ix.mu.RLock()
+	built := !ix.builtAt.IsZero()
+	ix.mu.RUnlock()
+	if !built {
+		ix.Build()
+	}
+}
+
+// drop lets the table go, and hands its memory back to the system now rather
+// than over the next minutes.
+func (ix *Index) drop() {
+	ix.mu.Lock()
+	if ix.building {
+		ix.idle.Reset(idleAfter)
+		ix.mu.Unlock()
+		return
+	}
+	ix.syms, ix.files, ix.builtAt = nil, 0, time.Time{}
+	ix.mu.Unlock()
+	debug.FreeOSMemory()
+}
+
+// Close lets the table go with the folder.
+func (ix *Index) Close() {
+	ix.mu.Lock()
+	if ix.idle != nil {
+		ix.idle.Stop()
+	}
+	ix.syms = nil
 	ix.mu.Unlock()
 }
 

@@ -27,6 +27,9 @@ type sessionsDoc struct {
 	Switches  map[string][]Switch `json:"switches,omitempty"`
 	// Agents names the agent of a session that is not Claude Code's: "codex".
 	Agents map[string]string `json:"agents,omitempty"`
+	// Via names the chat app a session's last message came through, when it
+	// was not dv's page: "Telegram".
+	Via map[string]string `json:"via,omitempty"`
 }
 
 // Switch is a change of permission mode made in dv. Claude Code records a mode
@@ -188,6 +191,34 @@ func (s *Sessions) SetAgent(id, agent string) error {
 		s.doc.Agents = map[string]string{}
 	}
 	s.doc.Agents[id] = agent
+	return s.file.save(s.doc)
+}
+
+// Via is the chat app a session's last message came through, "" for dv's page.
+func (s *Sessions) Via(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return s.doc.Via[id]
+}
+
+func (s *Sessions) SetVia(id, via string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	if s.doc.Via[id] == via {
+		return nil
+	}
+	if via == "" {
+		delete(s.doc.Via, id)
+	} else {
+		if s.doc.Via == nil {
+			s.doc.Via = map[string]string{}
+		}
+		s.doc.Via[id] = via
+	}
 	return s.file.save(s.doc)
 }
 
