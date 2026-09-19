@@ -1114,7 +1114,7 @@ export function HelpOverlay({ onClose }) {
     [",", "Settings"],
     ...(boot.base
       ? [
-          ["h", "Back to the hub"],
+          ["Alt+H", "Back to the hub (from the message box too)"],
           [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone)"],
         ]
       : []),

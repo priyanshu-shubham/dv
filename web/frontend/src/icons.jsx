@@ -38,7 +38,8 @@ export const IconPlus = svg(<path d="M8 3.5v9M3.5 8h9" />, { stroke: true });
 export const IconExpand = svg(<path d="M5 6.5L8 3.5l3 3M5 9.5l3 3 3-3" />, { stroke: true });
 export const IconCollapse = svg(<path d="M5 3.5l3 3 3-3M5 12.5l3-3 3 3" />, { stroke: true });
 export const IconFilter = svg(<path d="M2.5 3h11L9.2 8.3V13l-2.4-1.2V8.3z" />, { stroke: true });
-export const IconMenu = svg(<path d="M2.5 4h11M2.5 8h11M2.5 12h11" />, { stroke: true });
+// Three paths, so each line can move on its own (.menu-glyph).
+export const IconMenu = svg(<><path d="M2.5 4h11" /><path d="M2.5 8h11" /><path d="M2.5 12h11" /></>, { stroke: true });
 export const IconSplit =svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" /></>, { stroke: true });
 export const IconUnified = svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M2 8h12" /></>, { stroke: true });
 export const IconBranch = svg(<><circle cx="4" cy="3.5" r="1.8" /><circle cx="4" cy="12.5" r="1.8" /><circle cx="12" cy="6" r="1.8" /><path d="M4 5.3v5.4M12 7.8c0 2-1.5 2.9-4 3.2" /></>, { stroke: true });

@@ -799,6 +799,20 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openFind]);
 
+  // Alt+H goes where ← dv at the top left does, from the message box too. Read
+  // by code, as Option+H on a Mac types a dead key.
+  useEffect(() => {
+    if (!boot.base) return;
+    const onKey = (e) => {
+      if (e.code !== "KeyH" || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      location.href = "/";
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   const findBar = find && (
     <FindBar
       find={find}
@@ -1314,7 +1328,7 @@ export default function App() {
       }
       if (mod || e.altKey) return;
       // The Agent view has keys of its own; these few mean the same there.
-      if (mode === "agent" && !["?", "u", "w", "h"].includes(e.key)) return;
+      if (mode === "agent" && !["?", "u", "w"].includes(e.key)) return;
 
       // A step between files goes through the changed ones. In Code mode it
       // starts from the open file, which need not be one of them.
@@ -1345,10 +1359,6 @@ export default function App() {
           break;
         case ",":
           openOverlay({ type: "settings" });
-          break;
-        case "h":
-          // Where ← dv at the top left goes, when a hub serves this folder.
-          if (boot.base) location.href = "/";
           break;
         case "[":
         case "]":

@@ -5624,9 +5624,32 @@ button.ghost.composer-add {
   75% { transform: rotate(2deg); }
 }
 
+/* The phone's menu button turns into a close as the sidebar slides in, in the
+   sidebar's time. Each outer line is centred first, then turned. */
+.menu-glyph path {
+  transform-origin: 8px 8px;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.menu-glyph.open path:nth-child(1) {
+  transform: rotate(45deg) translateY(4px);
+}
+
+.menu-glyph.open path:nth-child(2) {
+  opacity: 0;
+}
+
+.menu-glyph.open path:nth-child(3) {
+  transform: rotate(-45deg) translateY(-4px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bell-glyph {
     animation: none;
+  }
+
+  .menu-glyph path {
+    transition: none;
   }
 }
 

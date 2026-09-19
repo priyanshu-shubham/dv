@@ -49,7 +49,7 @@ export default function Header({
   const agent = mode === "agent";
   const menu = (
     <button className={cx("icon", "phone-only", sideOn && "on")} aria-pressed={sideOn} onClick={onSide} title="Files and sessions">
-      <IconMenu size={15} />
+      <IconMenu size={15} className={cx("menu-glyph", sideOn && "open")} />
     </button>
   );
   return (
@@ -57,7 +57,7 @@ export default function Header({
       <div className="topbar-left">
         {!sideRight && menu}
         {boot.base ? (
-          <a className="logo to-hub" href="/" title="Back to the hub (h)">
+          <a className="logo to-hub" href="/" title="Back to the hub (Alt+H)">
             <IconBack size={13} />
             dv
           </a>
