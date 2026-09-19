@@ -436,7 +436,8 @@ func (p *proc) handle(line []byte) {
 			}
 			p.states, p.busy = true, m.State != "idle"
 			if !p.busy {
-				p.queued = nil
+				// Idle from now: a long turn is not reaped the moment it ends.
+				p.queued, p.lastUsed = nil, time.Now()
 			}
 		}
 		p.mu.Unlock()
@@ -466,7 +467,7 @@ func (p *proc) handle(line []byte) {
 		p.mu.Lock()
 		p.busy = p.busy && p.states
 		if !p.busy {
-			p.queued = nil
+			p.queued, p.lastUsed = nil, time.Now()
 		}
 		p.status, p.cost = "", m.Cost
 		if m.Subtype == "error_during_execution" {

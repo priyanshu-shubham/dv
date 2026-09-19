@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"dv/internal/permit"
 	"dv/internal/store"
@@ -840,9 +841,14 @@ func TestBusyUntilClaudeCodeSaysIdle(t *testing.T) {
 	if !p.busy {
 		t.Fatal("a result ended a turn Claude Code still reports running")
 	}
+	// A turn longer than the reaper waits is idle from its end, not its start.
+	p.lastUsed = time.Now().Add(-time.Hour)
 	p.handle([]byte(`{"type":"system","subtype":"session_state_changed","state":"idle"}`))
 	if p.busy {
 		t.Fatal("still busy after idle")
+	}
+	if time.Since(p.lastUsed) > time.Minute {
+		t.Fatal("idle since the turn began")
 	}
 }
 

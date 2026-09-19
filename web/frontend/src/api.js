@@ -259,6 +259,11 @@ export const api = {
   telegramTest: () => req("/api/notify/telegram/test", { method: "POST", body: JSON.stringify({ origin: location.origin }) }, ""),
   // telegramPicture makes a JPEG, in base64, the bot's picture.
   telegramPicture: (photo) => req("/api/notify/telegram/picture", { method: "POST", body: JSON.stringify({ photo }) }, ""),
+  // gchat: { relay, code, expires, name, owner, email, connected, elsewhere, lost, sealed }
+  gchat: () => req("/api/notify/gchat", {}, ""),
+  gchatSetUp: (relay) => req("/api/notify/gchat", { method: "POST", body: JSON.stringify({ relay, origin: location.origin }) }, ""),
+  gchatRemove: () => req("/api/notify/gchat", { method: "DELETE" }, ""),
+  gchatTest: () => req("/api/notify/gchat/test", { method: "POST", body: JSON.stringify({ origin: location.origin }) }, ""),
 
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
   // user's settings' version; with details, each git folder has its remote and

@@ -499,7 +499,8 @@ func (t *codexThread) Notify(method string, params json.RawMessage) {
 			turn := t.turnLocked(p.Turn.ID)
 			turn.Status, turn.Error, turn.Completed, turn.DurationMs = p.Turn.Status, p.Turn.Error, p.Turn.Completed, p.Turn.DurationMs
 			if t.active == p.Turn.ID {
-				t.active = ""
+				// Idle from now: a long turn is not let go the moment it ends.
+				t.active, t.lastUsed = "", time.Now()
 			}
 			t.inReview = false
 			t.blocks, t.order, t.status = map[string]*Block{}, nil, ""

@@ -1,9 +1,8 @@
-package telegram
+package chat
 
 import (
 	"cmp"
 	"context"
-	"html"
 	"slices"
 	"strings"
 
@@ -27,7 +26,7 @@ func setupText(intro string, s notify.Setup) string {
 	if e := effortOf(s); e != "" {
 		parts = append(parts, e+" effort")
 	}
-	line := "On <b>" + html.EscapeString(strings.Join(parts, " · ")) + "</b>"
+	line := "On **" + Escape(strings.Join(parts, " · ")) + "**"
 	if intro == "" {
 		return line
 	}
@@ -46,30 +45,30 @@ func effortOf(s notify.Setup) string { return cmp.Or(s.Effort, modelOf(s).Effort
 
 // setupRows are the button that opens the picker, or the picker open: a row
 // a model, the efforts of the one picked, and Done. p is the session's.
-func (t *Telegram) setupRows(s notify.Setup, p pick, open bool) [][]button {
+func (c *Conversation) setupRows(s notify.Setup, p pick, open bool) [][]Button {
 	if len(s.Models) == 0 {
 		return nil
 	}
 	if !open {
 		p.step = "change"
-		return [][]button{{{Text: "Change model", Data: t.offer(p)}}}
+		return [][]Button{{{Text: "Change model", Data: c.offer(p)}}}
 	}
 	on := modelOf(s)
-	var rows [][]button
+	var rows [][]Button
 	for _, m := range s.Models {
 		p.step, p.value = "model", m.ID
-		rows = append(rows, []button{{Text: ticked(m.ID == on.ID) + m.Label, Data: t.offer(p)}})
+		rows = append(rows, []Button{{Text: ticked(m.ID == on.ID) + m.Label, Data: c.offer(p)}})
 	}
-	var efforts []button
+	var efforts []Button
 	for _, e := range on.Efforts {
 		p.step, p.value = "effort", e
-		efforts = append(efforts, button{Text: ticked(e == effortOf(s)) + e, Data: t.offer(p)})
+		efforts = append(efforts, Button{Text: ticked(e == effortOf(s)) + e, Data: c.offer(p)})
 	}
 	for row := range slices.Chunk(efforts, 3) {
 		rows = append(rows, row)
 	}
 	p.step = "shut"
-	return append(rows, []button{{Text: "Done", Data: t.offer(p)}})
+	return append(rows, []Button{{Text: "Done", Data: c.offer(p)}})
 }
 
 func ticked(on bool) string {
@@ -81,42 +80,39 @@ func ticked(on bool) string {
 
 // pickSetup acts on a button of the picker, on the message it is on, and
 // returns what to tell the reader of it.
-func (t *Telegram) pickSetup(ctx context.Context, cfg Config, q *callback, p pick) string {
+func (c *Conversation) pickSetup(ctx context.Context, t Tap, p pick) string {
 	folder, session := p.session.Folder, p.session.ID
 	var err error
 	switch p.step {
 	case "model":
-		err = t.center.Configure(folder, session, &p.value, nil, p.asNew)
+		err = c.center.Configure(folder, session, &p.value, nil, p.asNew)
 	case "effort":
-		err = t.center.Configure(folder, session, nil, &p.value, p.asNew)
+		err = c.center.Configure(folder, session, nil, &p.value, p.asNew)
 	}
 	if err != nil {
 		return err.Error()
 	}
-	s, err := t.center.Setup(folder, session)
+	s, err := c.center.Setup(folder, session)
 	if err != nil {
 		return err.Error()
 	}
-	if q.Message != nil {
-		// A tap on what is picked already changes nothing, which Telegram
-		// turns down, and that is all.
-		t.call(ctx, cfg, "editMessageText", map[string]any{
-			"chat_id": cfg.Chat, "message_id": q.Message.ID, "text": setupText(p.intro, s),
-			"parse_mode": "HTML", "link_preview_options": noPreview, "reply_markup": markup(t.setupRows(s, p, p.step != "shut")),
-		}, nil)
+	if t.Ref != "" {
+		// A tap on what is picked already changes nothing, which an app may
+		// turn down, and that is all.
+		c.p.Edit(ctx, t.Thread, t.Ref, Out{Text: setupText(p.intro, s), Buttons: c.setupRows(s, p, p.step != "shut")})
 	}
 	return ""
 }
 
 // askModel shows a session's setup with the picker open, for /model.
-func (t *Telegram) askModel(ctx context.Context, cfg Config, thread int64, folder, session string) {
-	s, err := t.center.Setup(folder, session)
+func (c *Conversation) askModel(ctx context.Context, thread, folder, session string) {
+	s, err := c.center.Setup(folder, session)
 	switch {
 	case err != nil:
-		t.say(ctx, cfg, thread, err.Error(), nil)
+		c.tell(ctx, thread, err.Error(), nil)
 	case len(s.Models) == 0:
-		t.say(ctx, cfg, thread, "dv does not know yet which models the agent offers: ask again in a moment.", nil)
+		c.tell(ctx, thread, "dv does not know yet which models the agent offers: ask again in a moment.", nil)
 	default:
-		t.post(ctx, cfg, thread, setupText("", s), t.setupRows(s, pick{session: notify.Session{Folder: folder, ID: session}}, true))
+		c.p.Post(ctx, thread, Out{Text: setupText("", s), Buttons: c.setupRows(s, pick{session: notify.Session{Folder: folder, ID: session}}, true), Private: true})
 	}
 }

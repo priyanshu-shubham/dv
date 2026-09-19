@@ -1,4 +1,4 @@
-.PHONY: build frontend go install watch test clean
+.PHONY: build frontend go relay install watch test clean
 
 # Full build: bundle the UI, then compile the Go binary with it embedded.
 build: frontend go
@@ -8,6 +8,10 @@ frontend:
 
 go:
 	go build -o dv .
+
+# The Google Chat relay, for Cloud Run: see cmd/dv-gchat-relay/README.md.
+relay:
+	CGO_ENABLED=0 go build -o dv-gchat-relay ./cmd/dv-gchat-relay
 
 # Install to ~/.local/bin so `dv` works from any repository.
 install: build
@@ -22,6 +26,6 @@ test:
 	go test ./...
 
 clean:
-	rm -f dv
+	rm -f dv dv-gchat-relay
 	rm -f internal/server/static/bundle.js internal/server/static/bundle.css
 	rm -f internal/server/static/chunk-*.js internal/server/static/*.woff2

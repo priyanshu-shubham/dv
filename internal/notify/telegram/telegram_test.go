@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"dv/internal/notify"
+	"dv/internal/notify/chat"
 )
 
 // fakeBot is the Bot API, as far as dv uses it: it hands out the updates
@@ -281,7 +282,7 @@ func TestTelegram(t *testing.T) {
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "Unauthorized") || tg.config().Token != "123:abc" {
 		t.Fatalf("a token Telegram refuses: %d %s", w.Code, w.Body)
 	}
-	if c := bot.await(t, "setMyCommands", seen); len(c.Params["commands"].([]any)) != len(commands) {
+	if c := bot.await(t, "setMyCommands", seen); len(c.Params["commands"].([]any)) != len(chat.Commands) {
 		t.Fatalf("commands: %v", c.Params)
 	}
 
@@ -507,7 +508,7 @@ func connected(t *testing.T) (*Telegram, *fakeBot, *notify.Center, func(id, thre
 	t.Cleanup(center.Close)
 	tg := New(center, "http://127.0.0.1:1", t.TempDir(), t.TempDir())
 	tg.api.base = api.URL
-	tg.typingEvery = 20 * time.Millisecond
+	tg.conv.Every = 20 * time.Millisecond
 	tg.change(func(c *Config) { *c = Config{Token: "123:abc", Bot: "dv_test_bot", Chat: 42} })
 	center.Add(tg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -623,6 +624,20 @@ func TestQuickStart(t *testing.T) {
 	data := ask.Params["reply_markup"].(map[string]any)["inline_keyboard"].([]any)[0].([]any)[0].(map[string]any)["callback_data"].(string)
 	bot.updates <- update{ID: 2, Callback: &callback{ID: "q", From: user{ID: 42}, Data: data, Message: &message{ID: ask.ID, Thread: 900}}}
 	sessions.await(t, "started: fix the tests")
+	// The question keeps its answer, and takes no other.
+	if c := bot.await(t, "editMessageText", seen); c.Params["message_id"] != float64(ask.ID) || !strings.HasSuffix(shown(c), "\n✓ Alpha\n"+`{"inline_keyboard":[]}`+"\n") {
+		t.Fatalf("the question answered: %q", shown(c))
+	}
+	bot.await(t, "answerCallbackQuery", seen)
+	bot.updates <- update{ID: 20, Callback: &callback{ID: "q", From: user{ID: 42}, Data: data, Message: &message{ID: ask.ID, Thread: 900}}}
+	if c := bot.await(t, "answerCallbackQuery", seen); c.Params["text"] != "That is answered already." {
+		t.Fatalf("tapped again: %v", c.Params)
+	}
+	sessions.mu.Lock()
+	if n := len(slices.DeleteFunc(slices.Clone(sessions.done), func(s string) bool { return s != "started: fix the tests" })); n != 1 {
+		t.Fatalf("started %d times", n)
+	}
+	sessions.mu.Unlock()
 	if c := bot.await(t, "editForumTopic", seen); c.Params["message_thread_id"] != 900.0 || c.Params["name"] != "fix the tests · Alpha" {
 		t.Fatalf("the reader's thread, named for the session: %v", c.Params)
 	}
@@ -680,7 +695,7 @@ func TestProgressAndModels(t *testing.T) {
 	sessions := &fakeFolder{}
 	center.Folder("alpha", "Alpha").Serve(sessions)
 	tg.change(func(c *Config) {
-		c.Threads = map[string]Thread{threadKey("alpha", "s1"): {ID: 500, Name: "Fix · Alpha"}}
+		c.Threads = map[string]Thread{"alpha/s1": {ID: 500, Name: "Fix · Alpha"}}
 	})
 	seen := map[int]bool{}
 	reaction := func() string { return fmt.Sprint(bot.await(t, "setMessageReaction", seen).Params["reaction"]) }
@@ -773,34 +788,4 @@ func TestProgressAndModels(t *testing.T) {
 	}
 	press(opened, "Opus 5")
 	sessions.await(t, `s2 on "" "", new too: true`)
-}
-
-func TestBranchFor(t *testing.T) {
-	for _, c := range []struct{ text, want string }{
-		{"Fix the login bug", "fix-the-login-bug"},
-		{"Refactor the notification centre so that providers can be added", "refactor-the-notification-centre-so"},
-		{"```go\nfunc main() {}\n```", "go"},
-		{"🚀✨", "session-"},
-		{"Ünïcode wörds and 42 more", "ünïcode-wörds-and-42-more"},
-	} {
-		if got := branchFor(c.text); !strings.HasPrefix(got, c.want) || len(got) > 40 {
-			t.Errorf("branchFor(%q) = %q, want %q", c.text, got, c.want)
-		}
-	}
-}
-
-func TestSplit(t *testing.T) {
-	md := "intro\n\n```go\n" + strings.Repeat("x := 1\n", 30) + "```\nafter"
-	parts := split(md, 100)
-	for i, p := range parts {
-		if len(p) > 100 || strings.Count(p, "```")%2 != 0 {
-			t.Errorf("part %d, %d bytes, has its code block open:\n%s", i, len(p), p)
-		}
-	}
-	if joined := strings.Join(parts, "\n"); strings.Count(joined, "x := 1") != 30 || !strings.HasSuffix(joined, "after") {
-		t.Errorf("parts lose text:\n%s", joined)
-	}
-	if got := fmt.Sprint(split("", 100)); got != "[]" {
-		t.Errorf("nothing, split: %s", got)
-	}
 }

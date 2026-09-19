@@ -93,12 +93,24 @@ func inline(s string) string {
 
 // marks renders text with no code in it. The marks read the same escaped.
 // Underscores are left alone: in plain text they are mostly names, __init__.
+// A mark escaped with a backslash is the character itself.
 func marks(s string) string {
+	var held []string
+	s = escaped.ReplaceAllStringFunc(s, func(e string) string {
+		held = append(held, e[1:])
+		return "\x00"
+	})
 	s = html.EscapeString(s)
 	s = link.ReplaceAllString(s, `<a href="$2">$1</a>`)
 	s = bold.ReplaceAllString(s, "<b>$1</b>")
 	// Twice, as neighbours share the character between them: *a* *b*.
 	s = italic.ReplaceAllString(s, "$1<i>$2</i>$3")
 	s = italic.ReplaceAllString(s, "$1<i>$2</i>$3")
-	return struck.ReplaceAllString(s, "<s>$1</s>")
+	s = struck.ReplaceAllString(s, "<s>$1</s>")
+	for _, c := range held {
+		s = strings.Replace(s, "\x00", html.EscapeString(c), 1)
+	}
+	return s
 }
+
+var escaped = regexp.MustCompile("\\\\[!-/:-@\\[-`{-~]")

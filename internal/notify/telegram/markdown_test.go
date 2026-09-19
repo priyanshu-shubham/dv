@@ -22,6 +22,7 @@ func TestMarkdownHTML(t *testing.T) {
 		"if a < b && *p {",
 		"```",
 		"2 * 3 * 4 and a lone *",
+		`Escaped \*marks\* and \<tags\> are themselves, C:\path too`,
 		"```",
 		"cut short <here>",
 	}, "\n")
@@ -37,6 +38,7 @@ func TestMarkdownHTML(t *testing.T) {
 		"⎯⎯⎯",
 		`<pre><code class="language-go">if a &lt; b &amp;&amp; *p {</code></pre>`,
 		"2 * 3 * 4 and a lone *",
+		`Escaped *marks* and &lt;tags&gt; are themselves, C:\path too`,
 		"<pre>cut short &lt;here&gt;</pre>",
 	}, "\n")
 	if got := markdownHTML(md); got != want {

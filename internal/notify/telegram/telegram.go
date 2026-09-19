@@ -1,7 +1,7 @@
-// Package telegram sends dv's notices to the reader's Telegram, through a bot
-// of their own, and takes what they answer and write there. Each session has
-// a thread (a topic) of its own in the bot's chat: its notices go there, and
-// what the reader writes there goes to it.
+// Package telegram is dv's conversation (package chat) in Telegram, through
+// a bot of the reader's own. Each session has a thread - a topic - in the
+// bot's chat: its notices go there, and what the reader writes there goes to
+// it.
 //
 // Telegram hands a bot's messages to one listener at a time, so of the dvs
 // running on a computer one sends for all of them: the first to find the bot
@@ -16,9 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,6 +25,8 @@ import (
 	"time"
 
 	"dv/internal/notify"
+	"dv/internal/notify/chat"
+	"dv/internal/secret"
 	"dv/internal/store"
 )
 
@@ -51,125 +51,47 @@ type Thread struct {
 	Name string `json:"name"`
 }
 
-// Telegram is the provider. Every dv has one; only the one sending uses it.
+// Telegram is the platform. Every dv has one; only the one sending uses it.
 type Telegram struct {
-	center *notify.Center
+	conv   *chat.Conversation
 	self   string // this dv's address, by which the others know it sends
 	dir    string
 	keyDir string
 	api    botAPI
-	jobs   chan func(context.Context)
 	wake   chan struct{}
 	start  time.Time
-	flew   chan struct{} // a flight added
-	// How often flights are looked at: typingEvery, less in tests.
-	typingEvery time.Duration
-
-	threading sync.Mutex // one thread made at a time, so a session gets one
 
 	mu      sync.Mutex
 	cfg     Config
 	stamp   time.Time // cfg's file's, as read
 	secret  []byte    // the key the token is sealed with, once read
 	sending bool
-	topics  *bool                  // whether the bot has them, once asked
-	sent    map[string]sentMessage // by notice
-	picks   map[string]pick        // what the buttons of a list stand for, by token
-	asked   map[int64]pick         // questions a reply answers, by message
-	flights []*flight
+	topics  *bool // whether the bot has them, once asked
 }
 
 // New readies the provider of a dv at self, keeping its settings in dir and
 // the key that seals its token in keyDir.
 func New(center *notify.Center, self, dir, keyDir string) *Telegram {
-	return &Telegram{
-		center: center, self: self, dir: dir, keyDir: keyDir,
+	t := &Telegram{
+		self: self, dir: dir, keyDir: keyDir,
 		api:  botAPI{"https://api.telegram.org", &http.Client{Timeout: callTimeout}},
-		jobs: make(chan func(context.Context), 100), wake: make(chan struct{}, 1),
-		start: time.Now(), flew: make(chan struct{}, 1), typingEvery: typingEvery,
-		sent: map[string]sentMessage{}, picks: map[string]pick{}, asked: map[int64]pick{},
+		wake: make(chan struct{}, 1), start: time.Now(),
 	}
+	t.conv = chat.New(center, t)
+	return t
 }
 
 // Run sends, if this dv is the one sending, until ctx ends; then lets go of
 // the bot for another dv to take.
 func (t *Telegram) Run(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case job := <-t.jobs:
-				job(ctx)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	go t.fly(ctx)
+	go t.conv.Run(ctx)
 	t.poll(ctx)
 	t.letGo()
 }
 
-// Send tells of a notice in its session's thread.
-func (t *Telegram) Send(n notify.Notice) {
-	t.do(func(ctx context.Context) {
-		cfg := t.config()
-		if !t.isSending() || cfg.Chat == 0 {
-			return
-		}
-		rows := keyboard(n, cfg, true)
-		var m sentMessage
-		err := t.inThread(ctx, cfg, n.Folder, n.Session, n.Where, n.Place, func(thread int64) (err error) {
-			m.thread = thread
-			m.id, err = t.postAll(ctx, cfg, thread, pages(n, thread != 0, true), rows)
-			if unparsed(err) {
-				m.id, err = t.postAll(ctx, cfg, thread, pages(n, thread != 0, false), rows)
-			}
-			return err
-		})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "dv: could not send a notice to Telegram:", err)
-			return
-		}
-		t.mu.Lock()
-		t.sent[n.ID] = m
-		t.mu.Unlock()
-	})
-}
-
-// sentMessage is a notice's last message, which has its buttons.
-type sentMessage struct{ id, thread int64 }
-
-// Settle says how a notice ended on its message, which loses its answers. A
-// turn's end has nothing to take back.
-func (t *Telegram) Settle(n notify.Notice) {
-	t.do(func(ctx context.Context) {
-		t.mu.Lock()
-		m := t.sent[n.ID]
-		delete(t.sent, n.ID)
-		t.mu.Unlock()
-		if m.id == 0 || n.Outcome == "" {
-			return
-		}
-		cfg := t.config()
-		params := map[string]any{"chat_id": cfg.Chat, "message_id": m.id, "text": text(n, m.thread != 0, n.Outcome, true), "parse_mode": "HTML", "link_preview_options": noPreview}
-		params["reply_markup"] = markup(keyboard(n, cfg, false))
-		err := t.call(ctx, cfg, "editMessageText", params, nil)
-		if unparsed(err) {
-			params["text"] = text(n, m.thread != 0, n.Outcome, false)
-			err = t.call(ctx, cfg, "editMessageText", params, nil)
-		}
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "dv: could not update a notice in Telegram:", err)
-		}
-	})
-}
-
-func (t *Telegram) do(job func(context.Context)) {
-	select {
-	case t.jobs <- job:
-	default: // Telegram is not keeping up; better a notice lost than dv held up
-	}
-}
+// Send and Settle are the notices', as a notify provider's.
+func (t *Telegram) Send(n notify.Notice)   { t.conv.Send(n) }
+func (t *Telegram) Settle(n notify.Notice) { t.conv.Settle(n) }
 
 // poll is the sending dv's: it takes the reader's taps and messages.
 func (t *Telegram) poll(ctx context.Context) {
@@ -238,9 +160,123 @@ func (t *Telegram) poll(ctx context.Context) {
 	}
 }
 
+// Messages this much older than this dv were for one before it, and are
+// dropped; newer ones came while dv restarted, and are still acted on.
+const staleAfter = 10 * time.Minute
+
+// said takes a message: the one that connects the chat, or one for the
+// conversation, with its pictures, fetched from Telegram.
+func (t *Telegram) said(ctx context.Context, cfg Config, m *message) {
+	if code, ok := strings.CutPrefix(m.Text, "/start "); ok && cfg.Code != "" && code == cfg.Code && m.Chat.Type == "private" {
+		t.connect(ctx, m)
+		return
+	}
+	if m.Chat.ID != cfg.Chat || cfg.Chat == 0 || !m.sent() || time.Unix(m.Date, 0).Before(t.start.Add(-staleAfter)) {
+		return
+	}
+	text, images, err := t.gather(ctx, cfg, m)
+	if err != nil {
+		t.post(ctx, cfg, m.Thread, html.EscapeString(err.Error()), nil)
+		return
+	}
+	in := chat.In{Thread: id(m.Thread), Ref: id(m.ID), Text: text, Images: images}
+	if m.ReplyTo != nil {
+		in.ReplyTo = id(m.ReplyTo.ID)
+	}
+	t.conv.Said(ctx, in)
+}
+
+// tapped takes a button: the reader's, for the conversation.
+func (t *Telegram) tapped(ctx context.Context, cfg Config, q *callback) {
+	answer := map[string]any{"callback_query_id": q.ID}
+	if q.From.ID == cfg.Chat {
+		tap := chat.Tap{Data: q.Data}
+		if q.Message != nil {
+			tap.Thread, tap.Ref = id(q.Message.Thread), id(q.Message.ID)
+		}
+		if said, _ := t.conv.Tapped(ctx, tap); said != "" {
+			answer["text"] = said
+		}
+	}
+	t.call(ctx, cfg, "answerCallbackQuery", answer, nil)
+}
+
+// connect makes the chat that sent the code the one dv sends to.
+func (t *Telegram) connect(ctx context.Context, m *message) {
+	name := ""
+	if m.From != nil {
+		name = m.From.FirstName
+		if name == "" {
+			name = "@" + m.From.Username
+		}
+	}
+	cfg, err := t.change(func(c *Config) {
+		c.Chat, c.Name, c.Code = m.Chat.ID, name, ""
+	})
+	if err == nil {
+		t.post(ctx, cfg, 0, html.EscapeString("Connected to dv on "+hostname()+".\n\n"+chat.Help), nil)
+		t.menu(ctx, cfg)
+	}
+}
+
+// Most of a picture an agent takes: 5 MB, once in base64.
+const maxPicture = 5 << 20 / 4 * 3
+
+// gather is a message's words, and the pictures of it or of the album it
+// starts, fetched from Telegram.
+func (t *Telegram) gather(ctx context.Context, cfg Config, m *message) (string, []notify.Image, error) {
+	var words []string
+	var images []notify.Image
+	for _, p := range append([]*message{m}, m.more...) {
+		for _, w := range []string{p.Text, p.Caption} {
+			if w != "" {
+				words = append(words, w)
+			}
+		}
+		fileID, kind, err := p.picture()
+		if err == nil && fileID != "" {
+			var data []byte
+			if data, err = t.api.download(ctx, cfg.Token, fileID); err != nil {
+				err = fmt.Errorf("Could not fetch the picture from Telegram: %w", err)
+			}
+			images = append(images, notify.Image{Type: kind, Data: data})
+		}
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return strings.Join(words, "\n\n"), images, nil
+}
+
+// picture is the file of the picture a message has, and its kind; none for
+// words alone. What else it has, dv does not take.
+func (m *message) picture() (fileID, kind string, err error) {
+	switch d := m.Document; {
+	case len(m.Photo) > 0:
+		// Photos are JPEG, in their largest size an agent takes.
+		for i := len(m.Photo) - 1; i > 0; i-- {
+			if m.Photo[i].Size <= maxPicture {
+				return m.Photo[i].FileID, "image/jpeg", nil
+			}
+		}
+		return m.Photo[0].FileID, "image/jpeg", nil
+	case d != nil && strings.HasPrefix(d.MimeType, "image/") && d.Size > maxPicture:
+		return "", "", errors.New("That picture is too big to send as a file. Send it as a photo, which Telegram makes smaller.")
+	case d != nil && strings.HasPrefix(d.MimeType, "image/"):
+		return d.FileID, d.MimeType, nil
+	case d != nil || m.other():
+		return "", "", errors.New("dv takes words and pictures here: not voice notes, videos or other files.")
+	}
+	return "", "", nil
+}
+
 // introduce tells Telegram the bot's commands, for the menu its apps show,
 // and learns whether the bot has topics, which sessions' threads are.
 func (t *Telegram) introduce(ctx context.Context, cfg Config) {
+	var commands []map[string]string
+	for _, c := range chat.Commands {
+		commands = append(commands, map[string]string{"command": c.Name, "description": c.Description})
+	}
 	t.call(ctx, cfg, "setMyCommands", map[string]any{"commands": commands}, nil)
 	t.hasTopics(ctx, cfg)
 	t.menu(ctx, cfg)
@@ -250,7 +286,7 @@ func (t *Telegram) introduce(ctx context.Context, cfg Config) {
 // Telegram. That takes an https address, which a dv reached only on this
 // computer has none of.
 func (t *Telegram) menu(ctx context.Context, cfg Config) {
-	link := linkTo(cfg.Origin, "/")
+	link := chat.LinkTo(cfg.Origin, "/")
 	if cfg.Chat == 0 || !strings.HasPrefix(link, "https://") {
 		return
 	}
@@ -271,37 +307,14 @@ func (t *Telegram) hasTopics(ctx context.Context, cfg Config) bool {
 	return me.Topics
 }
 
+var errNoTopics = errors.New("This bot has no topics, which dv puts each session in. Turn them on for it in @BotFather's Mini App: Open, pick the bot, then Bot Settings.")
+
 func (t *Telegram) sleep(ctx context.Context, d time.Duration) {
 	select {
 	case <-time.After(d):
 	case <-t.wake:
 	case <-ctx.Done():
 	}
-}
-
-// tapped acts on a button: a choice answering a notice, or a pick from a list
-// the bot gave.
-func (t *Telegram) tapped(ctx context.Context, cfg Config, q *callback) {
-	if q.From.ID != cfg.Chat {
-		t.call(ctx, cfg, "answerCallbackQuery", map[string]any{"callback_query_id": q.ID}, nil)
-		return
-	}
-	if token, ok := strings.CutPrefix(q.Data, pickPrefix); ok {
-		t.picked(ctx, cfg, q, token)
-		return
-	}
-	id, n, _ := strings.Cut(q.Data, ":")
-	i, _ := strconv.Atoi(n)
-	choice, err := t.center.Answer(id, i, "Telegram")
-	said := choice
-	if err != nil {
-		said = err.Error()
-		// Left by a dv that has since restarted, it can only be answered in dv.
-		if errors.Is(err, notify.ErrGone) && q.Message != nil {
-			t.call(ctx, cfg, "editMessageReplyMarkup", map[string]any{"chat_id": cfg.Chat, "message_id": q.Message.ID, "reply_markup": markup(nil)}, nil)
-		}
-	}
-	t.call(ctx, cfg, "answerCallbackQuery", map[string]any{"callback_query_id": q.ID, "text": said}, nil)
 }
 
 // Test sends a message to show that the reader can be reached, with a link
@@ -319,40 +332,192 @@ func (t *Telegram) Test(ctx context.Context, origin string) error {
 		return errors.New("Connect a chat first")
 	}
 	t.menu(ctx, cfg)
-	var rows [][]button
-	if link := linkTo(cfg.Origin, "/"); link != "" {
-		rows = [][]button{{{Text: "Open dv", URL: link}}}
+	var rows [][]chat.Button
+	if link := chat.LinkTo(cfg.Origin, "/"); link != "" {
+		rows = [][]chat.Button{{{Text: "Open dv", URL: link}}}
 	}
 	_, err = t.post(ctx, cfg, 0, "dv on "+html.EscapeString(hostname())+" can reach you here.", rows)
 	return err
 }
 
-// say sends plain words, in a thread or, with 0, the chat itself.
-func (t *Telegram) say(ctx context.Context, cfg Config, thread int64, s string, rows [][]button) {
-	t.post(ctx, cfg, thread, html.EscapeString(s), rows)
-}
+// The platform, as the conversation talks through it.
 
-// postAll sends a notice's messages in turn, its buttons on the last, whose
-// id it returns.
-func (t *Telegram) postAll(ctx context.Context, cfg Config, thread int64, texts []string, rows [][]button) (int64, error) {
-	var id int64
-	for i, text := range texts {
-		var last [][]button
-		if i == len(texts)-1 {
-			last = rows
+func (t *Telegram) Via() string { return "Telegram" }
+
+func (t *Telegram) Ready() bool { return t.isSending() && t.config().Chat != 0 }
+
+func (t *Telegram) Origin() string { return t.config().Origin }
+
+// A message holds this much of a body, well inside Telegram's 4096 characters
+// with the rest of the message; a reply runs to this many messages at most.
+const (
+	pageChars = 3000
+	maxPages  = 5
+)
+
+// Post sends a message, a long one as several, rendered from Markdown in the
+// HTML Telegram takes - or as written, where Telegram will not take that.
+func (t *Telegram) Post(ctx context.Context, thread string, m chat.Out) (string, error) {
+	cfg := t.config()
+	pages := chat.Split(m.Text, pageChars)
+	if len(pages) > maxPages {
+		pages = pages[:maxPages]
+		pages[maxPages-1] += "\n\n…"
+	} else if len(pages) == 0 {
+		pages = []string{""}
+	}
+	var ref int64
+	for i, page := range pages {
+		var rows [][]chat.Button
+		if i == len(pages)-1 {
+			rows = m.Buttons
 		}
 		var err error
-		if id, err = t.post(ctx, cfg, thread, text, last); err != nil {
-			return id, err
+		ref, err = t.post(ctx, cfg, num(thread), render(page, m.Plain), rows)
+		if unparsed(err) {
+			ref, err = t.post(ctx, cfg, num(thread), html.EscapeString(page), rows)
+		}
+		if err != nil {
+			return id(ref), err
 		}
 	}
-	return id, nil
+	return id(ref), nil
 }
 
-// post sends a message to the reader, in a thread or the chat itself,
+func (t *Telegram) Edit(ctx context.Context, thread, ref string, m chat.Out) error {
+	cfg := t.config()
+	text := m.Text
+	if len(text) > pageChars {
+		text = chat.Split(text, pageChars)[0]
+	}
+	params := map[string]any{"chat_id": cfg.Chat, "message_id": num(ref), "text": render(text, m.Plain), "parse_mode": "HTML", "link_preview_options": noPreview}
+	params["reply_markup"] = markup(m.Buttons)
+	err := t.call(ctx, cfg, "editMessageText", params, nil)
+	if unparsed(err) {
+		params["text"] = html.EscapeString(text)
+		err = t.call(ctx, cfg, "editMessageText", params, nil)
+	}
+	return err
+}
+
+func (t *Telegram) Unbutton(ctx context.Context, thread, ref string) error {
+	cfg := t.config()
+	return t.call(ctx, cfg, "editMessageReplyMarkup", map[string]any{"chat_id": cfg.Chat, "message_id": num(ref), "reply_markup": markup(nil)}, nil)
+}
+
+func (t *Telegram) NewThread(ctx context.Context, name string) (string, error) {
+	cfg := t.config()
+	var topic struct {
+		ID int64 `json:"message_thread_id"`
+	}
+	err := t.call(ctx, cfg, "createForumTopic", map[string]any{"chat_id": cfg.Chat, "name": name}, &topic)
+	return id(topic.ID), err
+}
+
+func (t *Telegram) Rename(ctx context.Context, thread, name string) error {
+	cfg := t.config()
+	return t.call(ctx, cfg, "editForumTopic", map[string]any{"chat_id": cfg.Chat, "message_thread_id": num(thread), "name": name}, nil)
+}
+
+func (t *Telegram) Gone(err error) bool {
+	e := (*apiError)(nil)
+	return errors.As(err, &e) && strings.Contains(e.Description, "thread not found")
+}
+
+func (t *Telegram) Thread(key string) (chat.Thread, bool) {
+	th, ok := t.config().Threads[key]
+	return chat.Thread{ID: id(th.ID), Name: th.Name}, ok
+}
+
+func (t *Telegram) SetThread(key string, th chat.Thread) {
+	t.change(func(c *Config) {
+		if c.Threads == nil {
+			c.Threads = map[string]Thread{}
+		}
+		c.Threads[key] = Thread{num(th.ID), th.Name}
+	})
+}
+
+func (t *Telegram) DropThread(key string) {
+	t.change(func(c *Config) { delete(c.Threads, key) })
+}
+
+func (t *Telegram) ThreadOf(thread string) (string, bool) {
+	for k, th := range t.config().Threads {
+		if id(th.ID) == thread {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// A message the reader sent wears how far its session has got with it: 👀
+// while it waits behind the step the agent is on, 👨‍💻 once taken up, nothing
+// once the turn is over, its reply below it. Of the few emoji a bot may react
+// with, none is ⏳ or ✅. While the agent works the thread shows the bot
+// typing, which Telegram keeps up for 5 seconds.
+func (t *Telegram) Mark(ctx context.Context, thread, ref string, was, at notify.Progress) {
+	if face(was) != face(at) {
+		t.react(ctx, ref, face(at))
+	}
+}
+
+func (t *Telegram) Busy(ctx context.Context, thread string) {
+	cfg := t.config()
+	params := map[string]any{"chat_id": cfg.Chat, "action": "typing"}
+	if thread != "" {
+		params["message_thread_id"] = num(thread)
+	}
+	t.call(ctx, cfg, "sendChatAction", params, nil)
+}
+
+func (t *Telegram) Ack(ctx context.Context, thread, ref string) { t.react(ctx, ref, "👌") }
+
+// face is the reaction for how far a session has got, "" for none.
+func face(at notify.Progress) string {
+	switch at {
+	case notify.Queued:
+		return "👀"
+	case notify.Working, notify.Asking:
+		return "👨‍💻"
+	}
+	return ""
+}
+
+// react puts an emoji on a message; "" takes it off.
+func (t *Telegram) react(ctx context.Context, ref, emoji string) {
+	cfg := t.config()
+	reaction := []map[string]string{}
+	if emoji != "" {
+		reaction = append(reaction, map[string]string{"type": "emoji", "emoji": emoji})
+	}
+	t.call(ctx, cfg, "setMessageReaction", map[string]any{"chat_id": cfg.Chat, "message_id": num(ref), "reaction": reaction}, nil)
+}
+
+// id and num are Telegram's numbers as the conversation keeps them, "" for 0.
+func id(n int64) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+func num(s string) int64 {
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
+}
+
+func render(text string, plain bool) string {
+	if plain {
+		return html.EscapeString(text)
+	}
+	return markdownHTML(text)
+}
+
+// post sends a message's HTML to the reader, in a thread or the chat itself,
 // returning its id. A link Telegram will not take - to an address on the
 // reader's network - is left off.
-func (t *Telegram) post(ctx context.Context, cfg Config, thread int64, text string, rows [][]button) (int64, error) {
+func (t *Telegram) post(ctx context.Context, cfg Config, thread int64, text string, rows [][]chat.Button) (int64, error) {
 	params := map[string]any{"chat_id": cfg.Chat, "text": text, "parse_mode": "HTML", "link_preview_options": noPreview}
 	if thread != 0 {
 		params["message_thread_id"] = thread
@@ -395,141 +560,26 @@ func unparsed(err error) bool {
 	return errors.As(err, &e) && strings.Contains(e.Description, "can't parse entities")
 }
 
-func markup(rows [][]button) map[string]any {
-	if rows == nil {
-		rows = [][]button{}
+func markup(rows [][]chat.Button) map[string]any {
+	keyboard := [][]button{}
+	for _, r := range rows {
+		var row []button
+		for _, b := range r {
+			row = append(row, button(b))
+		}
+		keyboard = append(keyboard, row)
 	}
-	return map[string]any{"inline_keyboard": rows}
+	return map[string]any{"inline_keyboard": keyboard}
 }
 
-func withoutLinks(rows [][]button) [][]button {
-	var out [][]button
+func withoutLinks(rows [][]chat.Button) [][]chat.Button {
+	var out [][]chat.Button
 	for _, r := range rows {
 		if r[0].URL == "" {
 			out = append(out, r)
 		}
 	}
 	return out
-}
-
-// A message holds this much of a body, well inside Telegram's 4096 characters
-// with the rest of the message; a reply runs to this many messages at most.
-const (
-	pageChars = 3000
-	maxPages  = 5
-)
-
-// pages is a notice as the messages it takes: a long reply goes over several.
-// threaded is its going in its session's thread, which says whose it is.
-func pages(n notify.Notice, threaded, rich bool) []string {
-	parts := []string{clip(n.Body, pageChars)}
-	if n.Kind == notify.Done && n.Format == notify.Markdown {
-		if parts = split(n.Body, pageChars); len(parts) > maxPages {
-			parts = parts[:maxPages]
-			parts[maxPages-1] += "\n\n…"
-		} else if len(parts) == 0 {
-			parts = []string{""}
-		}
-	}
-	out := make([]string, len(parts))
-	for i, body := range parts {
-		out[i] = page(n, body, i == 0, i == len(parts)-1, threaded, "", rich)
-	}
-	return out
-}
-
-// text is a notice in a single message, with how it ended once it has.
-func text(n notify.Notice, threaded bool, outcome string, rich bool) string {
-	return page(n, clip(n.Body, pageChars), true, true, threaded, outcome, rich)
-}
-
-// page is one of a notice's messages: its title on the first, and on the last
-// the session it is from, unless in the session's thread, and how it ended
-// once it has. A Markdown body is rendered when rich is set; plain, it is sent
-// as written, for when Telegram will not take what was made of it.
-func page(n notify.Notice, body string, first, last, threaded bool, outcome string, rich bool) string {
-	var b strings.Builder
-	if first {
-		b.WriteString("<b>" + html.EscapeString(n.Title) + "</b>\n")
-	}
-	if body != "" {
-		switch {
-		case n.Format == notify.Code:
-			b.WriteString("<pre>" + html.EscapeString(body) + "</pre>\n")
-		case n.Format == notify.Markdown && rich:
-			b.WriteString(markdownHTML(body) + "\n")
-		default:
-			b.WriteString(html.EscapeString(body) + "\n")
-		}
-	}
-	if !last {
-		return strings.TrimRight(b.String(), "\n")
-	}
-	if !threaded {
-		b.WriteString("\n<i>" + html.EscapeString(from(n.Where, n.Place)) + "</i>")
-	}
-	switch {
-	case outcome != "":
-		b.WriteString("\n\n<b>" + html.EscapeString(outcome) + "</b>")
-	case n.Kind == notify.Ask && len(n.Choices) == 0:
-		b.WriteString("\n\nThis one is answered in dv.")
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// from says whose a message is: "from session in dv folder (Fix the tests)".
-func from(title, place string) string {
-	s := "from session"
-	if title == "" {
-		s = "from a new session"
-	}
-	if place != "" {
-		s += " in " + place + " folder"
-	}
-	if title != "" {
-		s += " (" + title + ")"
-	}
-	return s
-}
-
-// keyboard is a notice's buttons: its choices, while it can be answered, and a
-// link to its session.
-func keyboard(n notify.Notice, cfg Config, open bool) [][]button {
-	var rows [][]button
-	if open {
-		for i, c := range n.Choices {
-			rows = append(rows, []button{{Text: c, Data: n.ID + ":" + strconv.Itoa(i)}})
-		}
-	}
-	path := "/"
-	if n.Folder != "" {
-		path += n.Folder + "/"
-	}
-	if link := linkTo(cfg.Origin, path+"?session="+url.QueryEscape(n.Session)); link != "" {
-		rows = append(rows, []button{{Text: "Open in dv", URL: link}})
-	}
-	return rows
-}
-
-// linkTo is a link to dv at origin, if Telegram's apps can follow it: not to
-// this computer, which is not the phone's.
-func linkTo(origin, path string) string {
-	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-		return ""
-	}
-	host := u.Hostname()
-	if ip := net.ParseIP(host); host == "localhost" || ip != nil && ip.IsLoopback() {
-		return ""
-	}
-	return strings.TrimSuffix(origin, "/") + path
-}
-
-func clip(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
-	}
-	return s
 }
 
 func hostname() string {
@@ -595,40 +645,12 @@ func (t *Telegram) change(edit func(*Config)) (Config, error) {
 		return t.cfg, err
 	}
 	b, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := writePrivate(t.configPath(), b, true); err != nil {
+	if err := secret.WritePrivate(t.configPath(), b, true); err != nil {
 		return t.cfg, err
 	}
 	t.cfg, t.stamp = cfg, time.Time{}
 	t.load()
 	return cfg, nil
-}
-
-// writePrivate writes a file only its owner can read, whole or not at all. Not
-// to replace one, it fails with fs.ErrExist if the file is there.
-func writePrivate(path string, b []byte, replace bool) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil && !errors.Is(err, errors.ErrUnsupported) {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if !replace {
-		return os.Link(tmp.Name(), path)
-	}
-	return os.Rename(tmp.Name(), path)
 }
 
 func newCode() string {

@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"dv/internal/gitx"
 	"dv/internal/hub"
 	"dv/internal/notify"
+	"dv/internal/notify/gchat"
 	"dv/internal/notify/telegram"
 	"dv/internal/permit"
 	"dv/internal/server"
@@ -180,32 +182,48 @@ func run() error {
 	} else {
 		defer unannounce()
 	}
-	tg, stop := sendOn(notices, url)
+	apps, stop := sendOn(notices, url)
 	defer stop()
-	return serve(ln, withNotices(srv.Handler(""), notices, tg), cmp.Or(*auth, authKey))
+	return serve(ln, withNotices(srv.Handler(""), notices, apps), cmp.Or(*auth, authKey))
 }
 
 const authUsage = "ask browsers for this key, as the password of HTTP basic auth (any user name); $" + authEnv + " gives it too, unseen by other users"
 
-// sendOn starts Telegram for a dv serving at url, and returns what stops it,
-// letting go of the bot for another dv to take. A trial leaves the bot to the
+// chatApps are the chat apps a dv talks through: Telegram, and Google Chat
+// through a relay.
+type chatApps struct {
+	tg *telegram.Telegram
+	gc *gchat.GChat
+}
+
+// sendOn starts the chat apps for a dv serving at url, and returns what stops
+// them, letting go of each for another dv to take. A trial leaves them to the
 // dv trying it.
-func sendOn(notices *notify.Center, url string) (*telegram.Telegram, func()) {
+func sendOn(notices *notify.Center, url string) (chatApps, func()) {
 	dir, err := store.ConfigDir()
 	keyDir, keyErr := store.DataDir()
 	if trial || err != nil || keyErr != nil {
-		return nil, func() {}
+		return chatApps{}, func() {}
 	}
-	tg := telegram.New(notices, url, dir, keyDir)
-	notices.Add(tg)
+	apps := chatApps{telegram.New(notices, url, dir, keyDir), gchat.New(notices, url, dir, keyDir)}
+	notices.Add(apps.tg)
+	notices.Add(apps.gc)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		tg.Run(ctx)
-		close(done)
-	}()
-	return tg, func() {
+	var running sync.WaitGroup
+	for _, run := range []func(context.Context){apps.tg.Run, apps.gc.Run} {
+		running.Add(1)
+		go func() {
+			defer running.Done()
+			run(ctx)
+		}()
+	}
+	return apps, func() {
 		cancel()
+		done := make(chan struct{})
+		go func() {
+			running.Wait()
+			close(done)
+		}()
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
@@ -215,16 +233,22 @@ func sendOn(notices *notify.Center, url string) (*telegram.Telegram, func()) {
 
 // withNotices serves the notices, which are the whole process's - a hub's
 // folders and all - at its root, ahead of the pages and API of h.
-func withNotices(h http.Handler, notices *notify.Center, tg *telegram.Telegram) http.Handler {
+func withNotices(h http.Handler, notices *notify.Center, apps chatApps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/notify", server.Guarded(notices.HandleStream))
 	mux.HandleFunc("POST /api/notify/presence", server.Guarded(notices.HandlePresence))
-	if tg != nil {
+	if tg := apps.tg; tg != nil {
 		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
 		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))
 		mux.HandleFunc("DELETE /api/notify/telegram", server.Guarded(tg.HandleRemove))
 		mux.HandleFunc("POST /api/notify/telegram/test", server.Guarded(tg.HandleTest))
 		mux.HandleFunc("POST /api/notify/telegram/picture", server.Guarded(tg.HandlePicture))
+	}
+	if gc := apps.gc; gc != nil {
+		mux.HandleFunc("GET /api/notify/gchat", server.Guarded(gc.HandleStatus))
+		mux.HandleFunc("POST /api/notify/gchat", server.Guarded(gc.HandleSetUp))
+		mux.HandleFunc("DELETE /api/notify/gchat", server.Guarded(gc.HandleRemove))
+		mux.HandleFunc("POST /api/notify/gchat/test", server.Guarded(gc.HandleTest))
 	}
 	mux.Handle("/", h)
 	return mux
@@ -288,9 +312,9 @@ func runHub(args []string) error {
 	if trial {
 		fmt.Println(update.TrialMark + ln.Addr().String())
 	}
-	tg, stop := sendOn(notices, url)
+	apps, stop := sendOn(notices, url)
 	defer stop()
-	return serve(ln, withNotices(h.Handler(), notices, tg), cmp.Or(*auth, authKey))
+	return serve(ln, withNotices(h.Handler(), notices, apps), cmp.Or(*auth, authKey))
 }
 
 func hubAnswers(url string) bool {

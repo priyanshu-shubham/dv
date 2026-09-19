@@ -689,7 +689,7 @@ export function SettingsOverlay({
           onPick={onNotices}
           choices={OFF_ON}
         />
-        <Telegram settings={settings} onChange={onChange} />
+        <ChatApps settings={settings} onChange={onChange} />
         <div className="menu-label">Agent</div>
         {hooks && (
           <Setting
@@ -831,7 +831,7 @@ const onThisComputer = (origin) => /^https?:\/\/(localhost|127\.[\d.]+|\[::1\])(
 // token pasted here, then the reader's chat connected by pressing Start in
 // it, which this looks for every few seconds until it happens. A dv with no
 // Telegram - a trial run - shows nothing.
-function Telegram({ settings, onChange }) {
+function Telegram({ settings, onReady }) {
   const [st, setSt] = useState(null);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState("");
@@ -840,17 +840,13 @@ function Telegram({ settings, onChange }) {
   useEffect(() => {
     load();
   }, [load]);
-  // A hub's folders, which a session started from Telegram can go to; a lone
-  // dv has its own alone.
-  const [folders, setFolders] = useState(null);
-  useEffect(() => {
-    api.hubFolders().then((r) => setFolders(r.folders.filter((f) => !f.missing)), () => {});
-  }, []);
   useEffect(() => {
     if (!st?.connect) return;
     const timer = setInterval(load, 2000);
     return () => clearInterval(timer);
   }, [st?.connect, load]);
+  const connected = !!st?.bot && !st.connect;
+  useEffect(() => onReady(connected), [connected, onReady]);
   if (!st) return null;
 
   const act = (what, run, done) => async () => {
@@ -959,42 +955,174 @@ function Telegram({ settings, onChange }) {
           {removeButton}
         </span>
       </div>
-      <Setting
-        label="Send to Telegram after"
-        note="How long you go without using dv before what an agent asks, or its finished turn, goes to Telegram. Answering or looking in dv first keeps it here."
-        value={settings.notifyAfter ?? 60}
-        onPick={(v) => onChange({ notifyAfter: v === 60 ? undefined : v })}
-        choices={SEND_AFTER}
-      />
-      {folders?.length > 1 && (
-        <div className="settings-row">
-          <div className="settings-text">
-            <div>Folder for new sessions</div>
-            <div className="settings-note">Where writing to the bot starts one, unless the message says, as “notes: …” does.</div>
-          </div>
-          <Picker
-            label={folders.find((f) => f.slug === settings.chatFolder)?.name || "Ask each time"}
-            choices={[{ id: "", label: "Ask each time" }, ...folders.map((f) => ({ id: f.slug, label: f.name, description: f.place }))]}
-            value={settings.chatFolder ?? ""}
-            onPick={(v) => onChange({ chatFolder: v || undefined })}
-          />
-        </div>
-      )}
-      <Setting
-        label="Start them in"
-        note="“wt: …” or “here: …” in a message says otherwise."
-        value={!!settings.chatWorktree}
-        onPick={(v) => onChange({ chatWorktree: v || undefined })}
-        choices={CHAT_WORKTREE}
-      />
-      <Setting
-        label="Mode they begin in"
-        note="What they ask still comes to you in Telegram."
-        value={settings.chatMode ?? ""}
-        onPick={(v) => onChange({ chatMode: v || undefined })}
-        choices={CHAT_MODES}
-      />
     </>
+  );
+}
+
+// ChatApps are the apps notices go on to and sessions are talked to from, and
+// what goes for all of them once one is set up.
+function ChatApps({ settings, onChange }) {
+  const [on, setOn] = useState({});
+  const ready = useCallback((app, is) => setOn((o) => (o[app] === is ? o : { ...o, [app]: is })), []);
+  // A hub's folders, which a session started from a chat can go to; a lone
+  // dv has its own alone.
+  const [folders, setFolders] = useState(null);
+  useEffect(() => {
+    api.hubFolders().then((r) => setFolders(r.folders.filter((f) => !f.missing)), () => {});
+  }, []);
+  return (
+    <>
+      <Telegram settings={settings} onReady={(is) => ready("telegram", is)} />
+      <GoogleChat onReady={(is) => ready("gchat", is)} />
+      {(on.telegram || on.gchat) && (
+        <>
+          <Setting
+            label="Send to chat apps after"
+            note="How long you go without using dv before what an agent asks, or its finished turn, goes to your chat apps. Answering or looking in dv first keeps it here."
+            value={settings.notifyAfter ?? 60}
+            onPick={(v) => onChange({ notifyAfter: v === 60 ? undefined : v })}
+            choices={SEND_AFTER}
+          />
+          {folders?.length > 1 && (
+            <div className="settings-row">
+              <div className="settings-text">
+                <div>Folder for new sessions</div>
+                <div className="settings-note">Where writing to dv in a chat starts one, unless the message says, as “notes: …” does.</div>
+              </div>
+              <Picker
+                label={folders.find((f) => f.slug === settings.chatFolder)?.name || "Ask each time"}
+                choices={[{ id: "", label: "Ask each time" }, ...folders.map((f) => ({ id: f.slug, label: f.name, description: f.place }))]}
+                value={settings.chatFolder ?? ""}
+                onPick={(v) => onChange({ chatFolder: v || undefined })}
+              />
+            </div>
+          )}
+          <Setting
+            label="Start them in"
+            note="“wt: …” or “here: …” in a message says otherwise."
+            value={!!settings.chatWorktree}
+            onPick={(v) => onChange({ chatWorktree: v || undefined })}
+            choices={CHAT_WORKTREE}
+          />
+          <Setting
+            label="Mode they begin in"
+            note="What they ask still comes to you in the chat."
+            value={settings.chatMode ?? ""}
+            onPick={(v) => onChange({ chatMode: v || undefined })}
+            choices={CHAT_MODES}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+// GoogleChat pairs this computer's dv with a relay your organisation runs
+// (dv-gchat-relay), which puts it in Google Chat.
+function GoogleChat({ onReady }) {
+  const [st, setSt] = useState(null);
+  const [address, setAddress] = useState("");
+  const [busy, setBusy] = useState("");
+  const [said, setSaid] = useState(null); // { text, bad }
+  const load = useCallback(() => api.gchat().then(setSt, () => setSt((s) => s ?? undefined)), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  useEffect(() => {
+    if (!st?.code) return;
+    const timer = setInterval(load, 2000);
+    return () => clearInterval(timer);
+  }, [st?.code, load]);
+  const paired = !!st?.owner;
+  useEffect(() => onReady(paired), [paired, onReady]);
+  if (!st) return null;
+
+  const act = (what, run, done) => async () => {
+    setBusy(what);
+    setSaid(null);
+    try {
+      setSt(await run());
+      if (done) setSaid({ text: done });
+    } catch (e) {
+      setSaid({ text: e.message, bad: true });
+    } finally {
+      setBusy("");
+    }
+  };
+  const connect = act("connect", () => api.gchatSetUp(address.trim()).then((s) => (setAddress(""), s)));
+  const remove = act("remove", () => (confirm("Stop sending to Google Chat, and unpair this computer?") ? api.gchatRemove() : Promise.resolve(st)));
+  const note = (text) => <div className={cx("settings-note", said?.bad && "prompt-error")}>{said?.text || text}</div>;
+  const removeButton = (
+    <button className="btn" disabled={!!busy} onClick={remove}>
+      {paired ? "Remove" : "Cancel"}
+    </button>
+  );
+
+  if (st.code) {
+    return (
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Google Chat</div>
+          {note(
+            <>
+              In Google Chat, send the dv app <code>connect {st.code}</code>. This page notices once you have; the code works for 10 minutes.
+            </>,
+          )}
+        </div>
+        <span className="settings-actions">{removeButton}</span>
+      </div>
+    );
+  }
+  if (!paired) {
+    return (
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Google Chat</div>
+          {note(
+            <>
+              {st.sealed && "The pairing kept for Google Chat cannot be read on this computer, so connect again. "}
+              Notices in Google Chat, with buttons to answer them, and sessions to write to, through a relay your organisation runs
+              (dv-gchat-relay). Paste its address here.
+            </>,
+          )}
+        </div>
+        <input
+          value={address}
+          placeholder="https://relay.example.com"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => {
+            setAddress(e.target.value);
+            setSaid(null);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && address.trim() && !busy && connect()}
+        />
+        <span className="settings-actions">
+          <button className="primary" disabled={!address.trim() || !!busy} onClick={connect}>
+            {busy ? "Connecting…" : "Connect"}
+          </button>
+        </span>
+      </div>
+    );
+  }
+  const relayHost = st.relay.replace(/^https?:\/\//, "");
+  return (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>Google Chat</div>
+        {note(
+          `Sending to ${st.owner}${st.email ? ` (${st.email})` : ""} through ${relayHost}.` +
+            (st.elsewhere ? " Another dv on this computer is connected, and sends for it." : ""),
+        )}
+        {st.lost && <div className="settings-note prompt-error">{st.lost}</div>}
+      </div>
+      <span className="settings-actions">
+        <button className="btn" disabled={!!busy} onClick={act("test", api.gchatTest, "Sent. It should be in Google Chat now.")}>
+          {busy === "test" ? "Sending…" : "Send a test"}
+        </button>
+        {removeButton}
+      </span>
+    </div>
   );
 }
 
