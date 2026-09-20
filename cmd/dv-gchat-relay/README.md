@@ -40,6 +40,7 @@ The commands run from the root of this repository.
 
 ```sh
 PROJECT=my-project REGION=us-central1
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
 gcloud config set project $PROJECT
 gcloud services enable chat.googleapis.com firestore.googleapis.com run.googleapis.com \
   cloudbuild.googleapis.com artifactregistry.googleapis.com
@@ -55,22 +56,32 @@ gcloud run deploy dv-gchat-relay --source . --region $REGION \
   --service-account dv-gchat-relay@$PROJECT.iam.gserviceaccount.com \
   --allow-unauthenticated --max-instances 1 \
   --set-build-env-vars GOOGLE_BUILDABLE=./cmd/dv-gchat-relay \
-  --set-env-vars DV_RELAY_ALLOW=you@example.com,DV_RELAY_UNVERIFIED=1
+  --set-env-vars DV_RELAY_ALLOW=you@example.com,DV_RELAY_AUDIENCE=$PROJECT_NUMBER
 ```
 
 `--allow-unauthenticated` is needed because both Google Chat and your hubs call
 the relay, and the relay checks each of them itself. `--max-instances 1` is
-needed because events on their way to a hub are held in memory.
+needed because events on their way to a hub are held in memory. The deploy
+prints the service's URL.
 
-The first deploy prints the service's URL. Until you finish the next step, the
-relay takes unsigned requests; that is what `DV_RELAY_UNVERIFIED=1` allows. Set
-the audience now, and the relay checks every request from then on:
+`DV_RELAY_AUDIENCE` is how the relay knows a request really comes from your
+Chat app. Anyone can send a request to `/chat`, and nothing in the event itself
+is signed, so Google Chat adds a token it signs. The token names whom it is
+for, its audience. The relay accepts a request only when that audience is
+`DV_RELAY_AUDIENCE`. Google signs tokens for every Chat app, so without this
+check, tokens meant for someone else's app would get through.
 
-```sh
-gcloud run services update dv-gchat-relay --region $REGION \
-  --remove-env-vars DV_RELAY_UNVERIFIED \
-  --update-env-vars DV_RELAY_AUDIENCE=https://dv-gchat-relay-….run.app/chat
-```
+The audience is whatever the Chat app's **Authentication audience** setting
+(below) says, so the two must match:
+
+- **Project Number**, used here: the project's number, known before the first
+  deploy. Every Chat app in the project gets tokens with it, so use a project
+  with no other Chat app.
+- **HTTP endpoint URL**: the service's URL plus `/chat`. It is narrower, but
+  the URL is only known once the service is deployed.
+
+If they don't match, the relay turns every request away, and its logs say
+"refused a request not from Google Chat".
 
 Then configure the Chat app. In the Cloud console, go to **APIs & Services →
 Google Chat API → Configuration**:
@@ -82,9 +93,7 @@ Google Chat API → Configuration**:
   spaces as well as in direct messages.
 - **Connection settings:** HTTP endpoint URL, set to the service's URL plus
   `/chat`.
-- **Authentication audience:** HTTP endpoint URL.
-  - "Project Number" works too, if `DV_RELAY_AUDIENCE` is the project's number
-    instead.
+- **Authentication audience:** Project Number, to match `DV_RELAY_AUDIENCE`.
 - **Slash commands** (optional): `/sessions`, `/new`, `/stop`, `/last`,
   `/model`, `/help` and `/hub`, with any IDs. Without them, typing the command
   as text works just as well.
