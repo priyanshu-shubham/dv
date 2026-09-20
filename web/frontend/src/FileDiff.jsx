@@ -327,10 +327,12 @@ function chunk(blocks, split) {
 // oneNumber is for a file with one side shown in one column among split ones:
 // its gutter keeps to the one number a split side has, so its code lines up
 // with theirs.
+// toAgent is for an agent's own edit, where what you write is for it: the box
+// sends a note to its session rather than leaving a comment in the review.
 export function DiffBody({
   fd, view, oneNumber, side, contextLines, expanded, onExpand, threads, selection, setSelection,
   composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, wrap,
-  reveal, hit = 0, drawAll = false, unknown = false, onBody, found, foundAt, barsIn,
+  reveal, hit = 0, drawAll = false, unknown = false, toAgent = false, onBody, found, foundAt, barsIn,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
@@ -474,12 +476,12 @@ export function DiffBody({
     () => ({
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
       onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, hit,
-      found, foundAt, oneNumber,
+      found, foundAt, oneNumber, toAgent,
     }),
     [
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
       onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, hit,
-      found, foundAt, oneNumber,
+      found, foundAt, oneNumber, toAgent,
     ],
   );
 
@@ -996,19 +998,20 @@ function anchorNodes(anchor, ctx, key) {
         <div className="thread-slot">
           <Composer
           title={c.start === c.end ? `Line ${c.end}` : `Lines ${c.start}-${c.end}`}
+          submitLabel={ctx.toAgent ? "Send" : "Comment"}
           aside={
+            !ctx.toAgent &&
             ctx.onAttach &&
             ((body) => (
-              // With something written, it is saved and goes as the comment; empty, the lines go.
+              // Words written go as a note, kept nowhere: Comment is what leaves
+              // one in the review.
               <AttachButton
-                onClick={async (to) => {
-                  if (body) {
-                    const t = await ctx.onComment({ file: ctx.path, side: c.side, startLine: c.start, endLine: c.end, quote: c.quote, body });
-                    if (t) ctx.onAttach({ kind: "thread", threadId: t.id }, to);
-                  } else ctx.onAttach({ kind: "lines", file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote }, to);
+                onClick={(to) => {
+                  const lines = { file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote };
+                  ctx.onAttach(body ? { kind: "note", ...lines, body } : { kind: "lines", ...lines }, to);
                   ctx.setComposing(null);
                 }}
-                what={body ? "this comment" : "these lines"}
+                what={body ? "this note" : "these lines"}
               />
             ))
           }

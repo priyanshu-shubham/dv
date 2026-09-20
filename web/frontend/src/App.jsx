@@ -7,7 +7,7 @@ import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
-import AgentView from "./Agent.jsx";
+import AgentView, { attachKey } from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useHubActivity, useNotices } from "./Notices.jsx";
 import { AttachTarget } from "./Threads.jsx";
@@ -19,7 +19,7 @@ import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
 import { agentName, cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
-import { followPrefs, usePref } from "./prefs.js";
+import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
 
@@ -1173,10 +1173,9 @@ export default function App() {
     [attachChoices, attachTo, setAttachPick, newAgent],
   );
 
-  // attach adds to what goes with a session's next message. Code is taken as
-  // it reads on screen, so it says which version that was. A new session has
-  // no row to show what waits for it, so it is opened instead; an open one is
-  // added to without leaving the review.
+  // attach puts something in a session's message box and goes there, where it
+  // waits for the words that go with it. Code is taken as it reads on screen,
+  // so it says which version that was.
   const openAdded = useCallback(() => {
     setStack([]);
     setAgentId("");
@@ -1188,14 +1187,37 @@ export default function App() {
       const sc = diffRef.current?.scope;
       const newAt = sc?.newAt === "index" ? "staged" : sc?.newAt || "working tree";
       const at = a.kind !== "lines" ? "" : a.at || (a.side === "old" && modeRef.current !== "code" ? sc?.oldAt || "HEAD" : newAt);
-      const key = JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId]);
+      const key = attachKey(a);
       setAttachedBy((by) => {
         const list = by[to] || [];
         return list.some((x) => x.key === key) ? by : { ...by, [to]: [...list, { ...a, at, key }] };
       });
-      if (to === "") openAdded();
+      if (to === "") return openAdded();
+      setStack([]);
+      setAgentId(to);
+      switchMode("agent");
     },
-    [attachTo, setAttachedBy, openAdded],
+    [attachTo, setAttachedBy, openAdded, setAgentId, switchMode],
+  );
+  // sendThreads hands comments over together, with a line to send them with
+  // where nothing is typed there yet; deleteThreads is the panel's way to
+  // clear out what the review is done with.
+  const sendThreads = useCallback(
+    (list, to = attachTo) => {
+      for (const t of list) attach({ kind: "thread", threadId: t.id }, to);
+      const key = "draft:" + (to || "new");
+      if (!readPref("repo", key, "")) setPref("repo", key, "Address these comments.", "");
+    },
+    [attach, attachTo],
+  );
+  const deleteThreads = useCallback(
+    async (list) => {
+      const what = list.length === 1 ? "this comment thread" : `these ${list.length} comment threads`;
+      if (!confirm(`Delete ${what}? This can't be undone.`)) return;
+      for (const t of list) await api.deleteThread(t.id);
+      loadThreads();
+    },
+    [loadThreads],
   );
   const attachedFor = useCallback(
     (to, change) =>
@@ -1676,6 +1698,8 @@ export default function App() {
             }}
             onThreadAction={onThreadAction}
             onAttach={(thread, to) => attach({ kind: "thread", threadId: thread.id }, to)}
+            onSend={sendThreads}
+            onDelete={deleteThreads}
             // Over the sidebar on the right, the two are one column, one width.
             widthVar={sideRight ? "--side-w" : "--comments-w"}
             onWidth={sideRight ? setSideWidth : setCommentsWidth}

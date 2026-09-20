@@ -44,7 +44,10 @@ type proc struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	exited chan struct{}
-	busy   bool
+	// ran is when this process started: work it was told of before then was
+	// another process's, and went with it.
+	ran  time.Time
+	busy bool
 	// Whether Claude Code says when a turn is over. A result does not: the
 	// next message can already be on its way when the last one's arrives.
 	states  bool
@@ -154,6 +157,7 @@ func (p *proc) startLocked() error {
 	p.cmd, p.stdin, p.exited, p.stopped, p.err, p.states = cmd, stdin, make(chan struct{}), false, "", false
 	p.replies, p.asks = map[string]chan reply{}, map[string]context.CancelFunc{}
 	p.lastUsed = time.Now()
+	p.ran = p.lastUsed
 	read := make(chan struct{})
 	go p.read(stdout, read)
 	go p.wait(cmd, read, p.exited, stderr)

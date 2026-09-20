@@ -279,6 +279,37 @@ func TestBackgroundWorkRunsUntilItsNotification(t *testing.T) {
 	}
 }
 
+// Work a process left running goes with it: dv restarting, or stopping a
+// session it had not heard from, means no notification is ever written.
+func TestBackgroundWorkOfAGoneProcessIsOver(t *testing.T) {
+	at := func(s string) string { return s }
+	items := []Item{
+		{ToolID: "t1", At: at("2026-09-21T01:00:00Z"), Result: &Result{Detail: &Detail{Background: "bgA"}}},
+		{ToolID: "t2", At: at("2026-09-21T03:00:00Z"), Result: &Result{Detail: &Detail{Background: "bgB"}}},
+		{ToolID: "t3", At: at("2026-09-21T01:00:00Z"), Result: &Result{Detail: &Detail{Background: "bgC"}}, Task: &Task{Status: "completed"}},
+		{ToolID: "t4", At: at("2026-09-21T01:00:00Z"), Result: &Result{Text: "done"}},
+	}
+	ended(items, time.Date(2026, 9, 21, 2, 0, 0, 0, time.UTC))
+	if tk := items[0].Task; tk == nil || tk.Status != "stopped" {
+		t.Errorf("work from before the process started: %+v", tk)
+	}
+	if items[1].Task != nil {
+		t.Errorf("work this process started: %+v", items[1].Task)
+	}
+	if items[2].Task.Status != "completed" {
+		t.Error("an end already known was written over")
+	}
+	if items[3].Task != nil {
+		t.Error("a call that left nothing running was marked")
+	}
+	// With no process, nothing is claimed either way.
+	items[0].Task = nil
+	ended(items, time.Time{})
+	if items[0].Task != nil {
+		t.Error("marked with no process running")
+	}
+}
+
 // The file is read as it grows, which can split a line anywhere.
 func TestFeedingInPiecesReadsTheSame(t *testing.T) {
 	data := []byte(conversation(t))
@@ -729,6 +760,37 @@ func TestANewSessionOutlivesARestartBeforeItsFirstMessage(t *testing.T) {
 
 // A session not running yet is in the mode its transcript last recorded, and
 // is resumed in it.
+// Two sessions written at the same moment keep an order of their own, rather
+// than trading places on every listing: the files come in no order.
+func TestSessionsWrittenTogetherKeepTheirOrder(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "")
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	same := time.Now().Add(-time.Hour)
+	for _, id := range []string{"cc", "aa", "bb"} {
+		path := filepath.Join(dir, id+".jsonl")
+		os.WriteFile(path, []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+		os.Chtimes(path, same, same)
+	}
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	listed := func() []string {
+		var ids []string
+		for _, s := range m.Sessions() {
+			ids = append(ids, s.ID)
+		}
+		return ids
+	}
+	want := []string{"aa", "bb", "cc"}
+	for i := 0; i < 8; i++ {
+		if got := listed(); !slices.Equal(got, want) {
+			t.Fatalf("listing %d: %v", i, got)
+		}
+	}
+}
+
 func TestATemporarySessionLeavesTheListOnceClosed(t *testing.T) {
 	root, cfg := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)

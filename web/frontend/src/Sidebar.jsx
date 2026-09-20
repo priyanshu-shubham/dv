@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cx, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tree.js";
-import { ThreadList } from "./Threads.jsx";
+import { AttachButton, ThreadList } from "./Threads.jsx";
 import { SessionList } from "./Agent.jsx";
 import { ModeSwitch } from "./Header.jsx";
 import {
@@ -228,7 +228,7 @@ export default function Sidebar({
           {!code && pathFilterOpen && (
             <div className="path-filter">
               <label className="check">
-                <input type="checkbox" checked={hideGenerated} onChange={(e) => onHideGenerated(e.target.checked)} />
+                <input type="checkbox" className="tick" checked={hideGenerated} onChange={(e) => onHideGenerated(e.target.checked)} />
                 Hide generated files
                 <span className="count">{generatedCount}</span>
               </label>
@@ -364,8 +364,20 @@ export default function Sidebar({
 // CommentsPanel is every comment in the review, at the page's right in any
 // mode, opened and closed from the header, which counts them. Its width is
 // dragged from its left edge.
-export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, onAttach, widthVar, onWidth }) {
+export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth }) {
   const rootRef = useRef(null);
+  // Ticked comments go to a session, or go, together. Ones since deleted drop out.
+  const [ticked, setTicked] = useState(() => new Set());
+  const picked = threads.filter((t) => ticked.has(t.id));
+  const tick = useCallback((id, on) => {
+    setTicked((was) => {
+      const next = new Set(was);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const all = threads.length > 0 && picked.length === threads.length;
   const drag = useRef(null);
   const onResizeDown = (e) => {
     e.preventDefault();
@@ -400,6 +412,28 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
           onWidth(0);
         }}
       />
+      {threads.length > 0 && onSend && (
+        <div className="comment-picks">
+          <label className="pick-all" title={all ? "Take the ticks off" : "Tick them all"}>
+            <input type="checkbox" className="tick" checked={all} onChange={() => setTicked(all ? new Set() : new Set(threads.map((t) => t.id)))} />
+            {picked.length > 0 ? `${picked.length} of ${threads.length}` : "All"}
+          </label>
+          {picked.length > 0 && (
+            <>
+              <AttachButton
+                what={picked.length === 1 ? "this comment" : `these ${picked.length} comments`}
+                onClick={(to) => {
+                  onSend(picked, to);
+                  setTicked(new Set());
+                }}
+              />
+              <button className="mini danger" onClick={() => onDelete(picked).then(() => setTicked(new Set()))}>
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <div className="comment-list">
         {threads.length === 0 ? (
           <div className="empty">No comments yet. Drag across line numbers, or hover a line and hit +.</div>
@@ -408,6 +442,8 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
             threads={threads}
             compact
             onAttach={onAttach}
+            ticked={ticked}
+            onTick={onSend ? tick : undefined}
             onAction={(action) => {
               if (action.type === "jump") onJump(action.thread);
               else onThreadAction(action);

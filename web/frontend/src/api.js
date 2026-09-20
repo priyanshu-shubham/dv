@@ -185,10 +185,12 @@ export const api = {
   // from is where the conversation is shown from: "" for its latest compaction,
   // the key of an earlier one, or "all".
   agentEvents: (id, onUpdate, onDrop, from = "") =>
-    follow(`/api/agent/sessions/${id}/events${from ? `?from=${encodeURIComponent(from)}` : ""}`, onUpdate, onDrop),
+    // Reopened like the others a page keeps: a 502 from a tunnel while dv
+    // restarts is an answer, which the browser gives up on for good.
+    follow(`/api/agent/sessions/${id}/events${from ? `?from=${encodeURIComponent(from)}` : ""}`, onUpdate, onDrop, base, true),
   // agentSubagentEvents is the same for the conversation of an agent that one
   // of a session's calls started.
-  agentSubagentEvents: (id, call, onUpdate, onDrop) => follow(`/api/agent/sessions/${id}/agents/${call}/events`, onUpdate, onDrop),
+  agentSubagentEvents: (id, call, onUpdate, onDrop) => follow(`/api/agent/sessions/${id}/agents/${call}/events`, onUpdate, onDrop, base, true),
   // agentTaskOutput follows what a call left running in the background writes:
   // { text, reset, cut } as it grows (cut: the start is left out), { gone } once
   // Claude Code has cleared the file away.

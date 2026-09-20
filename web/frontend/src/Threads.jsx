@@ -8,18 +8,28 @@ import { AgentIcon, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX
 // text is written locally and there is no reason to let it inject markup.
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
-// onAttach(thread, to), where given, adds a thread to a session's next message.
-export function ThreadList({ threads, onAction, onAttach, compact }) {
+// onAttach(thread, to), where given, sends a thread to a session's message
+// box; it is offered in the panel alone, where comments are handed over.
+// ticked and onTick(id, on) put a tick on each, for sending several at once.
+export function ThreadList({ threads, onAction, onAttach, compact, ticked, onTick }) {
   return (
     <div className={cx("threads", compact && "threads-compact")}>
       {threads.map((t) => (
-        <Thread key={t.id} thread={t} onAction={onAction} onAttach={onAttach} compact={compact} />
+        <Thread
+          key={t.id}
+          thread={t}
+          onAction={onAction}
+          onAttach={onAttach}
+          compact={compact}
+          ticked={!!ticked?.has(t.id)}
+          onTick={onTick}
+        />
       ))}
     </div>
   );
 }
 
-function Thread({ thread, onAction, onAttach, compact }) {
+function Thread({ thread, onAction, onAttach, compact, ticked, onTick }) {
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(null);
 
@@ -32,16 +42,27 @@ function Thread({ thread, onAction, onAttach, compact }) {
         </pre>
       )}
       {compact && (
-        <button className="thread-loc" onClick={() => onAction({ type: "jump", thread })} title="Jump to this line">
-          {LRM}
-          {thread.file}
-          {thread.startLine > 0 && (
-            <span className="dim">
-              :{thread.startLine}
-              {thread.endLine !== thread.startLine ? `-${thread.endLine}` : ""}
-            </span>
+        <div className="thread-head">
+          {onTick && (
+            <input
+              type="checkbox"
+              className="tick thread-tick"
+              checked={ticked}
+              onChange={(e) => onTick(thread.id, e.target.checked)}
+              title="Pick it to send with the others"
+            />
           )}
-        </button>
+          <button className="thread-loc" onClick={() => onAction({ type: "jump", thread })} title="Jump to this line">
+            {LRM}
+            {thread.file}
+            {thread.startLine > 0 && (
+              <span className="dim">
+                :{thread.startLine}
+                {thread.endLine !== thread.startLine ? `-${thread.endLine}` : ""}
+              </span>
+            )}
+          </button>
+        </div>
       )}
 
       {thread.comments.map((c, i) => (
@@ -87,7 +108,7 @@ function Thread({ thread, onAction, onAttach, compact }) {
                   <IconCheck size={12} /> resolved
                 </span>
               ) : (
-                onAttach && <AttachButton what="this comment" onClick={(to) => onAttach(thread, to)} />
+                compact && onAttach && <AttachButton what="this comment" onClick={(to) => onAttach(thread, to)} />
               )}
             </div>
           )}
@@ -114,10 +135,11 @@ function Thread({ thread, onAction, onAttach, compact }) {
 // being a new session when there is none to choose, run by newAgent.
 export const AttachTarget = createContext(null);
 
-// AttachButton adds code to what goes with a session's next message, in the
-// Agent view. onClick is given the session it goes to, "" for a new one; its
-// menu picks another, which stays picked. what is what it adds, as "this file";
-// instead, that it is added in place of something else.
+// AttachButton sends code to a session's message box, in the Agent view, and
+// goes there: what it sends waits for you to write the rest and send it.
+// onClick is given the session it goes to, "" for a new one; its menu picks
+// another, which stays picked. what is what it sends, as "this file";
+// instead, that it goes in place of something else.
 export function AttachButton({ className, onClick, what, instead }) {
   const t = useContext(AttachTarget);
   const [open, setOpen] = useState(false);
@@ -138,11 +160,11 @@ export function AttachButton({ className, onClick, what, instead }) {
   }, [open]);
   const to = t?.choices.find((c) => c.id === t.target);
   const picks = t?.choices.length > 1;
-  const add = `Add ${what ? what + " " : ""}to your next message`;
-  const title = t ? `${add} to ${agentName(to ? to.agent : t.newAgent)}${instead ? " instead" : ""}, in ${to ? to.label : "a new session"}` : add;
+  const send = `Send ${what ? what + " " : ""}to a session's message box`;
+  const title = t ? `${send.replace("a session's", "the")} of ${agentName(to ? to.agent : t.newAgent)}${instead ? ", in place of what is there" : ""}, in ${to ? to.label : "a new session"}` : send;
   return (
     <span className={cx("attach-split", className)} ref={ref}>
-      {/* Add, not send: it waits in that session's message box for you to send. */}
+      {/* It goes to the box, not to the agent: you write the rest and send it there. */}
       {/* Where it goes is in the title and marked in the menu, which keeps the button short. */}
       <button
         className={cx("attach-btn", picks && "attach-picked")}
@@ -150,20 +172,20 @@ export function AttachButton({ className, onClick, what, instead }) {
         title={title}
       >
         <IconSpark size={12} />
-        <span className="btn-label">Add</span>
+        <span className="btn-label">Send</span>
       </button>
       {picks && (
         <button
           className="attach-btn attach-to"
           onClick={() => setOpen((o) => !o)}
-          title="Pick the session to add to"
+          title="Pick the session to send to"
           aria-expanded={open}
         >
           <IconChevronDown size={10} />
         </button>
       )}
       {to && (
-        <button className="attach-btn attach-new" onClick={() => onClick("")} title={`Add to a new ${agentName(t.newAgent)} session, and go to it`}>
+        <button className="attach-btn attach-new" onClick={() => onClick("")} title={`Send to a new ${agentName(t.newAgent)} session, and go to it`}>
           <IconNewSession size={13} />
         </button>
       )}
@@ -171,7 +193,7 @@ export function AttachButton({ className, onClick, what, instead }) {
       {open &&
         createPortal(
         <div className="model-list attach-menu" ref={menu} style={at}>
-          <div className="menu-label">Add to</div>
+          <div className="menu-label">Send to</div>
           {t.choices.map((c) => (
             <button
               key={c.id}

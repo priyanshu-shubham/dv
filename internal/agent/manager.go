@@ -219,7 +219,9 @@ func (m *Manager) Sessions() []Session {
 		if ra, rb := opened[a.ID], opened[b.ID]; ra > 0 || rb > 0 {
 			return cmp.Compare(cmp.Or(ra, math.MaxInt), cmp.Or(rb, math.MaxInt))
 		}
-		return b.Updated.Compare(a.Updated)
+		// By id where they were written at the same moment: the files come in
+		// no order, so two alike would trade places on every listing.
+		return cmp.Or(b.Updated.Compare(a.Updated), cmp.Compare(a.ID, b.ID))
 	})
 	return out
 }
@@ -273,7 +275,9 @@ func (m *Manager) Activity() []Activity {
 		}
 		out = append(out, a)
 	}
-	slices.SortStableFunc(out, func(a, b Activity) int { return b.Updated.Compare(a.Updated) })
+	slices.SortStableFunc(out, func(a, b Activity) int {
+		return cmp.Or(b.Updated.Compare(a.Updated), cmp.Compare(a.ID, b.ID))
+	})
 	return out
 }
 
@@ -1319,6 +1323,36 @@ func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
 	return u
 }
 
+// ran is when the process a session runs in started, zero when none does.
+func ran(p *proc) time.Time {
+	if p == nil {
+		return time.Time{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cmd == nil {
+		return time.Time{}
+	}
+	return p.ran
+}
+
+// ended marks work left running in the background by a process that has since
+// gone: it stopped with that process, and nothing will ever say how it went,
+// so the page would keep it on "running in the background" for good.
+func ended(items []Item, ran time.Time) {
+	if ran.IsZero() {
+		return
+	}
+	for i, it := range items {
+		if it.Task != nil || it.Result == nil || it.Result.Detail == nil || it.Result.Detail.Background == "" {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, it.At); err == nil && at.Before(ran) {
+			items[i].Task = &Task{Status: "stopped"}
+		}
+	}
+}
+
 // Update is what has changed in a session since the page following it last
 // asked.
 func (m *Manager) Update(id string, s *Sub) Update {
@@ -1358,7 +1392,9 @@ func (m *Manager) update(id string, s *Sub) Update {
 	u.Live.Found = f.path != ""
 	if s.version != f.version {
 		s.version = f.version
-		u.Reset, u.Items = s.diff(s.shown(f.t.Items(leaf, switches...), f.t.Start > 0))
+		items := s.shown(f.t.Items(leaf, switches...), f.t.Start > 0)
+		ended(items, ran(p))
+		u.Reset, u.Items = s.diff(items)
 	}
 	u.Earlier = s.earlier
 	used, model := f.t.Context(leaf)

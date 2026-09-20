@@ -47,8 +47,10 @@ export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }
 // lines they were written from, which is what is saved and what an agent is
 // told. Every rendered block names the line it starts on, so the two line up.
 // Without onStartComment it is the preview alone.
+// toAgent is an agent's own edit, where the box sends a note to its session
+// rather than leaving a comment in the review. See DiffBody.
 export function MarkdownDocument({
-  lines, path, side = "new", scope, onOpenFile, threads, composing, setComposing, onStartComment, onComment, onThreadAction, onAttach, onSearch,
+  lines, path, side = "new", scope, onOpenFile, threads, composing, setComposing, onStartComment, onComment, onThreadAction, onAttach, onSearch, toAgent = false,
 }) {
   const ref = useRef(null);
   const slots = useRef(new Map()); // key -> the element it is drawn in
@@ -109,21 +111,23 @@ export function MarkdownDocument({
             {key === "c" ? (
               <Composer
                 title={at.start === at.end ? `Line ${at.end}` : `Lines ${at.start}-${at.end}`}
+                submitLabel={toAgent ? "Send" : "Comment"}
                 autoFocus
                 selected={at.selected}
                 onSearch={onSearch}
                 aside={
+                  !toAgent &&
                   onAttach &&
                   ((body) => (
                     <AttachButton
-                      onClick={async (to) => {
-                        if (body) {
-                          const t = await onComment({ file: path, side, startLine: at.start, endLine: at.end, quote: at.quote, body });
-                          if (t) onAttach({ kind: "thread", threadId: t.id }, to);
-                        } else onAttach({ kind: "lines", file: path, side, start: at.start, end: at.end, quote: at.quote }, to);
+                      onClick={(to) => {
+                        // Words written go as a note, kept nowhere: Comment is
+                        // what leaves one in the review.
+                        const lines = { file: path, side, start: at.start, end: at.end, quote: at.quote };
+                        onAttach(body ? { kind: "note", ...lines, body } : { kind: "lines", ...lines }, to);
                         setComposing(null);
                       }}
-                      what={body ? "this comment" : "these lines"}
+                      what={body ? "this note" : "these lines"}
                     />
                   ))
                 }

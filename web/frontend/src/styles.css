@@ -509,6 +509,14 @@ a.link:hover {
   letter-spacing: 0.02em;
 }
 
+/* The folder's name in the logo's place, on a phone: long ones are cut. */
+.topbar .logo .here {
+  max-width: 44vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Served by a hub, the name is the way back to it. */
 a.logo.to-hub {
   display: inline-flex;
@@ -1064,6 +1072,73 @@ a.logo.to-hub:hover > svg {
 
 .comment-list {
   padding: 8px;
+}
+
+/* The bar for handing comments over: tick them, then send or delete together. */
+.comment-picks {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-bar);
+  font-size: var(--fs-xs);
+}
+
+.comment-picks .pick-all {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-2);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-picks .danger:hover {
+  color: var(--del);
+}
+
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thread-head .thread-loc {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A tick of dv's own: the browsers' box is bright, square and a different
+   size on each platform. */
+.tick {
+  flex: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-input);
+  cursor: pointer;
+}
+
+.tick:hover {
+  border-color: var(--fg-3);
+}
+
+.tick:checked {
+  border-color: var(--accent-fill);
+  background: var(--accent-fill)
+    /* The mark is drawn rather than a glyph, which the fonts size differently. */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.2 7.4l2.5 2.5 5-5.4' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 14px no-repeat;
+}
+
+.tick:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 .file-row {
@@ -1876,6 +1951,10 @@ a.logo.to-hub:hover > svg {
 .thread-loc {
   display: flex;
   align-items: center;
+  /* Right to left, so a long path loses its front rather than its name; the
+     children are laid back the other way, so the line reads main.go:12. */
+  flex-direction: row-reverse;
+  justify-content: flex-start;
   gap: 0;
   width: 100%;
   height: var(--row-h);
@@ -1890,7 +1969,10 @@ a.logo.to-hub:hover > svg {
   direction: rtl;
 }
 
+/* Its own direction, or the colon it starts with lands at the far end. */
 .thread-loc .dim {
+  direction: ltr;
+  unicode-bidi: isolate;
   color: var(--fg-3);
 }
 

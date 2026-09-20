@@ -56,13 +56,19 @@ export default function Header({
     <header className="topbar">
       <div className="topbar-left">
         {!sideRight && menu}
+        {/* A phone has no title bar, so the folder's name stands in for dv's, which
+            is the one thing there that says where you are. */}
         {boot.base ? (
           <a className="logo to-hub" href="/" title="Back to the hub (Alt+H)">
             <IconBack size={13} />
-            dv
+            <span className="wide-only">dv</span>
+            <span className="phone-only here">{meta?.repo || "dv"}</span>
           </a>
         ) : (
-          <span className="logo">dv</span>
+          <span className="logo">
+            <span className="wide-only">dv</span>
+            <span className="phone-only here">{meta?.repo || "dv"}</span>
+          </span>
         )}
       </div>
 

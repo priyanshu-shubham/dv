@@ -174,6 +174,10 @@ function commandsFor(draft, commands) {
   return [...starts.sort(byName), ...within.sort(byName)];
 }
 
+// attachKey tells one attachment from another: two notes on the same lines
+// are two, as they say different things.
+export const attachKey = (a) => JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId, a.body]);
+
 function composeMessage(text, attached, threads) {
   const parts = [];
   for (const a of attached) {
@@ -183,6 +187,10 @@ function composeMessage(text, attached, threads) {
       parts.push(`<code path="${attr(a.file)}" lines="${span(a.start, a.end)}" from="${attr(a.at)}">\n${body}\n</code>`);
     } else if (a.kind === "file") {
       parts.push(`<file path="${attr(a.file)}" />`);
+    } else if (a.kind === "note") {
+      // Written by the line and sent, rather than left in the review.
+      const quote = (a.quote || []).map((l) => `> ${l}`).join("\n");
+      parts.push(`<note path="${attr(a.file)}" lines="${span(a.start, a.end)}" side="${a.side}">\n${quote ? quote + "\n" : ""}${a.body}\n</note>`);
     } else if (a.kind === "thread") {
       const t = threads.find((x) => x.id === a.threadId);
       if (!t) continue;
@@ -220,9 +228,10 @@ const withoutVia = (text) => text.replace(new RegExp("\\n?" + VIA.source), "").r
 function Chip({ kind, path, lines, onClick, onRemove }) {
   const name = splitPath(path)[1];
   return (
-    <span className={cx("agent-chip", kind === "comment" && "comment")} title={path + (lines ? `:${lines}` : "")}>
+    <span className={cx("agent-chip", (kind === "comment" || kind === "note") && "comment")} title={path + (lines ? `:${lines}` : "")}>
       <button className="agent-chip-label" onClick={onClick} disabled={!onClick}>
         {kind === "comment" && "comment · "}
+        {kind === "note" && "note · "}
         {name}
         {lines && <span className="dim">:{lines}</span>}
       </button>
@@ -287,17 +296,26 @@ async function readBack(message, session, threads) {
   }
   const attached = [];
   const m = CONTEXT.exec(message.text || "");
-  for (const [, kind, attrs, body = ""] of m ? m[1].matchAll(/<(code|file|comment)((?: \w+="[^"]*")*) ?(?:\/>|>\n?([\s\S]*?)\n?<\/\1>)/g) : []) {
+  for (const [, kind, attrs, body = ""] of m ? m[1].matchAll(/<(code|file|comment|note)((?: \w+="[^"]*")*) ?(?:\/>|>\n?([\s\S]*?)\n?<\/\1>)/g) : []) {
     const a = Object.fromEntries([...attrs.matchAll(/(\w+)="([^"]*)"/g)].map(([, k, v]) => [k, unattr(v)]));
     const [start, end = start] = (a.lines || "").split("-").map(Number);
     if (kind === "file") attached.push({ kind, file: a.path });
     else if (kind === "code") attached.push({ kind: "lines", file: a.path, side: "new", start, end, at: a.from, quote: body.split("\n").map((l) => l.replace(/^ *\d+ {2}/, "")) });
-    else {
+    else if (kind === "note") {
+      // The quoted lines come back apart from what was written under them.
+      const lines = body.split("\n");
+      const quoted = lines.findLastIndex((l) => l.startsWith("> ")) + 1;
+      attached.push({
+        kind, file: a.path, side: a.side || "new", start, end,
+        quote: lines.slice(0, quoted).map((l) => l.slice(2)),
+        body: lines.slice(quoted).join("\n"),
+      });
+    } else {
       const t = threads.find((t) => t.file === a.path && t.side === a.side && t.startLine === start && t.endLine === end);
       if (t) attached.push({ kind: "thread", threadId: t.id });
     }
   }
-  for (const a of attached) a.key = JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId]);
+  for (const a of attached) a.key = attachKey(a);
   return { draft: splitContext(message.text).text, attached, images };
 }
 
@@ -1434,9 +1452,9 @@ export default function AgentView({
               return (
                 <Chip
                   key={a.key}
-                  kind={a.kind === "lines" ? "code" : a.kind === "thread" ? "comment" : "file"}
+                  kind={a.kind === "lines" ? "code" : a.kind === "thread" ? "comment" : a.kind === "note" ? "note" : "file"}
                   path={t ? t.file : a.file}
-                  lines={t ? span(t.startLine, t.endLine) : a.kind === "lines" ? span(a.start, a.end) : ""}
+                  lines={t ? span(t.startLine, t.endLine) : a.kind === "lines" || a.kind === "note" ? span(a.start, a.end) : ""}
                   onClick={() => onJump(a)}
                   onRemove={() => onDetach(a.key)}
                 />
@@ -3009,14 +3027,16 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
     [fd, e.path],
   );
 
-  const comment = useCallback(
-    async (payload) => {
-      const t = await onComment({ ...payload, scope: whose, origin: { session, tool: item.toolId } });
-      if (t && onAttach) onAttach({ kind: "thread", threadId: t.id });
-    },
-    [onComment, onAttach, session, item.toolId, whose],
-  );
   const attach = useMemo(() => onAttach && ((a, to) => onAttach({ ...a, at: whose }, to)), [onAttach, whose]);
+  // Written on an edit of its own, it is for the agent: it goes to the session
+  // as a note, leaving nothing in the review, which is for what you keep.
+  const comment = useCallback(
+    ({ file, side, startLine, endLine, quote, body }) => {
+      attach?.({ kind: "note", file, side, start: startLine, end: endLine, quote, body }, session);
+      return null;
+    },
+    [attach, session],
+  );
   useEffect(() => {
     const el = ref.current;
     const onComment = (ev) => startComment(ev.detail.side, ev.detail.line, ev.detail.line);
@@ -3081,6 +3101,7 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
             setComposing={setComposing}
             onStartComment={startComment}
             onComment={comment}
+            toAgent
             onThreadAction={onThreadAction}
             onAttach={attach}
           />
@@ -3107,6 +3128,7 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
             path={e.path}
             wrap={wrap}
             unknown={state.ed.partial}
+            toAgent
           />
         )}
       </div>
