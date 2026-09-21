@@ -146,6 +146,23 @@ const attr = (s) => String(s ?? "").replace(/[&"<>]/g, (c) => ({ "&": "&amp;", '
 const unattr = (s) => s.replace(/&(amp|quot|lt|gt);/g, (_, e) => ({ amp: "&", quot: '"', lt: "<", gt: ">" })[e]);
 const span = (a, b) => (a === b ? `${a}` : `${a}-${b}`);
 
+function contextEntries(block) {
+  return [...block.matchAll(/<(code|file|comment|note)((?: \w+="[^"]*")*) ?(?:\/>|>\n?([\s\S]*?)\n?<\/\1>)/g)].map(([, kind, attrs, body = ""]) => ({
+    kind,
+    a: Object.fromEntries([...attrs.matchAll(/(\w+)="([^"]*)"/g)].map(([, k, v]) => [k, unattr(v)])),
+    body,
+  }));
+}
+
+// A note or comment holds the lines it quotes, then what was written under them.
+function unquote(body) {
+  const lines = body.split("\n");
+  const n = lines.findLastIndex((l) => l.startsWith("> ")) + 1;
+  return { quote: lines.slice(0, n).map((l) => l.slice(2)), words: lines.slice(n).join("\n") };
+}
+
+const codeLines = (body) => body.split("\n").map((l) => l.replace(/^ *\d+ {2}/, ""));
+
 // commandOf is the slash command a message is, as Claude Code takes it -
 // { name, description, argumentHint, text } - or null for words to Claude.
 function commandOf(message, commands) {
@@ -212,11 +229,7 @@ const saidAs = (it) => (it.kind === "shell" ? "!" + it.text : splitContext(it.te
 function splitContext(text) {
   const m = CONTEXT.exec(text || "");
   if (!m) return { text: text || "", refs: [] };
-  const refs = [...m[1].matchAll(/<(code|file|comment|note) path="([^"]*)"(?: lines="([^"]*)")?/g)].map(([, kind, path, lines]) => ({
-    kind,
-    path: unattr(path),
-    lines,
-  }));
+  const refs = contextEntries(m[1]).map(({ kind, a, body }) => ({ kind, path: a.path, lines: a.lines, from: a.from, body }));
   return { text: text.slice(0, m.index), refs, via: VIA.exec(m[1])?.[1] };
 }
 
@@ -225,10 +238,10 @@ function splitContext(text) {
 const VIA = /<via app="([^"]*)">[\s\S]*?<\/via>/;
 const withoutVia = (text) => text.replace(new RegExp("\\n?" + VIA.source), "").replace(/\n*<dv-context>\n*<\/dv-context>\s*$/, "");
 
-function Chip({ kind, path, lines, onClick, onRemove }) {
+function Chip({ kind, path, lines, on, onClick, onRemove }) {
   const name = splitPath(path)[1];
   return (
-    <span className={cx("agent-chip", (kind === "comment" || kind === "note") && "comment")} title={path + (lines ? `:${lines}` : "")}>
+    <span className={cx("agent-chip", (kind === "comment" || kind === "note") && "comment", on && "on")} title={path + (lines ? `:${lines}` : "")}>
       <button className="agent-chip-label" onClick={onClick} disabled={!onClick}>
         {kind === "comment" && "comment · "}
         {kind === "note" && "note · "}
@@ -296,20 +309,13 @@ async function readBack(message, session, threads) {
   }
   const attached = [];
   const m = CONTEXT.exec(message.text || "");
-  for (const [, kind, attrs, body = ""] of m ? m[1].matchAll(/<(code|file|comment|note)((?: \w+="[^"]*")*) ?(?:\/>|>\n?([\s\S]*?)\n?<\/\1>)/g) : []) {
-    const a = Object.fromEntries([...attrs.matchAll(/(\w+)="([^"]*)"/g)].map(([, k, v]) => [k, unattr(v)]));
+  for (const { kind, a, body } of m ? contextEntries(m[1]) : []) {
     const [start, end = start] = (a.lines || "").split("-").map(Number);
     if (kind === "file") attached.push({ kind, file: a.path });
-    else if (kind === "code") attached.push({ kind: "lines", file: a.path, side: "new", start, end, at: a.from, quote: body.split("\n").map((l) => l.replace(/^ *\d+ {2}/, "")) });
+    else if (kind === "code") attached.push({ kind: "lines", file: a.path, side: "new", start, end, at: a.from, quote: codeLines(body) });
     else if (kind === "note") {
-      // The quoted lines come back apart from what was written under them.
-      const lines = body.split("\n");
-      const quoted = lines.findLastIndex((l) => l.startsWith("> ")) + 1;
-      attached.push({
-        kind, file: a.path, side: a.side || "new", start, end,
-        quote: lines.slice(0, quoted).map((l) => l.slice(2)),
-        body: lines.slice(quoted).join("\n"),
-      });
+      const { quote, words } = unquote(body);
+      attached.push({ kind, file: a.path, side: a.side || "new", start, end, quote, body: words });
     } else {
       const t = threads.find((t) => t.file === a.path && t.side === a.side && t.startLine === start && t.endLine === end);
       if (t) attached.push({ kind: "thread", threadId: t.id });
@@ -2205,7 +2211,7 @@ const Item = memo(function Item(props) {
     case "prompt":
     case "command":
     case "shell":
-      return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} />;
+      return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} onOpenFile={props.onOpenFile} />;
     case "text":
       return <div className="markdown agent-text" dangerouslySetInnerHTML={{ __html: md.render(item.text) }} />;
     case "thinking":
@@ -2236,8 +2242,9 @@ const Item = memo(function Item(props) {
 
 // Prompt is what you said, set to the right. One still on its way in is
 // pending; its pictures are the ones sent, where the transcript's are fetched.
-function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind }) {
+function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind, onOpenFile }) {
   const { text, refs, via: viaApp } = useMemo(() => splitContext(item.text), [item.text]);
+  const [shown, setShown] = useState(-1);
   const via = viaApp !== "dv" && viaApp;
   const n = item.images || 0;
   const srcs = pictures ? pictures.map(dataURL) : pending ? [] : Array.from({ length: n }, (_, i) => api.agentPromptImageURL(session, item.uuid, i));
@@ -2265,10 +2272,19 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
       {refs.length > 0 && (
         <div className="agent-chips">
           {refs.map((r, i) => (
-            <Chip key={i} {...r} />
+            <Chip
+              key={i}
+              kind={r.kind}
+              path={r.path}
+              lines={r.lines}
+              on={i === shown}
+              // Only a file's name went, so there is nothing to show but the file.
+              onClick={r.kind === "file" ? onOpenFile && (() => onOpenFile(r.path)) : () => setShown(i === shown ? -1 : i)}
+            />
           ))}
         </div>
       )}
+      {refs[shown] && <Sent entry={refs[shown]} onOpenFile={onOpenFile} />}
       {(queued || hint || via) && (
         <div className="agent-prompt-foot">
           {via && <span title={`Sent from ${via}, where the reply was asked to be brief`}>via {via}</span>}
@@ -2281,6 +2297,27 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
           <IconUndo size={12} />
         </button>
       )}
+    </div>
+  );
+}
+
+// Sent is what a chip stood for as the message went: code as it was then,
+// which the file may no longer hold, or a note or comment in full.
+function Sent({ entry, onOpenFile }) {
+  if (entry.kind === "code") {
+    const read = { path: entry.path, start: parseInt(entry.lines) || 1, content: codeLines(entry.body).join("\n"), inRepo: !!onOpenFile };
+    return (
+      <div className="agent-sent">
+        {entry.from && <div className="agent-sent-from">{entry.from}</div>}
+        <ReadLines read={read} onOpenFile={onOpenFile} />
+      </div>
+    );
+  }
+  const { quote, words } = unquote(entry.body);
+  return (
+    <div className="agent-sent">
+      {quote.length > 0 && <pre className="quote">{quote.join("\n")}</pre>}
+      {words && <div className="agent-sent-words">{words}</div>}
     </div>
   );
 }

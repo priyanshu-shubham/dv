@@ -16,7 +16,9 @@ const askChars = 3000
 // its session's thread, and how it ended once it has.
 func notice(n notify.Notice, threaded bool, outcome string) string {
 	var b strings.Builder
-	b.WriteString("**" + Escape(n.Title) + "**\n")
+	if n.Title != "" {
+		b.WriteString("**" + Escape(n.Title) + "**\n")
+	}
 	body := n.Body
 	if n.Kind == notify.Ask {
 		body = clip(body, askChars)

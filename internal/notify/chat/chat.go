@@ -119,6 +119,7 @@ type Conversation struct {
 
 	mu      sync.Mutex
 	sent    map[string]sent // notices' messages, by notice
+	linked  map[string]sent // the reply that links to dv, by session
 	picks   map[string]pick // what the buttons of a list stand for, by token
 	asked   map[string]pick // questions a reply answers, by message
 	spent   map[string]bool // questions answered, by message
@@ -131,7 +132,7 @@ type sent struct{ ref, thread string }
 func New(center *notify.Center, p Platform) *Conversation {
 	return &Conversation{
 		center: center, p: p, jobs: make(chan func(context.Context), 100), flew: make(chan struct{}, 1),
-		Every: 4 * time.Second, sent: map[string]sent{}, picks: map[string]pick{}, asked: map[string]pick{},
+		Every: 4 * time.Second, sent: map[string]sent{}, linked: map[string]sent{}, picks: map[string]pick{}, asked: map[string]pick{},
 		spent: map[string]bool{},
 	}
 }
@@ -163,9 +164,14 @@ func (c *Conversation) Send(n notify.Notice) {
 			return
 		}
 		var m sent
+		buttons := c.keyboard(n, true)
 		err := c.inThread(ctx, n.Folder, n.Session, n.Where, n.Place, func(thread string) (err error) {
 			m.thread = thread
-			m.ref, err = c.p.Post(ctx, thread, Out{Text: notice(n, thread != "", ""), Buttons: c.keyboard(n, true), Private: n.Kind == notify.Ask})
+			shown := n
+			if thread != "" && n.Kind == notify.Done && n.Body != "" {
+				shown.Title = "" // in its own thread, a reply says by itself that the turn is over
+			}
+			m.ref, err = c.p.Post(ctx, thread, Out{Text: notice(shown, thread != "", ""), Buttons: buttons, Private: n.Kind == notify.Ask})
 			return err
 		})
 		if err != nil {
@@ -174,7 +180,15 @@ func (c *Conversation) Send(n notify.Notice) {
 		}
 		c.mu.Lock()
 		c.sent[n.ID] = m
+		// Of a session's replies, only the latest keeps its link to dv.
+		var stale sent
+		if n.Kind == notify.Done && len(buttons) > 0 {
+			stale, c.linked[n.Session] = c.linked[n.Session], m
+		}
 		c.mu.Unlock()
+		if stale.ref != "" {
+			c.p.Unbutton(ctx, stale.thread, stale.ref)
+		}
 	})
 }
 

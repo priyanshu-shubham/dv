@@ -3881,8 +3881,28 @@ button.ghost.agent-context {
   cursor: default;
 }
 
-.agent-chip-label:not(:disabled):hover {
+.agent-chip-label:not(:disabled):hover,
+.agent-chip.on .agent-chip-label {
   color: var(--accent);
+}
+
+.agent-sent {
+  margin-top: 6px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.agent-sent-from {
+  padding: 4px 10px 0;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.agent-sent-words {
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .agent-chip-x {

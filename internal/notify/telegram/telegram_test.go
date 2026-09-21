@@ -429,8 +429,8 @@ func TestTelegram(t *testing.T) {
 		t.Fatalf("where /new was said: %v", c.Params)
 	}
 
-	// A long reply goes over several messages, the link on the last; a new
-	// title renames the thread.
+	// A long reply goes over several messages, with no title in its thread and
+	// the link on the last; a new title renames the thread.
 	long := strings.Repeat("Some words about it.\n\n", 400)
 	folder.Raise(notify.Notice{ID: "d1", Kind: notify.Done, Session: "s1", Title: "Claude finished", Where: "Tests fixed", Body: long, Format: notify.Markdown})
 	if c := bot.await(t, "editForumTopic", seen); c.Params["name"] != "Tests fixed · Alpha" || c.Params["message_thread_id"] != thread {
@@ -440,7 +440,7 @@ func TestTelegram(t *testing.T) {
 	for range 3 {
 		parts = append(parts, bot.await(t, "sendMessage", seen))
 	}
-	if !strings.HasPrefix(shown(parts[0]), "<b>Claude finished</b>") || strings.Contains(shown(parts[0]), "Open in dv") || !strings.Contains(shown(parts[2]), "Open in dv") {
+	if !strings.HasPrefix(shown(parts[0]), "Some words") || strings.Contains(shown(parts[0]), "Open in dv") || !strings.Contains(shown(parts[2]), "Open in dv") {
 		t.Fatalf("the reply's parts: %v", parts)
 	}
 
@@ -453,6 +453,10 @@ func TestTelegram(t *testing.T) {
 	bot.await(t, "createForumTopic", seen)
 	if c := bot.await(t, "sendMessage", seen); c.Params["message_thread_id"] == thread || !strings.Contains(shown(c), "Again.") {
 		t.Fatalf("after the thread was deleted: %v", c.Params)
+	}
+	// Only the latest reply keeps the link.
+	if c := bot.await(t, "editMessageReplyMarkup", seen); c.Params["message_id"] != float64(parts[2].ID) {
+		t.Fatalf("the reply before, still linked: %v", c.Params)
 	}
 
 	do(t, tg.HandleTest, `{"origin": "http://127.0.0.1:41000"}`)
