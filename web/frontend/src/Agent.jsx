@@ -212,7 +212,7 @@ const saidAs = (it) => (it.kind === "shell" ? "!" + it.text : splitContext(it.te
 function splitContext(text) {
   const m = CONTEXT.exec(text || "");
   if (!m) return { text: text || "", refs: [] };
-  const refs = [...m[1].matchAll(/<(code|file|comment) path="([^"]*)"(?: lines="([^"]*)")?/g)].map(([, kind, path, lines]) => ({
+  const refs = [...m[1].matchAll(/<(code|file|comment|note) path="([^"]*)"(?: lines="([^"]*)")?/g)].map(([, kind, path, lines]) => ({
     kind,
     path: unattr(path),
     lines,
