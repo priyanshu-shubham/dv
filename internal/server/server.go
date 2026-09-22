@@ -80,7 +80,13 @@ type Server struct {
 
 	notices     *notify.Folder
 	stopNotices context.CancelFunc
+
+	task bool // a hub's one-off task, which has no worktrees
 }
+
+// MarkTask has the page treat the folder as a hub's one-off task. It is for
+// before the Server serves.
+func (s *Server) MarkTask() { s.task = true }
 
 // Open readies a review of the repository or folder holding dir. Its
 // sessions' notices go to notices, if any.

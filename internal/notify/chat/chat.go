@@ -10,6 +10,7 @@
 package chat
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -235,19 +236,20 @@ func (c *Conversation) Tapped(ctx context.Context, t Tap) (string, bool) {
 // Commands are the conversation's, as an app may offer them in a menu.
 var Commands = []struct{ Name, Description string }{
 	{"sessions", "The sessions open in dv, to open a thread for one"},
-	{"new", "Start a session, picking where: /new [folder] what to do"},
+	{"new", "Start a session, picking where: /new [folder, or task] what to do"},
 	{"stop", "Stop the turn of this thread's session"},
 	{"last", "What this thread's session said last"},
 	{"model", "Pick the model of this thread's session"},
+	{"close", "Close this thread's task, deleting its folder"},
 	{"help", "What this bot does"},
 }
 
 // Help is what the conversation is, told on connecting and asked for.
 const Help = `dv tells you here what its agents want and have done, each session in a thread of its own.
 
-Write what a session is to do to start one, in the folder set in dv's Settings. Words before a colon say where instead: "notes: …" in the folder notes, "wt: …" in a new worktree, "notes wt fix/login: …" in one of notes on that branch, "here: …" in the folder itself.
+Write what a session is to do to start one, in the folder set in dv's Settings. Words before a colon say where instead: "notes: …" in the folder notes, "wt: …" in a new worktree, "notes wt fix/login: …" in one of notes on that branch, "here: …" in the folder itself, "task: …" in a new folder of its own for a one-off task.
 
-In a session's thread, write to send it a message, pictures and files and all: files are saved in its folder. /stop stops its turn, /last shows what it said last, and /model picks its model.
+In a session's thread, write to send it a message, pictures and files and all: files are saved in its folder. /stop stops its turn, /last shows what it said last, and /model picks its model. In a task's, /close closes the task, deleting its folder.
 
 /sessions lists the sessions open in dv, to open a thread for one, and /new starts one, asking where.`
 
@@ -308,6 +310,12 @@ func (c *Conversation) Said(ctx context.Context, in In) {
 		c.showLast(ctx, in.Thread, folder, session)
 	case command == "model":
 		c.askModel(ctx, in.Thread, folder, session)
+	case command == "close":
+		if at := c.place(folder); at.Task {
+			c.askClose(ctx, in.Thread, at)
+		} else {
+			here("/close is for a task's thread; " + cmp.Or(at.Name, folder) + " is not a task.")
+		}
 	default:
 		// Any other command is the agent's: /compact, say.
 		id, err := c.center.Send(folder, session, notify.Message{Text: in.Text, Images: in.Images, Files: in.Files, Via: c.p.Via()})

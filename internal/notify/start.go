@@ -32,13 +32,15 @@ func (c *Center) Defaults() Defaults {
 
 // Where is where a message says its session is to start, in words before a
 // colon at its start: a folder's name, "wt" for a new worktree - the branch
-// after it, if named - or "here" for the folder itself. "notes wt fix/login:"
-// is a new worktree of notes, on the branch fix/login.
+// after it, if named - "here" for the folder itself, or "task" alone for a
+// new one-off task. "notes wt fix/login:" is a new worktree of notes, on the
+// branch fix/login.
 type Where struct {
 	Place    *Place
 	Worktree bool
 	Here     bool
 	Branch   string
+	Task     bool
 }
 
 // ParseWhere reads where text says to start, and returns what is left for
@@ -68,6 +70,8 @@ func ParseWhere(text string, places []Place) (Where, string) {
 			}
 		case lower == "here":
 			w.Here = true
+		case lower == "task":
+			w.Task = true
 		default:
 			p, ok := Named(places, word)
 			if !ok || w.Place != nil {
@@ -76,7 +80,7 @@ func ParseWhere(text string, places []Place) (Where, string) {
 			w.Place = &p
 		}
 	}
-	if w.Worktree && w.Here {
+	if w.Worktree && w.Here || w.Task && len(words) > 1 {
 		return Where{}, text
 	}
 	return w, strings.TrimSpace(rest)
@@ -84,7 +88,7 @@ func ParseWhere(text string, places []Place) (Where, string) {
 
 func keyword(word string) bool {
 	switch strings.ToLower(word) {
-	case "wt", "worktree", "here":
+	case "wt", "worktree", "here", "task":
 		return true
 	}
 	return false

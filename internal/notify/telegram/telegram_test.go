@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -493,15 +494,38 @@ func TestTelegram(t *testing.T) {
 	}
 }
 
-// fakeHub makes worktrees at once, and opens the folders asked for.
+// fakeHub makes worktrees and tasks at once, and opens the folders asked for.
 type fakeHub struct {
 	center *notify.Center
 	folder *fakeFolder
 	made   chan string
+
+	mu     sync.Mutex
+	tasks  []notify.Place
+	closed chan string
 }
 
 func (h *fakeHub) Places() []notify.Place {
-	return []notify.Place{{Slug: "alpha", Name: "Alpha", Git: true}, {Slug: "notes", Name: "notes"}}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]notify.Place{{Slug: "alpha", Name: "Alpha", Git: true}, {Slug: "notes", Name: "notes"}}, h.tasks...)
+}
+
+func (h *fakeHub) NewTask() (notify.Place, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	p := notify.Place{Slug: fmt.Sprintf("task-%d", len(h.tasks)+1), Task: true}
+	p.Name = p.Slug
+	h.tasks = append(h.tasks, p)
+	return p, nil
+}
+
+func (h *fakeHub) CloseTask(slug string) error {
+	h.mu.Lock()
+	h.tasks = slices.DeleteFunc(h.tasks, func(p notify.Place) bool { return p.Slug == slug })
+	h.mu.Unlock()
+	h.closed <- slug
+	return nil
 }
 
 func (h *fakeHub) Open(slug string) error {
@@ -703,6 +727,70 @@ func TestQuickStart(t *testing.T) {
 			t.Fatalf("made a thread where the reader's was taken: %v", c.Params)
 		}
 	}
+}
+
+// "task:", /new task and the folder question's New task each start a session
+// in a new task, which /close in its thread closes.
+func TestTasks(t *testing.T) {
+	tg, bot, center, msg := connected(t)
+	sessions := &fakeFolder{}
+	hub := &fakeHub{center: center, folder: sessions, made: make(chan string, 1), closed: make(chan string, 1)}
+	center.SetHub(hub)
+	seen := map[int]bool{}
+	next := func(prefix string) call {
+		t.Helper()
+		for {
+			if c := bot.await(t, "sendMessage", seen); strings.HasPrefix(c.Params["text"].(string), prefix) {
+				return c
+			}
+		}
+	}
+	tap := func(id int64, c call, row int) {
+		rows := c.Params["reply_markup"].(map[string]any)["inline_keyboard"].([]any)
+		if row < 0 {
+			row += len(rows)
+		}
+		data := rows[row].([]any)[0].(map[string]any)["callback_data"].(string)
+		bot.updates <- update{ID: id, Callback: &callback{ID: "q", From: user{ID: 42}, Data: data, Message: &message{ID: c.ID}}}
+	}
+
+	msg(1, 910, "task: sum up this pdf", nil)
+	sessions.await(t, "started: sum up this pdf")
+	if c := next("<b>Started</b>"); c.Params["message_thread_id"] != 910.0 || !strings.HasPrefix(c.Params["text"].(string), "<b>Started</b> in task-1.\n\n/close here closes the task") {
+		t.Fatalf("started: %v", c.Params)
+	}
+
+	// A task has no worktrees to ask about.
+	msg(2, 0, "/new task tidy up", nil)
+	sessions.await(t, "started: tidy up")
+	next("<b>Started</b> in task-2:")
+
+	msg(3, 0, "/new jot this down", nil)
+	ask := next("Start it in which folder?")
+	if s := shown(ask); !strings.Contains(s, `"text":"New task"`) || !strings.Contains(s, `"text":"task-1"`) {
+		t.Fatalf("the folders: %s", s)
+	}
+	tap(4, ask, -1)
+	sessions.await(t, "started: jot this down")
+	next("<b>Started</b> in task-3:")
+
+	// /close asks first, in the task's thread only.
+	tg.change(func(c *Config) {
+		c.Threads = maps.Clone(c.Threads)
+		if c.Threads == nil {
+			c.Threads = map[string]Thread{}
+		}
+		c.Threads["alpha/s1"] = Thread{ID: 500, Name: "Fix · Alpha"}
+	})
+	msg(5, 500, "/close", nil)
+	next("/close is for a task&#39;s thread; Alpha is not a task.")
+	msg(6, 910, "/close", nil)
+	ask = next("Close task-1? Its sessions stop")
+	tap(7, ask, 0)
+	if got := <-hub.closed; got != "task-1" {
+		t.Fatalf("closed %q", got)
+	}
+	next("Closed task-1: its folder is deleted.")
 }
 
 func TestProgressAndModels(t *testing.T) {

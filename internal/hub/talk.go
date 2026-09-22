@@ -16,10 +16,10 @@ func (h *Hub) Places() []notify.Place {
 			continue
 		}
 		git := f.WorktreeOf != ""
-		if repo, err := gitx.Open(f.Path); !git && err == nil {
+		if repo, err := gitx.Open(f.Path); !git && !f.Task && err == nil {
 			git = repo.IsGit()
 		}
-		out = append(out, notify.Place{Slug: f.Slug, Name: displayName(f), Git: git})
+		out = append(out, notify.Place{Slug: f.Slug, Name: displayName(f), Git: git, Task: f.Task})
 	}
 	return out
 }
@@ -50,4 +50,25 @@ func (h *Hub) Worktree(slug, branch string, fresh bool) (notify.Place, error) {
 	}
 	f, _ := h.folders.Get(made)
 	return notify.Place{Slug: made, Name: displayName(f), Git: true}, nil
+}
+
+// NewTask makes a folder for a one-off task.
+func (h *Hub) NewTask() (notify.Place, error) {
+	f, err := h.newTask("")
+	if err != nil {
+		return notify.Place{}, err
+	}
+	return notify.Place{Slug: f.Slug, Name: displayName(f), Task: true}, nil
+}
+
+// CloseTask deletes a task's folder, its sessions stopped, and waits for it.
+func (h *Hub) CloseTask(slug string) error {
+	j, _, err := h.closeTask(slug)
+	if err != nil {
+		return err
+	}
+	<-j.ended
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return j.err
 }

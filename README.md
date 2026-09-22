@@ -105,6 +105,10 @@ folder's page or on the hub's own, named by its folder.
 - A Claude Code session in a cloned repository uses that repository's own
   settings and hooks, so clone what you trust.
 - Worktree hooks are kept in the hub, never committed to the repository.
+- **Task** starts a one-off task in a new folder of its own - a fresh git
+  repository in dv's data folder (`~/.local/share/dv/tasks` on Linux) - and
+  opens it on the Agent view. Closing the task stops its sessions and deletes
+  the folder with everything in it.
 
 ## Flags
 

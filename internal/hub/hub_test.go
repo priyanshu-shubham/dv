@@ -414,6 +414,99 @@ func TestLetsIdleFoldersGo(t *testing.T) {
 	}
 }
 
+// A task gets a folder of its own, which closing it deletes; no other folder
+// is deleted that way.
+func TestTasks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	alpha := filepath.Join(home, "code", "alpha")
+	repo(t, alpha)
+	user, _ := store.OpenUserPrefs()
+	list, _ := store.OpenFolders()
+	ts := httptest.NewUnstartedServer(nil)
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	h := New("http://"+ts.Listener.Addr().String(), user, list, notices)
+	ts.Config.Handler = h.Handler()
+	ts.Start()
+	defer ts.Close()
+	defer h.Close()
+	c := client{t, ts.URL}
+
+	var first, second store.Folder
+	c.do("POST", "/api/hub/tasks", `{"name": "scratch"}`, &first)
+	c.do("POST", "/api/hub/tasks", `{}`, &second)
+	root := filepath.Join(home, ".local", "share", "dv", "tasks")
+	if !first.Task || first.Name != "scratch" || filepath.Dir(first.Path) != root || filepath.Dir(second.Path) != root || second.Path == first.Path {
+		t.Fatalf("tasks: %+v %+v", first, second)
+	}
+	at := time.Date(2026, 9, 22, 15, 4, 0, 0, time.Local)
+	if a, _ := makeTaskDir(root, at); filepath.Base(a) != "task-0922-1504" {
+		t.Fatalf("task folder: %s", a)
+	}
+	if b, _ := makeTaskDir(root, at); filepath.Base(b) != "task-0922-1504-2" {
+		t.Fatalf("task folder, taken: %s", b)
+	}
+	if _, err := os.Stat(filepath.Join(first.Path, ".git")); err != nil {
+		t.Fatal("a task's folder is not a repository")
+	}
+	os.WriteFile(filepath.Join(first.Path, "notes.txt"), []byte("x\n"), 0o644)
+	if r := c.do("GET", "/"+first.Slug+"/api/meta", "", nil); r.StatusCode != 200 {
+		t.Fatalf("task's page: %d", r.StatusCode)
+	}
+
+	if r := c.do("POST", "/api/hub/folders/"+first.Slug+"/discard", "{}", nil); r.StatusCode != 200 {
+		t.Fatalf("close: %d", r.StatusCode)
+	}
+	got := c.settle()
+	if len(got.Jobs) != 0 || h.opened(first.Slug) != nil {
+		t.Fatalf("after close: %+v", got.Jobs)
+	}
+	if _, err := os.Stat(first.Path); !os.IsNotExist(err) {
+		t.Fatalf("the task's folder is still there: %v", err)
+	}
+	if _, ok := list.Get(first.Slug); ok {
+		t.Fatal("the task is still on the hub")
+	}
+	got.folder(t, second.Path)
+
+	// A task has no worktrees, and the chat apps are told so.
+	if r := c.do("POST", "/api/hub/folders/"+second.Slug+"/worktrees", `{"branch": "x"}`, nil); r.StatusCode != 400 {
+		t.Fatalf("a worktree of a task: %d", r.StatusCode)
+	}
+	for _, p := range h.Places() {
+		if p.Slug == second.Slug && (!p.Task || p.Git) {
+			t.Fatalf("the task as a place: %+v", p)
+		}
+	}
+	made, err := h.NewTask()
+	if err != nil || !made.Task {
+		t.Fatalf("a task from a chat app: %+v, %v", made, err)
+	}
+	if err := h.CloseTask(made.Slug); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := list.Get(made.Slug); ok {
+		t.Fatal("closed from a chat app, the task is still on the hub")
+	}
+
+	// Neither a folder added, nor one only marked a task outside dv's own.
+	a, _ := list.Add(store.Folder{Path: alpha})
+	if r := c.do("POST", "/api/hub/folders/"+a.Slug+"/discard", "{}", nil); r.StatusCode != 404 {
+		t.Fatalf("closing a folder: %d", r.StatusCode)
+	}
+	list.Update(a.Slug, func(f *store.Folder) { f.Task = true })
+	if r := c.do("POST", "/api/hub/folders/"+a.Slug+"/discard", "{}", nil); r.StatusCode != 400 {
+		t.Fatalf("closing a folder marked a task: %d", r.StatusCode)
+	}
+	if _, err := os.Stat(alpha); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A worktree for a session starts from where the folder asked from is, and
 // takes a name of its own when the one made up is taken.
 func TestWorktreeFromHere(t *testing.T) {

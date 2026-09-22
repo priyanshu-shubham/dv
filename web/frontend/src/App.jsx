@@ -1076,7 +1076,8 @@ export default function App() {
   }, [setAgentId]);
   // A session in a new worktree, which only a hub makes, of a repository.
   const [worktreeOpen, setWorktreeOpen] = useState(false);
-  const newWorktree = boot.base && meta?.git ? () => (setPanel(null), setWorktreeOpen(true)) : null;
+  // A worktree starts from a commit; a task has no worktrees at all.
+  const newWorktree = boot.base && meta?.git && meta.head?.sha && !meta.task ?() => (setPanel(null), setWorktreeOpen(true)) : null;
   const closeSession = useCallback(
     async (id) => {
       const row = agent.sessions.find((x) => x.id === id);

@@ -84,10 +84,10 @@ type File struct {
 }
 
 // Place is a folder a session can be started in. Git marks one a worktree can
-// be made of.
+// be made of; Task one of a hub's one-off tasks, deleted when closed.
 type Place struct {
 	Slug, Name string
-	Git        bool
+	Git, Task  bool
 }
 
 // A Hub serves many folders, opening one when asked, and makes worktrees:
@@ -100,6 +100,44 @@ type Hub interface {
 	// from what slug has checked out, and returns once it is set up, as the
 	// folder it is. fresh numbers a branch name taken on, as for one made up.
 	Worktree(slug, branch string, fresh bool) (Place, error)
+	// NewTask makes a folder for a one-off task; CloseTask deletes one, its
+	// sessions stopped, and returns once it is gone.
+	NewTask() (Place, error)
+	CloseTask(slug string) error
+}
+
+// errNoHub is what a dv serving one folder says to what only a hub does.
+func errNoHub(what string) error {
+	return errors.New(what + " by a dv hub, and this dv is not one")
+}
+
+// Tasks is whether one-off tasks can be made here, which a hub does.
+func (c *Center) Tasks() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hub != nil
+}
+
+// NewTask makes a folder for a one-off task, as the hub does.
+func (c *Center) NewTask() (Place, error) {
+	c.mu.Lock()
+	h := c.hub
+	c.mu.Unlock()
+	if h == nil {
+		return Place{}, errNoHub("Tasks are made")
+	}
+	return h.NewTask()
+}
+
+// CloseTask deletes a task's folder, as the hub does.
+func (c *Center) CloseTask(slug string) error {
+	c.mu.Lock()
+	h := c.hub
+	c.mu.Unlock()
+	if h == nil {
+		return errNoHub("Tasks are closed")
+	}
+	return h.CloseTask(slug)
 }
 
 // SetHub has sessions started in any of h's folders, opened for them.
@@ -115,7 +153,7 @@ func (c *Center) Worktree(folder, branch string, fresh bool) (Place, error) {
 	h := c.hub
 	c.mu.Unlock()
 	if h == nil {
-		return Place{}, errors.New("Worktrees are made by a dv hub, and this dv is not one")
+		return Place{}, errNoHub("Worktrees are made")
 	}
 	return h.Worktree(folder, branch, fresh)
 }

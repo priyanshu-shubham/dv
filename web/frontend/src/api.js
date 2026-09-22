@@ -297,6 +297,9 @@ export const api = {
   // how: { skipTeardown, force }, force deleting it with uncommitted changes.
   hubDeleteWorktree: (slug, how = {}) =>
     req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
+  // A task is a folder the hub makes, deleted when closed.
+  hubNewTask: (name = "") => req("/api/hub/tasks", { method: "POST", body: JSON.stringify({ name }) }),
+  hubCloseTask: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/discard`, { method: "POST", body: "{}" }),
   // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
   // hubActivity follows every folder open in the hub: { folders: [{ slug,
   // name, sessions, requests }] }.

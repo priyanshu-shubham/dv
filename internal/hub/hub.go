@@ -97,6 +97,8 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("POST /api/hub/folders/{slug}/worktrees", server.Guarded(h.handleWorktree))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/setup", server.Guarded(h.handleSetup))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/delete", server.Guarded(h.handleDeleteWorktree))
+	mux.HandleFunc("POST /api/hub/folders/{slug}/discard", server.Guarded(h.handleCloseTask))
+	mux.HandleFunc("POST /api/hub/tasks", server.Guarded(h.handleNewTask))
 	mux.HandleFunc("GET /api/hub/activity", server.Guarded(h.handleActivity))
 	mux.HandleFunc("GET /api/hub/dirs", server.Guarded(h.handleDirs))
 	mux.HandleFunc("POST /api/hub/dirs", server.Guarded(h.handleMakeDir))
@@ -153,7 +155,7 @@ func (h *Hub) review(slug string) (*review, error) {
 	if !ok {
 		return nil, fmt.Errorf("no folder at /%s/ in this hub", slug)
 	}
-	if j := h.busy(f.Path); j != nil && j.Kind == "remove" {
+	if j := h.busy(f.Path); j != nil && (j.Kind == "remove" || j.Kind == "discard") {
 		return nil, fmt.Errorf("%s is being deleted", server.HomeRelative(f.Path))
 	}
 	// Asked before locking: an answer can take a while not to come.
@@ -168,6 +170,9 @@ func (h *Hub) review(slug string) (*review, error) {
 	srv, err := server.Open(f.Path, h.user, h.notices.Folder(slug, displayName(f)))
 	if err != nil {
 		return nil, err
+	}
+	if f.Task {
+		srv.MarkTask()
 	}
 	base := "/" + slug
 	rv := &review{srv: srv, handler: srv.Handler(base), asked: time.Now()}

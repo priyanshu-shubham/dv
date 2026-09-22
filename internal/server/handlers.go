@@ -47,6 +47,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"recentCommits": s.repo.RecentCommits(20),
 		"commentsPath":  s.store.Path(),
 		"symbolStatus":  s.index.Status(),
+		"task":          s.task,
 	})
 }
 

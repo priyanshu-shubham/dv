@@ -27,6 +27,8 @@ type Folder struct {
 	// made it; Teardown before the hub deletes one. Each is a script for sh.
 	Setup    string `json:"setup,omitempty"`
 	Teardown string `json:"teardown,omitempty"`
+	// Task is a folder the hub made for a one-off task, deleted when closed.
+	Task bool `json:"task,omitempty"`
 }
 
 // Folders is the hub's list, kept per user so any hub they start has it.
@@ -156,7 +158,10 @@ func (f *Folders) Remove(slug string) error {
 	if i < 0 {
 		return fmt.Errorf("no folder at /%s/", slug)
 	}
-	f.doc.Retired[slug] = f.doc.Folders[i].Path
+	// A task's folder is gone for good, so its slug has no path to keep for.
+	if !f.doc.Folders[i].Task {
+		f.doc.Retired[slug] = f.doc.Folders[i].Path
+	}
 	f.doc.Folders = slices.Delete(f.doc.Folders, i, i+1)
 	return f.file.save(f.doc)
 }

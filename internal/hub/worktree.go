@@ -143,6 +143,13 @@ func (h *Hub) makeWorktree(slug string, req worktreeReq, fresh bool) (*job, int,
 	if err != nil || !repo.IsGit() {
 		return nil, http.StatusBadRequest, fmt.Errorf("%s is not a git repository", server.HomeRelative(main.Path))
 	}
+	// Closing a task deletes its folder, which would leave a worktree's behind.
+	if main.Task {
+		return nil, http.StatusBadRequest, fmt.Errorf("%s is a task, which has no worktrees", displayName(main))
+	}
+	if repo.Head().SHA == "" {
+		return nil, http.StatusBadRequest, fmt.Errorf("%s has no commits yet, so a worktree has nothing to start from", displayName(main))
+	}
 	branch, base := strings.TrimSpace(req.Branch), strings.TrimSpace(req.Base)
 	if fresh {
 		branch = freeBranch(repo, branch)

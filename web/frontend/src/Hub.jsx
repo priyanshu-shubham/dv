@@ -5,7 +5,7 @@ import { Modal, SettingsOverlay, useUpdate } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
-import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconX } from "./icons.jsx";
+import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { setTabIcon, tabDot } from "./favicon.js";
 
 const POLL_MS = 2000;
@@ -161,6 +161,13 @@ export default function Hub() {
     },
     dismiss: (j) => act(api.hubDismissJob(j.id)),
     error: setError,
+    // Straight to the Agent view, as a task is something to ask for.
+    newTask: () => api.hubNewTask().then((f) => openFolderSession(f.slug, ""), (e) => setError(e.message)),
+    closeTask: (f) => {
+      const n = f.open?.sessions;
+      const also = n ? `, stops ${sessions(n)} dv runs there` : "";
+      if (confirm(`Close ${f.name}? This deletes ${f.place} and everything in it${also}.`)) act(api.hubCloseTask(f.slug));
+    },
   };
 
   // Worktrees go under the repository they were made of, when it is listed.
@@ -188,7 +195,7 @@ export default function Hub() {
     })
     .filter(({ main, worktrees }) => matches(main) || worktrees.length)
     .sort((a, b) => Math.max(used(b.main), ...b.worktrees.map(used)) - Math.max(used(a.main), ...a.worktrees.map(used)));
-  const loose = jobs.filter((j) => j.kind === "clone" || !mains.some((m) => m.slug === j.of));
+  const loose = jobs.filter((j) => j.kind === "clone" || (j.kind !== "discard" && !mains.some((m) => m.slug === j.of)));
   const empty = data && !folders.length && !jobs.length;
 
   return (
@@ -241,6 +248,9 @@ export default function Hub() {
                 <button className="primary" onClick={() => setDialog("clone")}>
                   Clone a repository
                 </button>
+                <button className="primary" onClick={on.newTask}>
+                  Start a one-off task
+                </button>
               </div>
             </div>
           ) : (
@@ -255,6 +265,10 @@ export default function Hub() {
                   <button className="btn" onClick={() => setDialog("clone")} title="Clone a repository into a folder">
                     <IconBranch size={13} />
                     Clone
+                  </button>
+                  <button className="btn" onClick={on.newTask} title="Start a one-off task in a new folder, deleted when you close it">
+                    <IconTemporary size={13} />
+                    Task
                   </button>
                 </div>
                 {loose.map((j) => (
@@ -406,16 +420,17 @@ function Entry({ folder: f, main, job, on }) {
   else if (open?.waiting) state = <span className="session-asking">waiting on you</span>;
   else if (open?.working) state = <span>{workingLabel(open)}</span>;
   else if (running) state = <span>{open.sessions === 1 ? "a session" : `${open.sessions} sessions`} running</span>;
+  // A task's folder is dv's own: it is closed and deleted, never left behind off the hub.
   const menu = [
     { label: "Rename", run: () => setRenaming(true) },
-    ...(!worktree && f.git && !f.missing
+    ...(!f.task && !worktree && f.git && !f.missing
       ? [
           { label: "New worktree…", run: () => on.newWorktree(f) },
           { label: f.setup || f.teardown ? "Worktree hooks…" : "Add worktree hooks…", run: () => on.hooks(f) },
         ]
       : []),
     ...(worktree && main.setup && !f.missing ? [{ label: "Run setup again", run: () => on.setup(f) }] : []),
-    { label: "Take off the hub", run: () => on.remove(f) },
+    f.task ? { label: "Close task…", run: () => on.closeTask(f), danger: true } : { label: "Take off the hub", run: () => on.remove(f) },
     ...(worktree ? [{ label: "Delete worktree…", run: () => on.deleteWorktree(f, main), danger: true }] : []),
   ];
 
@@ -450,6 +465,11 @@ function Entry({ folder: f, main, job, on }) {
         {running && (
           <button className="mini hub-action" title="Stop the sessions dv runs here" onClick={stop(() => on.stop(f))}>
             Stop sessions
+          </button>
+        )}
+        {f.task && !job && (
+          <button className="mini hub-action" title="Delete this task's folder and take it off the hub" onClick={stop(() => on.closeTask(f))}>
+            Close task
           </button>
         )}
         <CardMenu items={menu} />

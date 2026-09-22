@@ -22,7 +22,8 @@ type pick struct {
 	images  []notify.Image
 	files   []notify.File
 	// "folder", "here", "worktree", "branch"; "place", the folder of a session
-	// whose message said the rest; "change", "model", "effort", "shut"
+	// whose message said the rest; "task", in a new task; "close", closing
+	// the task place; "change", "model", "effort", "shut"
 	step     string
 	worktree bool // for "place": in a new worktree of it
 	branch   string
@@ -97,7 +98,7 @@ func (c *Conversation) picked(ctx context.Context, t Tap, token string) string {
 	c.mu.Lock()
 	p, ok := c.picks[token]
 	c.mu.Unlock()
-	once := p.step == "folder" || p.step == "place" || p.step == "here" || p.step == "worktree" || p.step == "branch"
+	once := p.step == "folder" || p.step == "place" || p.step == "here" || p.step == "worktree" || p.step == "branch" || p.step == "task" || p.step == "close"
 	switch {
 	case !ok:
 		return "That is from before dv restarted; ask again."
@@ -113,6 +114,10 @@ func (c *Conversation) picked(ctx context.Context, t Tap, token string) string {
 		c.askBranch(ctx, t.Thread, p)
 	case p.step == "branch":
 		c.inWorktree(ctx, t.Thread, p)
+	case p.step == "task":
+		c.inTask(ctx, t.Thread, p)
+	case p.step == "close":
+		c.closeTask(ctx, t.Thread, p.place)
 	case p.step == "change" || p.step == "model" || p.step == "effort" || p.step == "shut":
 		return c.pickSetup(ctx, t, p)
 	default:
@@ -181,18 +186,25 @@ func (c *Conversation) showLast(ctx context.Context, thread, folder, session str
 // asking whether in a new worktree of it.
 func (c *Conversation) newSession(ctx context.Context, thread string, p pick) {
 	places := c.center.Places()
-	if len(places) == 0 {
+	if len(places) == 0 && !c.center.Tasks() {
 		c.say(ctx, thread, "dv has no folder to start a session in: add one in the hub first.", nil)
 		return
 	}
 	var in *notify.Place
+	task := false
 	if first, rest, _ := strings.Cut(p.text, " "); first != "" {
-		if at, ok := notify.Named(places, first); ok {
+		if c.namesTask(first) {
+			task, p.text = true, strings.TrimSpace(rest)
+		} else if at, ok := notify.Named(places, first); ok {
 			in, p.text = &at, strings.TrimSpace(rest)
 		}
 	}
 	if p.text == "" {
-		c.say(ctx, thread, "Say what the session is to do: /new [folder] what to do", nil)
+		c.say(ctx, thread, "Say what the session is to do: /new [folder, or task] what to do", nil)
+		return
+	}
+	if task {
+		c.inTask(ctx, thread, p)
 		return
 	}
 	if in == nil && len(places) == 1 {
@@ -215,7 +227,47 @@ func (c *Conversation) askFolder(ctx context.Context, thread string, places []no
 		p.place = at
 		answers = append(answers, answer{at.Name, p})
 	}
+	if c.center.Tasks() {
+		p.place, p.step = notify.Place{}, "task"
+		answers = append(answers, answer{"New task", p})
+	}
 	c.ask(ctx, thread, question, answers)
+}
+
+// namesTask is whether a word asks for a new task, where tasks can be made.
+// It is before a folder's name: "task" is a keyword as "wt" is.
+func (c *Conversation) namesTask(word string) bool {
+	return strings.EqualFold(word, "task") && c.center.Tasks()
+}
+
+// inTask starts a session as p says, in a new one-off task's folder.
+func (c *Conversation) inTask(ctx context.Context, thread string, p pick) {
+	made, err := c.center.NewTask()
+	if err != nil {
+		c.say(ctx, thread, "Could not make the task: "+err.Error(), nil)
+		return
+	}
+	p.place = made
+	c.startIn(ctx, thread, made, p)
+}
+
+// askClose asks before closing a task, as it deletes the task's folder.
+func (c *Conversation) askClose(ctx context.Context, thread string, at notify.Place) {
+	c.ask(ctx, thread, "Close "+at.Name+"? Its sessions stop, and its folder is deleted with everything in it.", []answer{
+		{"Close and delete", pick{step: "close", place: at}},
+	})
+}
+
+// closeTask deletes a task's folder, which can take a while, so it goes on by
+// itself.
+func (c *Conversation) closeTask(ctx context.Context, thread string, at notify.Place) {
+	go func() {
+		if err := c.center.CloseTask(at.Slug); err != nil {
+			c.say(ctx, thread, "Could not close "+at.Name+": "+err.Error(), nil)
+			return
+		}
+		c.say(ctx, thread, "Closed "+at.Name+": its folder is deleted.", nil)
+	}()
 }
 
 // quickStart begins a session with a message written outside any session's
@@ -223,11 +275,14 @@ func (c *Conversation) askFolder(ctx context.Context, thread string, places []no
 // Settings do. A thread the app made for the message becomes the session's.
 func (c *Conversation) quickStart(ctx context.Context, in In) {
 	places := c.center.Places()
-	if len(places) == 0 {
+	where, text := notify.ParseWhere(in.Text, places)
+	if where.Task && !c.center.Tasks() {
+		where, text = notify.Where{}, in.Text
+	}
+	if len(places) == 0 && !c.center.Tasks() {
 		c.tell(ctx, in.Thread, "dv has no folder to start a session in: add one in the hub first.", nil)
 		return
 	}
-	where, text := notify.ParseWhere(in.Text, places)
 	if text == "" && len(in.Images) == 0 && len(in.Files) == 0 {
 		c.tell(ctx, in.Thread, "Say what the session is to do, after the colon.", nil)
 		return
@@ -239,6 +294,9 @@ func (c *Conversation) quickStart(ctx context.Context, in In) {
 	}
 	i := slices.IndexFunc(places, func(at notify.Place) bool { return at.Slug == d.Folder })
 	switch {
+	case where.Task:
+		c.inTask(ctx, in.Thread, p)
+		return
 	case where.Place != nil:
 		p.place = *where.Place
 	case i >= 0:
@@ -269,7 +327,7 @@ func (c *Conversation) begin(ctx context.Context, thread string, p pick) {
 func (c *Conversation) namesPlace(args string) bool {
 	first, _, _ := strings.Cut(args, " ")
 	_, ok := notify.Named(c.center.Places(), first)
-	return ok
+	return ok || c.namesTask(first)
 }
 
 // place is the folder at slug, as a session can be started in.
@@ -363,6 +421,8 @@ func (c *Conversation) startIn(ctx context.Context, thread string, at notify.Pla
 	switch {
 	case at.Slug != p.place.Slug:
 		intro += ", a new worktree of " + Escape(p.place.Name) + " on the branch `" + p.branch + "`"
+	case p.worktree && at.Task:
+		intro += " itself: a task has no worktrees"
 	case p.worktree:
 		intro += " itself: it is no git repository, so it has no worktrees"
 	}
@@ -371,6 +431,9 @@ func (c *Conversation) startIn(ctx context.Context, thread string, at notify.Pla
 		intro += "."
 	} else {
 		intro += ": " + Escape(clip(p.text, 500)) + "\n\nIts replies come here."
+	}
+	if at.Task {
+		intro += "\n\n/close here closes the task, deleting its folder."
 	}
 	s, _ := c.center.Setup(at.Slug, id)
 	setup := pick{session: notify.Session{Folder: at.Slug, ID: id}, intro: intro, asNew: true}

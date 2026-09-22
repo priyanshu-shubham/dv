@@ -24,7 +24,7 @@ import (
 // It stays listed until it succeeds, or until its failure is dismissed.
 type job struct {
 	ID      string    `json:"id"`
-	Kind    string    `json:"kind"`  // clone, worktree, setup or remove
+	Kind    string    `json:"kind"`  // clone, worktree, setup, remove, or discard (a task's)
 	Title   string    `json:"title"` // what is cloned, or the worktree's branch or name
 	Path    string    `json:"path"`
 	Place   string    `json:"place"`

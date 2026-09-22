@@ -33,4 +33,19 @@ func TestParseWhere(t *testing.T) {
 			t.Errorf("%q: %s %q, want %s %q", c.text, got, rest, c.want, c.rest)
 		}
 	}
+	// A task is a folder of its own, so it takes no other words.
+	for _, c := range []struct {
+		text string
+		task bool
+		rest string
+	}{
+		{"task: sum up this pdf", true, "sum up this pdf"},
+		{"Task:sum it", true, "sum it"},
+		{"notes task: jot", false, "notes task: jot"},
+		{"task wt: jot", false, "task wt: jot"},
+	} {
+		if w, rest := ParseWhere(c.text, places); w.Task != c.task || rest != c.rest || c.task && w.Place != nil {
+			t.Errorf("%q: %+v %q", c.text, w, rest)
+		}
+	}
 }

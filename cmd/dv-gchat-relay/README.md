@@ -95,7 +95,7 @@ Google Chat API → Configuration**:
   `/chat`.
 - **Authentication audience:** Project Number, to match `DV_RELAY_AUDIENCE`.
 - **Slash commands** (optional): `/sessions`, `/new`, `/stop`, `/last`,
-  `/model`, `/help` and `/hub`, with any IDs. Without them, typing the command
+  `/model`, `/close`, `/help` and `/hub`, with any IDs. Without them, typing the command
   as text works just as well.
 - **Visibility:** "Make this Chat app available to specific people and groups
   in your domain". Add yourself and whoever else is in `DV_RELAY_ALLOW`.
