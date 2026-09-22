@@ -2197,8 +2197,20 @@ button.headref:hover {
   padding-left: 20px;
 }
 
-.markdown a {
+.markdown a,
+a.path-link {
   color: var(--accent);
+}
+
+/* A path opens the file; in output it keeps the text's own look until hovered. */
+.agent-lines a.path-link,
+pre.agent-result a.path-link {
+  color: inherit;
+  text-decoration: underline dotted;
+}
+
+a.path-link:hover {
+  text-decoration: underline;
 }
 
 .markdown blockquote {

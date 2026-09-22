@@ -4,6 +4,7 @@
 // necessarily trusted and the page can drive Claude.
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js/lib/common";
+import { linkPaths } from "./links.js";
 
 export const isMarkdown = (path) => /\.(md|markdown|mdown|mkd)$/i.test(path);
 
@@ -20,7 +21,7 @@ const DROP = new Set(
 const ATTRS = new Set("href src alt title width height align colspan rowspan open start reversed class data-src".split(" "));
 
 let waiting = null;
-const md = new MarkdownIt({
+const md = linkPaths(new MarkdownIt({
   html: true,
   linkify: true,
   highlight: (code, lang) => {
@@ -35,7 +36,7 @@ const md = new MarkdownIt({
       return "";
     }
   },
-});
+}));
 // Each block names the line it starts on, so a jump to a line, or a switch
 // from the source, lands on the block that holds it.
 md.core.ruler.push("source_lines", (state) => {
@@ -83,8 +84,12 @@ export function renderMarkdown(text, path, image) {
       if (!href) continue;
       const local = repoPath(dir, href);
       if (href.startsWith("#")) el.dataset.anchor = slugOf(decode(href.slice(1)));
-      else if (local) el.dataset.path = local;
-      else {
+      else if (local) {
+        el.dataset.path = local;
+        // GitHub's way of naming a line, as a path in the text is linked.
+        const line = /^#L(\d+)/.exec(new URL(href, "http://repo/").hash);
+        if (line) el.dataset.line = line[1];
+      } else {
         el.setAttribute("target", "_blank");
         el.setAttribute("rel", "noopener noreferrer");
       }

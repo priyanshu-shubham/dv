@@ -1,6 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
+import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
@@ -17,9 +18,9 @@ import {
   IconUndo, IconX,
 } from "./icons.jsx";
 
-const md = new MarkdownIt({ html: false, linkify: true });
+const md = linkPaths(new MarkdownIt({ html: false, linkify: true }));
 // A command's output is Markdown, or lines of plain text that must stay lines.
-const mdOutput = new MarkdownIt({ html: false, linkify: true, breaks: true });
+const mdOutput = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
 const NO_THREADS = [];
 const NO_IMAGES = [];
 const NO_QUEUED = [];
@@ -2237,13 +2238,13 @@ const Item = memo(function Item(props) {
     case "shell":
       return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} onOpenFile={props.onOpenFile} />;
     case "text":
-      return <div className="markdown agent-text" dangerouslySetInnerHTML={{ __html: md.render(item.text) }} />;
+      return <Markdown md={md} text={item.text} className="markdown agent-text" />;
     case "thinking":
       return <Thinking text={item.text} />;
     case "note":
       return <div className={cx("agent-note", item.error && "error")}>{item.text}</div>;
     case "output":
-      return <div className={cx("markdown agent-text agent-output", item.error && "error")} dangerouslySetInnerHTML={{ __html: mdOutput.render(item.text) }} />;
+      return <Markdown md={mdOutput} text={item.text} className={cx("markdown agent-text agent-output", item.error && "error")} />;
     case "compact":
       return <Compacted item={item} />;
     case "mode":
@@ -2393,7 +2394,7 @@ function Compacted({ item }) {
         Conversation compacted{auto ? " automatically" : ""}
         {before > 0 && <span className="agent-compacted-tokens">{after > 0 ? `${tokens(before)} → ${tokens(after)}` : tokens(before)}</span>}
       </button>
-      {open && <div className="markdown agent-compacted-text" dangerouslySetInnerHTML={{ __html: md.render(item.text) }} />}
+      {open && <Markdown md={md} text={item.text} className="markdown agent-compacted-text" />}
     </div>
   );
 }
@@ -2402,7 +2403,7 @@ function Compacted({ item }) {
 // call is doing shows in the Activity line under it.
 function Streaming({ block }) {
   if (block.kind === "text") {
-    return <div className="markdown agent-text streaming" dangerouslySetInnerHTML={{ __html: md.render(block.text || "") }} />;
+    return <Markdown md={md} text={block.text} className="markdown agent-text streaming" />;
   }
   if (block.kind === "thinking" && block.text) return <Thinking text={block.text} />;
   return null;
@@ -2807,6 +2808,7 @@ function ToolBody({ item, session, root, onOpenFile }) {
   const input = item.input || {};
   const r = item.result;
   const [out, setOut] = useState(null);
+  usePathsVersion();
   useEffect(() => {
     if (!r) return;
     let live = true;
@@ -2825,14 +2827,14 @@ function ToolBody({ item, session, root, onOpenFile }) {
       {tool === "Bash" || tool === "PowerShell" ? (
         <Command text={input.command || ""} lang={tool === "Bash" ? "bash" : "powershell"} />
       ) : tool === "ExitPlanMode" && input.plan ? (
-        <div className="markdown agent-plan" dangerouslySetInnerHTML={{ __html: md.render(input.plan) }} />
+        <Markdown md={md} text={input.plan} className="markdown agent-plan" />
       ) : (tool === "Agent" || tool === "Task") && input.prompt ? (
-        <div className="markdown agent-page" dangerouslySetInnerHTML={{ __html: md.render(input.prompt) }} />
+        <Markdown md={md} text={input.prompt} className="markdown agent-page" />
       ) : (
         !SAID.has(tool) && <Fields input={input} />
       )}
       {r && !out && <div className="file-note loading">Loading...</div>}
-      {out?.error && <pre className={cx("agent-result", r.isError && "error")}>{r.text}</pre>}
+      {out?.error && <pre className={cx("agent-result", r.isError && "error")}>{linkText(r.text)}</pre>}
       {out && !out.error && <Output tool={tool} input={input} out={out} failed={r.isError} root={root} onOpenFile={onOpenFile} />}
     </>
   );
@@ -2867,7 +2869,7 @@ function Output({ tool, input, out, failed, root, onOpenFile }) {
   // A command left in the background has only Claude Code's word on where its
   // output went.
   if ((tool === "Bash" || tool === "PowerShell") && !out.text) return <div className="file-note">No output.</div>;
-  if (out.page) return <div className="markdown agent-page" dangerouslySetInnerHTML={{ __html: md.render(out.page) }} />;
+  if (out.page) return <Markdown md={md} text={out.page} className="markdown agent-page" />;
   if (out.links) {
     return (
       <ul className="agent-links">
@@ -2884,7 +2886,7 @@ function Output({ tool, input, out, failed, root, onOpenFile }) {
   }
   if (!out.text) return null;
   if (!failed && (tool === "Agent" || tool === "Task")) {
-    return <div className="markdown agent-page" dangerouslySetInnerHTML={{ __html: md.render(out.text) }} />;
+    return <Markdown md={md} text={out.text} className="markdown agent-page" />;
   }
   return <Lines className={cx("agent-result", failed && "error")} text={out.text} />;
 }
@@ -2905,11 +2907,12 @@ const SHOWN_FOUND = 200;
 
 function Lines({ className, text }) {
   const [all, setAll] = useState(false);
+  usePathsVersion();
   const lines = text.replace(/\n$/, "").split("\n");
   const cut = !all && lines.length > SHOWN_LINES + 3;
   return (
     <div className={cx(className, "agent-lines")}>
-      <pre>{cut ? lines.slice(0, SHOWN_LINES).join("\n") : text}</pre>
+      <pre>{linkText(cut ? lines.slice(0, SHOWN_LINES).join("\n") : text)}</pre>
       {cut && (
         <button className="link agent-more" onClick={() => setAll(true)}>
           Show all {lines.length.toLocaleString()} lines

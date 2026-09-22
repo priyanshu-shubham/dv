@@ -8,6 +8,7 @@ import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import { ActionsPalette, ActionsSettings, runAction } from "./Actions.jsx";
+import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useHubActivity, useNotices } from "./Notices.jsx";
@@ -986,6 +987,28 @@ export default function App() {
     },
     [pushOverlay, openCode],
   );
+
+  // A path in what an agent or a comment says opens where a jump does. The
+  // files it can name are the repository's, read once as the page opens, or
+  // as Files lists them, with the diff's, which are always current.
+  const [pathFiles, setPathFiles] = useState(null);
+  useEffect(() => {
+    api.tree(AUTO).then((r) => setPathFiles(r.files), () => {});
+  }, []);
+  useEffect(() => {
+    if (!meta) return;
+    setPaths([...(repoFiles?.files || pathFiles || []), ...(diff?.files || []).map((f) => f.path)], [meta.root, meta.place]);
+  }, [meta, pathFiles, repoFiles, diff]);
+  useEffect(() => {
+    const onClick = (e) => {
+      const a = e.target.closest?.("a.path-link");
+      if (!a) return;
+      e.preventDefault();
+      goTo(a.dataset.path, Number(a.dataset.line) || 0);
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [goTo]);
 
   // Cmd/Ctrl+clicking an identifier resolves it to definitions, ranked by how
   // close each one is to the file it was clicked in. One opens straight away;

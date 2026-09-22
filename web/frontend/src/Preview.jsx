@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { ensureLanguage } from "./highlight.js";
 import { blockAt, isMarkdown, renderMarkdown } from "./markdown.js";
+import { usePathsVersion } from "./links.js";
 import { AttachButton, Composer, ThreadList } from "./Threads.jsx";
 import { cx, searchSeed } from "./util.js";
 import { IconEye } from "./icons.jsx";
@@ -25,7 +26,8 @@ export const asMedia = (entry) => !!entry?.media && entry.media !== SVG;
 export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }) {
   const [loaded, setLoaded] = useState(0);
   const image = useCallback((p) => api.mediaURL(p, scope), [scope]);
-  const { html, waiting } = useMemo(() => renderMarkdown(lines.join("\n"), path, image), [lines, path, image, loaded]);
+  const paths = usePathsVersion();
+  const { html, waiting } = useMemo(() => renderMarkdown(lines.join("\n"), path, image), [lines, path, image, loaded, paths]);
   useEffect(() => {
     for (const lang of waiting) ensureLanguage(lang, () => setLoaded((n) => n + 1));
   }, [waiting]);
@@ -35,7 +37,7 @@ export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }
     if (!a) return;
     // Left to the browser, a relative link would navigate dv's own page away.
     e.preventDefault();
-    if (a.dataset.path) onOpenFile?.(a.dataset.path, 0);
+    if (a.dataset.path) onOpenFile?.(a.dataset.path, Number(a.dataset.line) || 0);
     else e.currentTarget.querySelector("#" + CSS.escape("md-" + a.dataset.anchor))?.scrollIntoView({ block: "start" });
   };
 

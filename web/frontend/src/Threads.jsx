@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
+import { linkPaths, Markdown } from "./links.js";
 import { agentName, cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
 import { AgentIcon, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+const md = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
 
 // onAttach(thread, to), where given, sends a thread to a session's message
 // box; it is offered in the panel alone, where comments are handed over.
@@ -89,7 +90,7 @@ function Thread({ thread, onAction, onAttach, compact, ticked, onTick }) {
               }}
             />
           ) : (
-            <div className="markdown" dangerouslySetInnerHTML={{ __html: md.render(c.body) }} />
+            <Markdown md={md} text={c.body} className="markdown" />
           )}
           {/* A draft goes out with an answer, so there is nothing to reply to or resolve. */}
           {i === thread.comments.length - 1 && !replying && !editing && !thread.draft && (
