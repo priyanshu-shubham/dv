@@ -100,6 +100,9 @@ func (f *folder) Send(s string, m notify.Message) (string, error) {
 	if len(m.Images) > 0 {
 		said += fmt.Sprintf(" with %s", m.Images[0].Data)
 	}
+	for _, file := range m.Files {
+		said += fmt.Sprintf(" and %s: %s", file.Name, file.Data)
+	}
 	f.did(said)
 	return "m1", nil
 }
@@ -252,6 +255,12 @@ func TestRelay(t *testing.T) {
 	pictured.Message.Attachment[0].AttachmentDataRef.ResourceName = "abc"
 	chatSays(t, srv, pictured)
 	sessions.await(t, "s1: this one (via Google Chat) with picture abc")
+	// Any other file goes as a file; one from Drive, with nothing to fetch, not at all.
+	filed := event{Type: "MESSAGE", User: ada, Space: adaDM, Message: said("spaces/dm1/messages/u3b", "read these", "spaces/dm1/threads/u1")}
+	filed.Message.Attachment = []attachment{{ContentName: "notes.pdf", ContentType: "application/pdf"}, {ContentName: "Plan", ContentType: "application/vnd.google-apps.document"}}
+	filed.Message.Attachment[0].AttachmentDataRef.ResourceName = "pdf"
+	chatSays(t, srv, filed)
+	sessions.await(t, "s1: read these (via Google Chat) and notes.pdf: picture pdf")
 	if n := sessions.count("s1: and the lint (via Google Chat)"); n != 1 {
 		t.Fatalf("sent %d times", n)
 	}

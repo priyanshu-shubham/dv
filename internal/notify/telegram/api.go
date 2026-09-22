@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -108,8 +109,11 @@ func (b botAPI) download(ctx context.Context, token, id string) ([]byte, error) 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Telegram answered %s", resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 20<<20)) // all a bot can be given
+	return io.ReadAll(io.LimitReader(resp.Body, maxFetch))
 }
+
+// maxFetch is all Telegram gives a bot of a file.
+const maxFetch = 20 << 20
 
 // unreached is an error that has the token in it, in the URL, without it: it
 // is not for logs or pages.
@@ -141,13 +145,13 @@ type message struct {
 	Album    string      `json:"media_group_id"` // pictures sent together share one
 	Photo    []photoSize `json:"photo"`
 	Document *document   `json:"document"`
-	// What else a message can carry, which dv does not take.
-	Voice     any `json:"voice"`
-	Video     any `json:"video"`
-	VideoNote any `json:"video_note"`
-	Animation any `json:"animation"`
-	Audio     any `json:"audio"`
-	Sticker   any `json:"sticker"`
+	// Files Telegram sends as media of their own, which go as files too.
+	Voice     *document `json:"voice"`
+	Video     *document `json:"video"`
+	VideoNote *document `json:"video_note"`
+	Animation *document `json:"animation"`
+	Audio     *document `json:"audio"`
+	Sticker   any       `json:"sticker"` // which dv does not take
 
 	more []*message // the rest of an album, gathered on its first
 }
@@ -155,11 +159,23 @@ type message struct {
 // sent is whether the reader sent the message, rather than Telegram noting
 // something in the chat, a topic made, say.
 func (m *message) sent() bool {
-	return m.Text != "" || len(m.Photo) > 0 || m.Document != nil || m.other()
+	return m.Text != "" || len(m.Photo) > 0 || m.Document != nil || m.Sticker != nil || m.media() != nil
 }
 
-func (m *message) other() bool {
-	return m.Voice != nil || m.Video != nil || m.VideoNote != nil || m.Animation != nil || m.Audio != nil || m.Sticker != nil
+// media is the file a message carries other than a document, with the name
+// it goes by when Telegram gives it none.
+func (m *message) media() *document {
+	for _, d := range []struct {
+		doc  *document
+		name string
+	}{{m.Video, "video.mp4"}, {m.VideoNote, "video.mp4"}, {m.Animation, "animation.mp4"}, {m.Audio, "audio.mp3"}, {m.Voice, "voice.ogg"}} {
+		if d.doc != nil {
+			f := *d.doc
+			f.Name = cmp.Or(f.Name, d.name)
+			return &f
+		}
+	}
+	return nil
 }
 
 // A photo comes in several sizes, the smallest first.
@@ -173,6 +189,7 @@ type document struct {
 	FileID   string `json:"file_id"`
 	MimeType string `json:"mime_type"`
 	Size     int    `json:"file_size"`
+	Name     string `json:"file_name"` // a voice note's has none
 }
 
 type user struct {

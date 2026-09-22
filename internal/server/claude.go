@@ -168,9 +168,9 @@ func setHooks(on bool) error {
 }
 
 // Guarded keeps other web pages away from what can let Claude run a command.
-// A cross-origin POST can only carry JSON after a preflight, which dv never
-// grants, and a DNS rebinding attack arrives under a host name rather than
-// the address dv is reached at.
+// A cross-origin POST can only carry JSON, or raw bytes as an upload does,
+// after a preflight, which dv never grants, and a DNS rebinding attack arrives
+// under a host name rather than the address dv is reached at.
 func Guarded(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
@@ -181,7 +181,7 @@ func Guarded(h http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusForbidden, fmt.Errorf("dv answers on an address or localhost, not %q", r.Host))
 			return
 		}
-		if r.Method == http.MethodPost && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if ct := r.Header.Get("Content-Type"); r.Method == http.MethodPost && !strings.HasPrefix(ct, "application/json") && ct != "application/octet-stream" {
 			writeErr(w, http.StatusUnsupportedMediaType, fmt.Errorf("expected application/json"))
 			return
 		}

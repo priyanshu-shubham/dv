@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -119,7 +120,8 @@ func (r *Relay) onMessage(w http.ResponseWriter, ctx context.Context, e event) {
 		r.answer(w, e, err.Error())
 		return
 	}
-	ev := relay.Event{Kind: "message", Thread: as, Ref: m.Name, Text: text, Images: r.images(ctx, m), Shared: !e.Space.dm()}
+	ev := relay.Event{Kind: "message", Thread: as, Ref: m.Name, Text: text, Shared: !e.Space.dm()}
+	ev.Images, ev.Files = r.attachments(ctx, m)
 	if q := m.QuotedMessageMetadata; q != nil {
 		ev.ReplyTo = r.refOf(ctx, q.Name)
 	}
@@ -328,27 +330,30 @@ func (r *Relay) refOf(ctx context.Context, name string) string {
 	return spaceOf(name) + "/messages/" + m.ClientAssignedMessageID
 }
 
-// A message's pictures are handed on, so many of so large at most: they are
-// held in memory on their way.
+// A message's pictures and files are handed on, so many of so large at most:
+// they are held in memory on their way. One from Drive has no data to hand.
 const (
-	maxImages     = 5
-	maxImageBytes = 10 << 20
+	maxAttachments = 5
+	maxAttachBytes = 10 << 20
 )
 
-func (r *Relay) images(ctx context.Context, m *message) []relay.Image {
-	var out []relay.Image
+func (r *Relay) attachments(ctx context.Context, m *message) (images []relay.Image, files []relay.File) {
 	for _, a := range m.Attachment {
-		if !strings.HasPrefix(a.ContentType, "image/") || a.AttachmentDataRef.ResourceName == "" || len(out) == maxImages {
+		if a.AttachmentDataRef.ResourceName == "" || len(images)+len(files) == maxAttachments {
 			continue
 		}
 		b, err := r.chat.media(ctx, a.AttachmentDataRef.ResourceName)
 		if err != nil {
-			log.Printf("could not download a picture: %v", err)
+			log.Printf("could not download %s: %v", a.ContentName, err)
 			continue
 		}
-		out = append(out, relay.Image{Type: a.ContentType, Data: b})
+		if strings.HasPrefix(a.ContentType, "image/") {
+			images = append(images, relay.Image{Type: a.ContentType, Data: b, Name: a.ContentName})
+		} else {
+			files = append(files, relay.File{Name: cmp.Or(a.ContentName, "file"), Data: b})
+		}
 	}
-	return out
+	return images, files
 }
 
 // onTap hands a tap to the hub whose message it was, once it is known to be

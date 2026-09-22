@@ -153,6 +153,9 @@ func (f *fakeFolder) Send(s string, m notify.Message) (string, error) {
 	for _, img := range m.Images {
 		text += fmt.Sprintf(" [%s %s]", img.Type, img.Data)
 	}
+	for _, f := range m.Files {
+		text += fmt.Sprintf(" {%s %s}", f.Name, f.Data)
+	}
 	if m.Via != "Telegram" {
 		text += " (via " + m.Via + ")"
 	}
@@ -373,18 +376,26 @@ func TestTelegram(t *testing.T) {
 	sessions.await(t, "s1: what is this? [image/jpeg bytes of photos/large]")
 	bot.await(t, "setMessageReaction", seen)
 	picture(21, "g1", "", []photoSize{{"p1", 10}}, nil)
-	picture(22, "g1", "compare these", nil, &document{"p2", "image/png", 10})
+	picture(22, "g1", "compare these", nil, &document{FileID: "p2", MimeType: "image/png", Size: 10})
 	sessions.await(t, "s1: compare these [image/jpeg bytes of photos/p1] [image/png bytes of photos/p2]")
 	if c := bot.await(t, "setMessageReaction", seen); c.Params["message_id"] != 21.0 {
 		t.Fatalf("the album's reaction: %v", c.Params)
 	}
-	picture(23, "", "", nil, &document{"big", "image/png", maxPicture + 1})
-	if c := bot.await(t, "sendMessage", seen); !strings.Contains(shown(c), "Send it as a photo") {
-		t.Fatalf("a picture too big as a file: %v", c.Params)
-	}
-	picture(24, "", "", nil, &document{"notes", "application/pdf", 10})
-	if c := bot.await(t, "sendMessage", seen); !strings.HasPrefix(shown(c), "dv takes words and pictures") {
-		t.Fatalf("a file: %v", c.Params)
+	// Anything else goes as a file: a picture too big to send as one, too.
+	picture(23, "", "", nil, &document{FileID: "big", MimeType: "image/png", Size: maxPicture + 1, Name: "shot.png"})
+	sessions.await(t, "s1:  {shot.png bytes of photos/big}")
+	bot.await(t, "setMessageReaction", seen)
+	picture(24, "", "read this", nil, &document{FileID: "notes", MimeType: "application/pdf", Size: 10, Name: "notes.pdf"})
+	sessions.await(t, "s1: read this {notes.pdf bytes of photos/notes}")
+	bot.await(t, "setMessageReaction", seen)
+	voice := &message{ID: 25, Thread: int64(thread), Voice: &document{FileID: "v1", MimeType: "audio/ogg", Size: 10}, Date: time.Now().Unix()}
+	voice.Chat.ID = 42
+	bot.updates <- update{ID: 25, Message: voice}
+	sessions.await(t, "s1:  {voice.ogg bytes of photos/v1}")
+	bot.await(t, "setMessageReaction", seen)
+	picture(26, "", "", nil, &document{FileID: "huge", MimeType: "application/zip", Size: maxFetch + 1, Name: "all.zip"})
+	if c := bot.await(t, "sendMessage", seen); !strings.HasPrefix(shown(c), "all.zip is over the 20 MB") {
+		t.Fatalf("a file too big to fetch: %v", c.Params)
 	}
 	// Telegram's own note of a topic made, which has no words, is no message
 	// to answer; words outside a session's thread are.

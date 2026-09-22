@@ -3881,6 +3881,11 @@ button.ghost.agent-context {
   cursor: default;
 }
 
+.agent-chip.adding {
+  color: var(--fg-3);
+  animation: at-work 1.2s ease-in-out infinite;
+}
+
 .agent-chip-label:not(:disabled):hover,
 .agent-chip.on .agent-chip-label {
   color: var(--accent);

@@ -171,9 +171,9 @@ func (c *googleChat) media(ctx context.Context, resource string) ([]byte, error)
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, &apiError{resp.StatusCode, strings.TrimSpace(string(b))}
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
-	if len(b) > maxImageBytes {
-		return nil, errors.New("the picture is too large")
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachBytes+1))
+	if len(b) > maxAttachBytes {
+		return nil, errors.New("the file is too large")
 	}
 	return b, err
 }

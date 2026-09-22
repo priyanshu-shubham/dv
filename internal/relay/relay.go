@@ -82,15 +82,24 @@ type Event struct {
 	ReplyTo string  `json:"replyTo,omitempty"`
 	Text    string  `json:"text,omitempty"`
 	Images  []Image `json:"images,omitempty"`
+	Files   []File  `json:"files,omitempty"`
 	Shared  bool    `json:"shared,omitempty"`
 	// A tap's: the button's data, and the tap, to answer.
 	Data string `json:"data,omitempty"`
 	Tap  string `json:"tap,omitempty"`
 }
 
-// Image is a picture, of a media Type such as "image/png".
+// Image is a picture, of a media Type such as "image/png". Its Name is for
+// one the hub saves as a file instead: a kind or size an agent does not take.
 type Image struct {
 	Type string `json:"type"`
+	Data []byte `json:"data"`
+	Name string `json:"name,omitempty"`
+}
+
+// File is any other file sent, by its name.
+type File struct {
+	Name string `json:"name"`
 	Data []byte `json:"data"`
 }
 

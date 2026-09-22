@@ -9,6 +9,7 @@ package gchat
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"dv/internal/agent"
 	"dv/internal/notify"
 	"dv/internal/notify/chat"
 	"dv/internal/relay"
@@ -145,7 +147,15 @@ func (g *GChat) handle(ctx context.Context, cfg Config, e relay.Event) {
 	case "message":
 		in := chat.In{Thread: e.Thread, Ref: e.Ref, ReplyTo: e.ReplyTo, Text: e.Text, Shared: e.Shared}
 		for _, img := range e.Images {
-			in.Images = append(in.Images, notify.Image{Type: img.Type, Data: img.Data})
+			// One an agent does not take goes as a file, as from the page.
+			if (agent.Image{MediaType: img.Type, Data: img.Data}).Check() == nil {
+				in.Images = append(in.Images, notify.Image{Type: img.Type, Data: img.Data})
+			} else {
+				in.Files = append(in.Files, notify.File{Name: cmp.Or(img.Name, "image"), Data: img.Data})
+			}
+		}
+		for _, f := range e.Files {
+			in.Files = append(in.Files, notify.File{Name: f.Name, Data: f.Data})
 		}
 		g.conv.Said(ctx, in)
 	case "tap":

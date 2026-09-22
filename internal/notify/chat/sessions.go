@@ -20,6 +20,7 @@ type pick struct {
 	place   notify.Place
 	text    string
 	images  []notify.Image
+	files   []notify.File
 	// "folder", "here", "worktree", "branch"; "place", the folder of a session
 	// whose message said the rest; "change", "model", "effort", "shut"
 	step     string
@@ -227,13 +228,13 @@ func (c *Conversation) quickStart(ctx context.Context, in In) {
 		return
 	}
 	where, text := notify.ParseWhere(in.Text, places)
-	if text == "" && len(in.Images) == 0 {
+	if text == "" && len(in.Images) == 0 && len(in.Files) == 0 {
 		c.tell(ctx, in.Thread, "Say what the session is to do, after the colon.", nil)
 		return
 	}
 	d := c.center.Defaults()
 	p := pick{
-		text: text, images: in.Images, adopt: in.Thread, message: in.Ref, step: "place",
+		text: text, images: in.Images, files: in.Files, adopt: in.Thread, message: in.Ref, step: "place",
 		worktree: where.Worktree || d.Worktree && !where.Here, branch: where.Branch,
 	}
 	i := slices.IndexFunc(places, func(at notify.Place) bool { return at.Slug == d.Folder })
@@ -352,7 +353,7 @@ func branchFor(text string) string {
 // thread p.adopt, or else a thread of its own named for what it is to do
 // until it has a title.
 func (c *Conversation) startIn(ctx context.Context, thread string, at notify.Place, p pick) {
-	id, err := c.center.Start(at.Slug, notify.Message{Text: p.text, Images: p.images, Via: c.p.Via()})
+	id, err := c.center.Start(at.Slug, notify.Message{Text: p.text, Images: p.images, Files: p.files, Via: c.p.Via()})
 	if err != nil {
 		c.say(ctx, thread, "Could not start it: "+err.Error(), nil)
 		return

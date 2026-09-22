@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 
 	"dv/internal/agent"
 	"dv/internal/notify"
@@ -37,8 +40,19 @@ func (t talk) Send(session string, m notify.Message) (string, error) {
 		}
 		with = append(with, image)
 	}
-	return t.s.sendVia(session, "", m.Text, with, m.Via)
+	text := m.Text
+	for _, f := range m.Files {
+		name, err := t.s.save(f.Name, bytes.NewReader(f.Data))
+		if err != nil {
+			return "", fmt.Errorf("Could not save %s: %w", f.Name, err)
+		}
+		text = withContext(text, `<file path="`+attrEscaper.Replace(name)+`" />`)
+	}
+	return t.s.sendVia(session, "", text, with, m.Via)
 }
+
+// attrEscaper escapes as the page does, which reads the context back.
+var attrEscaper = strings.NewReplacer("&", "&amp;", `"`, "&quot;", "<", "&lt;", ">", "&gt;")
 
 func (t talk) Progress(session, message string) notify.Progress {
 	switch queued, busy := t.s.agent.Progress(session, message); {

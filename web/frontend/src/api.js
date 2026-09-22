@@ -205,6 +205,18 @@ export const api = {
   // agentPrompts is every message and command in a session, back to its start: { prompts: [item] }.
   agentPrompts: (id) => req(`/api/agent/sessions/${id}/prompts`),
   agentUnqueue: (id, message) => req(`/api/agent/sessions/${id}/messages/${message}/unqueue`, { method: "POST", body: "{}" }),
+  // agentUpload saves a file into the folder's root, beside any of the same
+  // name rather than over it: { path }.
+  agentUpload: async (file) => {
+    const res = await fetch(`${base}/api/agent/uploads?${new URLSearchParams({ name: file.name })}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || `${res.status} ${res.statusText}`);
+    return data;
+  },
   agentPromptImageURL: (id, message, n) => `${base}/api/agent/sessions/${id}/messages/${message}/images/${n}`,
 
   agentInterrupt: (id) => req(`/api/agent/sessions/${id}/interrupt`, { method: "POST", body: "{}" }),

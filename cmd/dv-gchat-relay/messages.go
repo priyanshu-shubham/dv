@@ -47,6 +47,7 @@ type user struct {
 }
 
 type attachment struct {
+	ContentName       string `json:"contentName"`
 	ContentType       string `json:"contentType"`
 	AttachmentDataRef struct {
 		ResourceName string `json:"resourceName"`

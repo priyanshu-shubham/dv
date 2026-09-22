@@ -67,12 +67,19 @@ type Session struct {
 type Message struct {
 	Text   string
 	Images []Image
+	Files  []File // saved into the session's folder, for the agent to read there
 	Via    string // the chat app, as the agent is told it: "Telegram"
 }
 
 // Image is a picture sent to a session, of a media Type such as "image/png".
 type Image struct {
 	Type string
+	Data []byte
+}
+
+// File is any other file sent to a session, by the name it was sent with.
+type File struct {
+	Name string
 	Data []byte
 }
 

@@ -351,12 +351,12 @@ async function readImage(file) {
   return imageOf(blob, file.name);
 }
 
-// imagesIn is the pictures a paste carries. Some browsers list a copied image
+// filesIn is the files a paste carries. Some browsers list a copied image
 // only among the items.
-function imagesIn(data) {
+function filesIn(data) {
   const files = [...data.files];
   if (!files.length) for (const it of data.items || []) if (it.kind === "file") files.push(it.getAsFile());
-  return files.filter((f) => f?.type.startsWith("image/"));
+  return files.filter(Boolean);
 }
 
 // Android's keyboard and its long-press Paste put only text in a plain text
@@ -383,7 +383,7 @@ function AddImages({ onFiles, onPaste }) {
       <button
         className="ghost composer-add"
         onClick={canReadClipboard() ? () => setOpen((o) => !o) : onFiles}
-        title="Add images - or paste or drop them in"
+        title="Add images or files - or paste or drop them in"
       >
         <IconPlus size={15} />
       </button>
@@ -560,6 +560,10 @@ export default function AgentView({
   const [imagesBy, setImagesBy] = useState({});
   const images = imagesBy[id || ""] || NO_IMAGES;
   const setImages = (change, to = id || "") => setImagesBy((by) => ({ ...by, [to]: change(by[to] || NO_IMAGES) }));
+  // Files still on their way into the folder: { key, name, to }. A message
+  // waits for them, or it would go without.
+  const [uploads, setUploads] = useState([]);
+  const uploadsHere = uploads.filter((u) => u.to === (id || ""));
   // Sent from here, not yet in the conversation: { text, uuid, seen }, seen
   // being how many prompts already said the same, so a repeat still waits.
   const [pending, setPending] = useState([]);
@@ -911,6 +915,7 @@ export default function AgentView({
   // one made for it.
   const send = async () => {
     if (lost) return; // the note over the box says why; the draft stays
+    if (uploadsHere.length) return setError("Wait for the files being added.");
     if (draft.startsWith("!")) return runShell(draft.slice(1).trim());
     // A command goes alone; what was added and the pictures wait in the box for the next message.
     const command = commandOf(draft, commands);
@@ -1012,13 +1017,28 @@ export default function AgentView({
     return () => clearTimeout(t);
   }, [justSent]);
 
-  const addImages = async (files) => {
+  // addFiles sends a picture Claude can look at as one. Anything else - or a
+  // picture too big to send - is saved into the folder and goes as a file the
+  // agent reads there.
+  const addFiles = async (files) => {
+    const to = id || "";
     for (const file of files) {
+      if (IMAGE_TYPES.includes(file.type)) {
+        try {
+          const img = await readImage(file);
+          setImages((list) => [...list, img], to);
+          continue;
+        } catch {}
+      }
+      const up = { key: newUUID(), name: file.name, to };
+      setUploads((list) => [...list, up]);
       try {
-        const img = await readImage(file);
-        setImages((list) => [...list, img]);
+        const a = { kind: "file", file: (await api.agentUpload(file)).path };
+        onRestoreAttached(to, [{ ...a, key: attachKey(a) }]);
       } catch (e) {
         setError(e.message);
+      } finally {
+        setUploads((list) => list.filter((x) => x !== up));
       }
     }
   };
@@ -1420,7 +1440,7 @@ export default function AgentView({
           if (!e.dataTransfer.files.length) return;
           e.preventDefault();
           setDropping(false);
-          addImages([...e.dataTransfer.files]);
+          addFiles([...e.dataTransfer.files]);
         }}
       >
         {suggestions.length > 0 && (
@@ -1442,7 +1462,7 @@ export default function AgentView({
             ))}
           </div>
         )}
-        {(attached.length > 0 || images.length > 0) && (
+        {(attached.length > 0 || images.length > 0 || uploadsHere.length > 0) && (
           <div className={cx("agent-attached", (command || shell) && "held")}>
             {images.map((img) => (
               <span className="agent-image-chip" key={img.key} title={img.name || "Image"}>
@@ -1466,6 +1486,11 @@ export default function AgentView({
                 />
               );
             })}
+            {uploadsHere.map((u) => (
+              <span className="agent-chip adding" key={u.key} title={`Saving ${u.name} into the folder`}>
+                <span className="agent-chip-label">{u.name}</span>
+              </span>
+            ))}
             {attached.length > 1 && (
               <button className="link" onClick={onClearAttached}>
                 Clear
@@ -1483,10 +1508,10 @@ export default function AgentView({
             setDraft(e.target.value);
           }}
           onPaste={(e) => {
-            const files = imagesIn(e.clipboardData);
+            const files = filesIn(e.clipboardData);
             if (!files.length) return;
             if (!e.clipboardData.getData("text/plain")) e.preventDefault();
-            addImages(files);
+            addFiles(files);
           }}
           onKeyDown={(e) => {
             // With nothing to select, Shift+arrows go on to step the modes.
@@ -1540,16 +1565,15 @@ export default function AgentView({
         <div className="composer-bar">
           <AddImages
             onFiles={() => fileRef.current.click()}
-            onPaste={() => pasteImages().then((files) => (files.length ? addImages(files) : setError("There is no image to paste."))).catch((e) => setError(e.message))}
+            onPaste={() => pasteImages().then((files) => (files.length ? addFiles(files) : setError("There is no image to paste."))).catch((e) => setError(e.message))}
           />
           <input
             ref={fileRef}
             type="file"
-            accept={IMAGE_TYPES.join(",")}
             multiple
             hidden
             onChange={(e) => {
-              addImages([...e.target.files]);
+              addFiles([...e.target.files]);
               e.target.value = "";
             }}
           />

@@ -46,6 +46,7 @@ type In struct {
 	ReplyTo string // the message it answers, where the app says
 	Text    string
 	Images  []notify.Image
+	Files   []notify.File
 	// Shared is written where others read it too, as a Google Chat space.
 	Shared bool
 }
@@ -246,7 +247,7 @@ const Help = `dv tells you here what its agents want and have done, each session
 
 Write what a session is to do to start one, in the folder set in dv's Settings. Words before a colon say where instead: "notes: …" in the folder notes, "wt: …" in a new worktree, "notes wt fix/login: …" in one of notes on that branch, "here: …" in the folder itself.
 
-In a session's thread, write to send it a message, pictures and all. /stop stops its turn, /last shows what it said last, and /model picks its model.
+In a session's thread, write to send it a message, pictures and files and all: files are saved in its folder. /stop stops its turn, /last shows what it said last, and /model picks its model.
 
 /sessions lists the sessions open in dv, to open a thread for one, and /new starts one, asking where.`
 
@@ -309,7 +310,7 @@ func (c *Conversation) Said(ctx context.Context, in In) {
 		c.askModel(ctx, in.Thread, folder, session)
 	default:
 		// Any other command is the agent's: /compact, say.
-		id, err := c.center.Send(folder, session, notify.Message{Text: in.Text, Images: in.Images, Via: c.p.Via()})
+		id, err := c.center.Send(folder, session, notify.Message{Text: in.Text, Images: in.Images, Files: in.Files, Via: c.p.Via()})
 		if err != nil {
 			here(err.Error())
 			return

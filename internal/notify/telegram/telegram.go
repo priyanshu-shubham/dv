@@ -9,6 +9,7 @@
 package telegram
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"dv/internal/agent"
 	"dv/internal/notify"
 	"dv/internal/notify/chat"
 	"dv/internal/secret"
@@ -174,12 +176,12 @@ func (t *Telegram) said(ctx context.Context, cfg Config, m *message) {
 	if m.Chat.ID != cfg.Chat || cfg.Chat == 0 || !m.sent() || time.Unix(m.Date, 0).Before(t.start.Add(-staleAfter)) {
 		return
 	}
-	text, images, err := t.gather(ctx, cfg, m)
+	in, err := t.gather(ctx, cfg, m)
 	if err != nil {
 		t.post(ctx, cfg, m.Thread, html.EscapeString(err.Error()), nil)
 		return
 	}
-	in := chat.In{Thread: id(m.Thread), Ref: id(m.ID), Text: text, Images: images}
+	in.Thread, in.Ref = id(m.Thread), id(m.ID)
 	if m.ReplyTo != nil {
 		in.ReplyTo = id(m.ReplyTo.ID)
 	}
@@ -222,52 +224,72 @@ func (t *Telegram) connect(ctx context.Context, m *message) {
 // Most of a picture an agent takes: 5 MB, once in base64.
 const maxPicture = 5 << 20 / 4 * 3
 
-// gather is a message's words, and the pictures of it or of the album it
-// starts, fetched from Telegram.
-func (t *Telegram) gather(ctx context.Context, cfg Config, m *message) (string, []notify.Image, error) {
+// gather is a message's words, and the pictures and files of it or of the
+// album it starts, fetched from Telegram.
+func (t *Telegram) gather(ctx context.Context, cfg Config, m *message) (chat.In, error) {
+	var in chat.In
 	var words []string
-	var images []notify.Image
 	for _, p := range append([]*message{m}, m.more...) {
 		for _, w := range []string{p.Text, p.Caption} {
 			if w != "" {
 				words = append(words, w)
 			}
 		}
-		fileID, kind, err := p.picture()
-		if err == nil && fileID != "" {
-			var data []byte
-			if data, err = t.api.download(ctx, cfg.Token, fileID); err != nil {
-				err = fmt.Errorf("Could not fetch the picture from Telegram: %w", err)
-			}
-			images = append(images, notify.Image{Type: kind, Data: data})
-		}
+		a, err := p.attachment()
 		if err != nil {
-			return "", nil, err
+			return in, err
+		}
+		if a == nil {
+			continue
+		}
+		data, err := t.api.download(ctx, cfg.Token, a.FileID)
+		if err != nil {
+			return in, fmt.Errorf("Could not fetch %s from Telegram: %w", cmp.Or(a.Name, "the picture"), err)
+		}
+		if a.picture {
+			in.Images = append(in.Images, notify.Image{Type: a.MimeType, Data: data})
+		} else {
+			in.Files = append(in.Files, notify.File{Name: a.Name, Data: data})
 		}
 	}
-	return strings.Join(words, "\n\n"), images, nil
+	in.Text = strings.Join(words, "\n\n")
+	return in, nil
 }
 
-// picture is the file of the picture a message has, and its kind; none for
-// words alone. What else it has, dv does not take.
-func (m *message) picture() (fileID, kind string, err error) {
-	switch d := m.Document; {
+// sent is what goes with a message's words: a picture an agent looks at as
+// one, or any other file, saved for it to read.
+type sent struct {
+	document
+	picture bool
+}
+
+// attachment is the picture or file a message has; none for words alone.
+func (m *message) attachment() (*sent, error) {
+	d := m.Document
+	if d == nil {
+		d = m.media()
+	}
+	switch {
 	case len(m.Photo) > 0:
 		// Photos are JPEG, in their largest size an agent takes.
-		for i := len(m.Photo) - 1; i > 0; i-- {
-			if m.Photo[i].Size <= maxPicture {
-				return m.Photo[i].FileID, "image/jpeg", nil
-			}
+		i := len(m.Photo) - 1
+		for i > 0 && m.Photo[i].Size > maxPicture {
+			i--
 		}
-		return m.Photo[0].FileID, "image/jpeg", nil
-	case d != nil && strings.HasPrefix(d.MimeType, "image/") && d.Size > maxPicture:
-		return "", "", errors.New("That picture is too big to send as a file. Send it as a photo, which Telegram makes smaller.")
-	case d != nil && strings.HasPrefix(d.MimeType, "image/"):
-		return d.FileID, d.MimeType, nil
-	case d != nil || m.other():
-		return "", "", errors.New("dv takes words and pictures here: not voice notes, videos or other files.")
+		return &sent{document{FileID: m.Photo[i].FileID, MimeType: "image/jpeg"}, true}, nil
+	case m.Sticker != nil:
+		return nil, errors.New("dv takes words, pictures and files here, not stickers.")
+	case d == nil:
+		return nil, nil
+	case d.Size > maxFetch:
+		return nil, fmt.Errorf("%s is over the %d MB Telegram lets dv fetch.", cmp.Or(d.Name, "That file"), maxFetch>>20)
+	case agent.ImageTypes[d.MimeType] && d.Size <= maxPicture:
+		return &sent{*d, true}, nil
 	}
-	return "", "", nil
+	// A picture too big to send goes as a file, as it does from the page.
+	f := *d
+	f.Name = cmp.Or(f.Name, "file")
+	return &sent{f, false}, nil
 }
 
 // introduce tells Telegram the bot's commands, for the menu its apps show,
