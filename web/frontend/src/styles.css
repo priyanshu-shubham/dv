@@ -614,6 +614,28 @@ button.headref:hover {
   color: var(--del);
 }
 
+.headref-menu .model-name.mono {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headref-menu .model-list button:disabled {
+  color: var(--fg-3);
+  cursor: default;
+}
+
+.headref-menu .model-list button:disabled:hover {
+  background: none;
+}
+
+.headref-filter {
+  width: calc(100% - 8px);
+  margin: 0 4px 4px;
+  font: var(--fs-xs) var(--font-mono);
+}
+
 /* Coloured as GitHub colours a pull request's state. */
 .pr-chip {
   display: inline-flex;

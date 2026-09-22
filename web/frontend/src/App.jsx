@@ -8,6 +8,7 @@ import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import { ActionsPalette, ActionsSettings, runAction } from "./Actions.jsx";
+import { BranchPalette } from "./Branches.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
@@ -1131,6 +1132,7 @@ export default function App() {
       note: "The comments in the review",
       run: () => (phone ? setPanel("comments") : setCommentsOpen(true)),
     },
+    meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
     { id: "settings", name: "Open settings", note: "Also the , key", run: () => openOverlay({ type: "settings" }) },
     boot.base && { id: "hub", name: "Back to the hub", note: "Also Alt+H", run: () => (location.href = "/") },
   ].filter(Boolean);
@@ -1890,6 +1892,7 @@ export default function App() {
       {overlay?.type === "actions" && (
         <ActionsPalette meta={meta} session={agentId} extra={pageActions} onRun={doAction} onEdit={() => openOverlay({ type: "settings", tab: "actions" })} onClose={closeOverlay} />
       )}
+      {overlay?.type === "branch" && <BranchPalette meta={meta} onDone={(msg) => (closeOverlay(), say(msg))} onClose={closeOverlay} />}
       {overlay?.type === "settings" && (
         <SettingsOverlay
           theme={theme}

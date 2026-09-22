@@ -74,6 +74,10 @@ export const api = {
   version: () => req("/api/version"),
   // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
   pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
+  // canSwitch: { blocked, createBlocked, branches, elsewhere }, each blocked the reason it can't be done now.
+  canSwitch: () => req("/api/switch"),
+  // switchTo checks out a local branch, refused where anything could be lost, or with create makes it at HEAD: { head }.
+  switchTo: (branch, create = false) => req("/api/switch", { method: "POST", body: JSON.stringify({ branch, create }) }),
   // runAction sends an action's prompt, to its session or a new one: { session }.
   runAction: (action) => req("/api/actions/run", { method: "POST", body: JSON.stringify(action) }),
   // actionsRunning: { running: [{ id, name, started }] }, the command actions under way.

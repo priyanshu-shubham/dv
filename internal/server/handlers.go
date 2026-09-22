@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime"
 	"net/http"
@@ -386,6 +387,58 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "pulled": n})
+}
+
+// switchBlocker is gitx's, or a session at work here, whose edits a switch
+// would land on the wrong branch.
+func (s *Server) switchBlocker() string {
+	if why := s.repo.SwitchBlocker(); why != "" {
+		return why
+	}
+	for _, se := range s.agent.Sessions() {
+		if se.Busy {
+			return "a session is working here"
+		}
+	}
+	return ""
+}
+
+// handleCanSwitch is whether a branch can be checked out or made now: {
+// blocked, createBlocked, branches, elsewhere }, with the branches other
+// worktrees have.
+func (s *Server) handleCanSwitch(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"blocked":       s.switchBlocker(),
+		"createBlocked": s.repo.CreateBlocker(),
+		"branches":      s.repo.Branches(),
+		"elsewhere":     s.repo.Elsewhere(),
+	})
+}
+
+// handleSwitch checks out { branch }, when nothing would be lost to it, or
+// with { create } makes it at HEAD, which a working session does not stop.
+func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Branch string `json:"branch"`
+		Create bool   `json:"create"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	var err error
+	if body.Create {
+		err = s.repo.CreateBranch(body.Branch)
+	} else if why := s.switchBlocker(); why != "" {
+		err = errors.New(why)
+	} else {
+		err = s.repo.Switch(body.Branch)
+	}
+	if err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"head": s.repo.Head()})
 }
 
 // handlePR is the checked-out branch's pull request: { pr }, null for none.

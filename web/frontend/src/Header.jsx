@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { boot } from "./boot.js";
+import { blockedNote, branchRows, switchDone, useBranchChoices } from "./Branches.jsx";
 import { cx, modKey, useDismiss } from "./util.js";
 import {
   IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconFile, IconKeyboard, IconMenu, IconPin, IconPlus, IconSearch, IconSettings, IconUndo,
@@ -92,55 +93,80 @@ export function BranchRow({ meta, pr }) {
   );
 }
 
-// HeadRef is the branch in the bar; with a remote to pull from it opens on
-// pulling it, and main when on another. The outcome shows in the menu, as
-// the diff follows the new HEAD on its own.
+const SWITCH_SHOWN = 8;
+
+// HeadRef is the branch in the bar. It opens on pulling it, and main when on
+// another, with a remote to pull from; and on switching to another branch,
+// which the server allows only with nothing to lose, or making one at HEAD.
+// Outcomes show in the menu, as the diff follows the new HEAD on its own.
 function HeadRef({ meta }) {
   const [open, setOpen] = useState(false);
-  const [state, setState] = useState(null); // { busy } | { done } | { error }
+  const [state, setState] = useState(null); // { busy, doing } | { done } | { error }
+  const [filter, setFilter] = useState("");
   const ref = useDismiss(open, () => setOpen(false));
   const { branch, sha, subject } = meta.head;
   const trunk = meta.defaultBranch && meta.defaultBranch !== branch && meta.branches?.includes(meta.defaultBranch) ? meta.defaultBranch : "";
-  const label = (
-    <>
-      <IconBranch size={13} />
-      <span>{branch || sha}</span>
-    </>
-  );
-  if (!meta.remote || (!branch && !trunk)) {
-    return (
-      <span className="headref" title={subject}>
-        {label}
-      </span>
-    );
-  }
-  const pull = (main) => {
-    setState({ busy: true });
-    api.pull(main).then(
-      ({ branch, pulled }) => setState({ done: pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}.` : `${branch} is up to date.` }),
-      (e) => setState({ error: e.message }),
-    );
+  const pulls = meta.remote && (branch || trunk);
+  const can = useBranchChoices(open, meta.head);
+
+  const run = (doing, p, done) => {
+    setState({ busy: true, doing });
+    p.then((r) => setState({ done: done(r) }), (e) => setState({ error: e.message }));
   };
+  const pull = (main) =>
+    run("Fetching…", api.pull(main), ({ branch, pulled }) => (pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}.` : `${branch} is up to date.`));
+  const switchTo = (row) => {
+    if (row.off || state?.busy) return;
+    run(row.create ? `Making ${row.branch}…` : `Switching to ${row.branch}…`, api.switchTo(row.branch, row.create), () => (setFilter(""), switchDone(row) + "."));
+  };
+  const rows = branchRows(can, meta.branches, branch, filter, SWITCH_SHOWN);
+  const note = blockedNote(can);
   return (
     <span className="model-menu headref-menu" ref={ref}>
-      <button className="headref" title={subject} onClick={() => (setOpen((o) => !o), state?.busy || setState(null))}>
-        {label}
+      <button className="headref" title={subject} onClick={() => (setOpen((o) => !o), state?.busy || setState(null), setFilter(""))}>
+        <IconBranch size={13} />
+        <span>{branch || sha}</span>
       </button>
       {open && (
         <div className="model-list">
-          {branch && (
+          {pulls && branch && (
             <button disabled={state?.busy} onClick={() => pull(false)}>
               <span className="model-name">Pull {branch}</span>
             </button>
           )}
-          {trunk && (
+          {pulls && trunk && (
             <button disabled={state?.busy} onClick={() => pull(true)}>
               <span className="model-name">Update {trunk}</span>
             </button>
           )}
-          <div className={cx("model-note", "headref-note", state?.error && "del")}>
-            {state?.busy ? "Fetching…" : state?.done || state?.error || "Only when it fast-forwards."}
-          </div>
+          <div className="scope-sep">Switch to</div>
+          <input
+            className="headref-filter"
+            value={filter}
+            placeholder="Find or name a new branch"
+            autoFocus
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter" && rows.length) switchTo(rows[0]);
+            }}
+          />
+          {rows.map((r) => (
+            <button
+              key={(r.create ? "+" : "") + r.branch}
+              disabled={r.off || state?.busy}
+              title={can?.elsewhere?.includes(r.branch) ? "Checked out in another worktree" : r.create ? "A new branch at HEAD" : ""}
+              onClick={() => switchTo(r)}
+            >
+              <span className="model-name mono">{r.create ? `Create ${r.branch}` : r.branch}</span>
+            </button>
+          ))}
+          {note && <div className="model-note headref-note">{note}</div>}
+          {(state || pulls) && (
+            <div className={cx("model-note", "headref-note", state?.error && "del")}>
+              {state?.busy ? state.doing : state?.done || state?.error || "Pulls only when it fast-forwards."}
+            </div>
+          )}
         </div>
       )}
     </span>

@@ -86,20 +86,24 @@ func (r *Repo) isAncestor(a, b string) bool {
 }
 
 // checkedOut is the worktree ref is checked out in, "" for none.
-func (r *Repo) checkedOut(ref string) string {
+func (r *Repo) checkedOut(ref string) string { return r.checkouts()[ref] }
+
+// checkouts maps each branch ref checked out in a worktree to its directory.
+func (r *Repo) checkouts() map[string]string {
 	out, err := r.run("worktree", "list", "--porcelain")
 	if err != nil {
-		return ""
+		return nil
 	}
+	refs := map[string]string{}
 	var dir string
 	for _, l := range strings.Split(out, "\n") {
 		if p, ok := strings.CutPrefix(l, "worktree "); ok {
 			dir = p
-		} else if l == "branch "+ref {
-			return dir
+		} else if ref, ok := strings.CutPrefix(l, "branch "); ok {
+			refs[ref] = dir
 		}
 	}
-	return ""
+	return refs
 }
 
 // gitIn runs git for the reader to see its failure: the error is what git
