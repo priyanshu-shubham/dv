@@ -18,7 +18,7 @@ type Candidate struct {
 	Why   string `json:"why,omitempty"` // "same file", "same directory", "nearby"
 }
 
-// Resolution is what a double-click on an identifier gets back. Source says
+// Resolution is what a Cmd/Ctrl+click on an identifier gets back. Source says
 // how the answers were found, so the UI can be honest about whether it is
 // showing indexed definitions or its best guess from a scan:
 //

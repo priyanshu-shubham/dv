@@ -1892,6 +1892,15 @@ button.headref:hover {
   min-width: 0;
 }
 
+/* Cmd/Ctrl held over a name: what a click would open. */
+.jumping .code {
+  cursor: pointer;
+}
+
+::highlight(jump) {
+  text-decoration: underline;
+}
+
 .wd {
   border-radius: 2px;
   padding: 1px 0;

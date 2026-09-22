@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { charWidth, cx, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
+import { charWidth, cx, isMac, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
 import { asMedia, MarkdownDocument, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
@@ -426,7 +426,7 @@ export function DiffBody({
     };
     const onMouseUp = (e) => {
       if (drag.current) return; // the gutter drag has already claimed this
-      if (e.detail === 2) return; // a double-click is go-to-definition
+      if (e.detail === 2) return; // a double-clicked word is to copy, not to comment on
       if (e.target.closest?.(".row-threads")) return; // selecting inside a comment
       commentOnSelection();
     };
@@ -1101,9 +1101,9 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
       </div>
       <code
         className="code"
-        onDoubleClick={() => {
-          if (lastPointer === "touch") return; // DiffBody's double tap
-          const word = selectedIdentifier();
+        onClick={(e) => {
+          if (!jumpKey(e)) return;
+          const word = identifierAt(e.clientX, e.clientY);
           if (word) ctx.onSymbol(word, ctx.path);
         }}
         dangerouslySetInnerHTML={{ __html: body || "&nbsp;" }}
@@ -1118,14 +1118,6 @@ function cellOf(node) {
   return el?.closest?.("[data-line][data-side]") || null;
 }
 
-// selectedIdentifier reads the word a double-click just selected, which is what
-// go-to-definition looks up.
-function selectedIdentifier() {
-  const sel = window.getSelection();
-  const text = sel ? sel.toString().trim() : "";
-  return IDENTIFIER.test(text) ? text : "";
-}
-
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 const SELECTION_SETTLE_MS = 800;
 const DOUBLE_TAP_MS = 350;
@@ -1135,16 +1127,53 @@ const DOUBLE_TAP_MS = 350;
 let lastPointer = "mouse";
 window.addEventListener("pointerdown", (e) => (lastPointer = e.pointerType), true);
 
-// identifierAt is the word under a point, as a double tap names it.
-function identifierAt(x, y) {
-  const range = document.caretRangeFromPoint?.(x, y);
-  const node = range?.startContainer;
-  if (node?.nodeType !== Node.TEXT_NODE) return "";
+// Go-to-definition is Cmd+click on a Mac, where Ctrl+click is the right
+// button, and Ctrl+click elsewhere, as in an editor.
+const jumpKey = (e) => (isMac ? e.metaKey : e.ctrlKey);
+
+// wordAt is the range of the identifier under a point in code, null for none.
+function wordAt(x, y) {
+  let node, offset;
+  if (document.caretRangeFromPoint) {
+    const r = document.caretRangeFromPoint(x, y);
+    [node, offset] = [r?.startContainer, r?.startOffset];
+  } else {
+    const p = document.caretPositionFromPoint?.(x, y);
+    [node, offset] = [p?.offsetNode, p?.offset];
+  }
+  if (node?.nodeType !== Node.TEXT_NODE || !node.parentElement.closest(".code")) return null;
   const text = node.textContent;
-  let start = range.startOffset;
+  let start = offset;
   let end = start;
   while (start > 0 && /[\w$]/.test(text[start - 1])) start--;
   while (end < text.length && /[\w$]/.test(text[end])) end++;
-  const word = text.slice(start, end);
-  return IDENTIFIER.test(word) ? word : "";
+  if (!IDENTIFIER.test(text.slice(start, end))) return null;
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  return range;
 }
+
+// identifierAt is the word under a point, as a double tap or Cmd/Ctrl+click
+// names it.
+function identifierAt(x, y) {
+  return wordAt(x, y)?.toString() || "";
+}
+
+// While Cmd/Ctrl is held, the name under the pointer is underlined, as an
+// editor shows what a click would open.
+let pointer = null;
+let jumping = false;
+const showJump = (e) => {
+  const range = jumpKey(e) && pointer && wordAt(pointer.x, pointer.y);
+  if (!range && !jumping) return;
+  jumping = !!range;
+  document.documentElement.classList.toggle("jumping", jumping);
+  if (typeof Highlight === "undefined") return;
+  if (range) CSS.highlights.set("jump", new Highlight(range));
+  else CSS.highlights.delete("jump");
+};
+window.addEventListener("mousemove", (e) => ((pointer = { x: e.clientX, y: e.clientY }), showJump(e)), { passive: true });
+window.addEventListener("keydown", showJump);
+window.addEventListener("keyup", showJump);
+window.addEventListener("blur", () => showJump({}));

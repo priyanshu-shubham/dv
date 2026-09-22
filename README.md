@@ -188,7 +188,8 @@ matches a file or folder name anywhere, one with a slash is anchored at the
 repository root, and a folder takes everything inside it.
 
 **Go to definition** is built into dv, from the files git tracks, with nothing
-to install. It knows Go, JavaScript and TypeScript, Python, Rust, Ruby, Java,
+to install: Cmd+click a name on a Mac, Ctrl+click elsewhere, or double tap it
+on a phone. It knows Go, JavaScript and TypeScript, Python, Rust, Ruby, Java,
 Kotlin, Scala, C#, C, C++, Objective-C, PHP, shell, SQL, Protocol Buffers,
 Terraform and HCL, CSS, Elixir, Lua and Swift, plus Makefile targets and
 Markdown headings.

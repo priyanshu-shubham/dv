@@ -986,7 +986,7 @@ export default function App() {
     [pushOverlay, openCode],
   );
 
-  // Double-clicking an identifier resolves it to definitions, ranked by how
+  // Cmd/Ctrl+clicking an identifier resolves it to definitions, ranked by how
   // close each one is to the file it was clicked in. One opens straight away;
   // otherwise the search comes up with the candidates over the word's uses.
   const onSymbol = useCallback(

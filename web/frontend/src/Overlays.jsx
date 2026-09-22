@@ -195,7 +195,7 @@ const DEFS_SHOWN = 5;
 
 // SearchPanel finds a name or text anywhere in the repository: definitions from
 // the symbol index first, then the lines that contain it, grouped by file. A
-// double-clicked identifier that did not resolve to exactly one definition
+// Cmd/Ctrl+clicked identifier that did not resolve to exactly one definition
 // opens it seeded with its candidates, the text narrowed to the whole word.
 export function SearchPanel({ initialQuery = "", seed, source, from = "", opts = {}, onOpen, onClose, onBack, backTo }) {
   const [query, setQuery] = useState(initialQuery);
@@ -1246,7 +1246,7 @@ export function HelpOverlay({ onClose }) {
           [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone)"],
         ]
       : []),
-    ["double-click", "Jump to a symbol's definition, or search its uses"],
+    [`${modKey}+click`, "Jump to a symbol's definition, or search its uses (double tap on a phone)"],
     ["Alt+Left", "Back to the previous definition, or file in Files"],
     ["Alt+Right", "Forward again, in Files"],
     ["select code", "Comment on the selected lines"],
