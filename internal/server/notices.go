@@ -82,8 +82,19 @@ func (s *Server) raiseNotices(ctx context.Context) {
 				s.notices.Settle(old, "")
 			}
 			n := s.doneNotice(a)
+			act, ran := s.takeAction(id)
+			failed := ran && s.agent.Failed(id)
+			if ran && failed {
+				n.Title = act.name + " did not finish"
+			} else if ran {
+				n.Title = act.name + " is done"
+			}
 			done[id] = n.ID
 			s.notices.Raise(n)
+			// One that failed stays, for the reader to see to.
+			if act.close && !failed {
+				s.agent.SetOpen(id, false)
+			}
 		}
 
 		select {
@@ -111,11 +122,15 @@ func agentName(via string) string {
 	return "Claude"
 }
 
-func (s *Server) doneNotice(a agent.Activity) notify.Notice {
+func noticeID() string {
 	var b [12]byte
 	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+func (s *Server) doneNotice(a agent.Activity) notify.Notice {
 	n := notify.Notice{
-		ID: hex.EncodeToString(b[:]), Kind: notify.Done, Session: a.ID, Agent: a.Agent,
+		ID: noticeID(), Kind: notify.Done, Session: a.ID, Agent: a.Agent,
 		Title: agentName(a.Agent) + " finished", Where: a.Title, Body: a.Last,
 	}
 	if reply := s.agent.Reply(a.ID); reply != "" {

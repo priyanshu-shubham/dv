@@ -7,6 +7,7 @@ import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
+import { ActionsPalette, ActionsSettings, runAction } from "./Actions.jsx";
 import AgentView, { attachKey } from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useHubActivity, useNotices } from "./Notices.jsx";
@@ -18,7 +19,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, isFindKey, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
@@ -1089,6 +1090,62 @@ export default function App() {
     [agent.sessions, agentId, setAgentId, loadSessions],
   );
 
+  // An action run from outside the Agent view, or in a session of its own,
+  // happens out of sight, so the page says it went.
+  const doAction = useCallback(
+    (a) => {
+      closeOverlay();
+      if (a.builtin) {
+        api.pull(a.builtin === "main").then(
+          ({ branch, pulled }) => say(pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}` : `${branch} is up to date`),
+          (e) => say(`Could not ${a.name.toLowerCase()}`, e.message),
+        );
+        return;
+      }
+      if (a.kind === "command") {
+        runAction(a).then(
+          () => say(`${a.name} started`, "You are told how it ends; Alt+A lists it while it runs."),
+          (e) => say(`Could not run ${a.name}`, e.message),
+        );
+        return;
+      }
+      runAction(a, agentId).then(
+        ({ session }) => {
+          const open = {
+            label: "Open",
+            primary: true,
+            opens: true,
+            run: () => {
+              setPromptOpen(false);
+              setPanel(null);
+              setAgentId(session);
+              switchMode("agent");
+            },
+          };
+          if (a.where === "new") say(`${a.name} started`, "In a new session. You are told when it is done.", [open]);
+          else if (mode !== "agent") say(`${a.name} sent`, "To the session open in the Agent view.", [open]);
+          loadSessions();
+        },
+        (e) => say(`Could not run ${a.name}`, e.message),
+      );
+    },
+    [agentId, mode, closeOverlay, loadSessions, setAgentId, switchMode],
+  );
+  // Alt+A lists the actions, from the message box too; Cmd/Ctrl+Shift+P as
+  // well, where the browser leaves it to the page.
+  useEffect(() => {
+    const onKey = (e) => {
+      const alt = e.code === "KeyA" && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey;
+      const palette = e.code === "KeyP" && e.shiftKey && !e.altKey && (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
+      if (!alt && !palette) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      openOverlay({ type: "actions" });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [openOverlay]);
+
   const elsewhere = useHubActivity();
   const notices = useNotices({
     looking: mode === "agent" ? agentId : null,
@@ -1482,6 +1539,7 @@ export default function App() {
         bellOn={promptOpen}
         update={update}
         pr={pr}
+        onActions={() => openOverlay({ type: "actions" })}
         comments={threads.filter((t) => !t.resolved).length}
         commentsOn={showComments}
         onComments={() => (phone ? setPanel((p) => (p === "comments" ? null : "comments")) : setCommentsOpen((o) => !o))}
@@ -1783,6 +1841,9 @@ export default function App() {
         />
       )}
       {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
+      {overlay?.type === "actions" && (
+        <ActionsPalette meta={meta} session={agentId} onRun={doAction} onEdit={() => openOverlay({ type: "settings", tab: "actions" })} onClose={closeOverlay} />
+      )}
       {overlay?.type === "settings" && (
         <SettingsOverlay
           theme={theme}
@@ -1803,6 +1864,8 @@ export default function App() {
           onClose={closeOverlay}
           working={[activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length}
           update={update}
+          actions={<ActionsSettings />}
+          tab={overlay.tab}
         />
       )}
     </div>

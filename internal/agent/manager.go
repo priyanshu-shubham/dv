@@ -828,37 +828,62 @@ func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (st
 // compaction. Rewound to before one, Claude Code goes on from the conversation
 // as it was then, whole.
 func (m *Manager) Prompts(id string) []Item {
+	prompts := []Item{}
+	for _, it := range m.items(id) {
+		if (it.Kind == "prompt" || it.Kind == "command") && it.UUID != "" {
+			prompts = append(prompts, it)
+		}
+	}
+	return prompts
+}
+
+// Failed is whether the session's last turn ended on an error or an
+// interruption rather than on what the agent did.
+func (m *Manager) Failed(id string) bool { return failed(m.items(id)) }
+
+func failed(items []Item) bool {
+	for _, it := range slices.Backward(items) {
+		switch it.Kind {
+		case "note":
+			if it.Error || it.Text == "Interrupted" {
+				return true
+			}
+		case "text", "tool", "prompt", "command", "shell":
+			return false
+		}
+	}
+	return false
+}
+
+// items is the whole of the conversation the session is on.
+func (m *Manager) items(id string) []Item {
+	if m.isCodex(id) {
+		return m.codex.thread(id).items()
+	}
 	m.mu.Lock()
 	f := m.follows[id]
 	m.mu.Unlock()
-	var items []Item
-	if m.isCodex(id) {
-		items = m.codex.thread(id).items()
-	} else if f != nil {
+	if f != nil {
 		m.readWhole(f)
 		f.mu.Lock()
 		last := f.t.Last()
 		f.mu.Unlock()
 		leaf := m.leaf(id, last)
 		f.mu.Lock()
-		items = f.t.Items(leaf)
-		f.mu.Unlock()
-	} else if path := transcriptFiles(m.root)[id]; path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		t := newTranscript(m.root)
-		t.Feed(data)
-		items = t.Items(m.leaf(id, t.Last()))
+		defer f.mu.Unlock()
+		return f.t.Items(leaf)
 	}
-	prompts := []Item{}
-	for _, it := range items {
-		if (it.Kind == "prompt" || it.Kind == "command") && it.UUID != "" {
-			prompts = append(prompts, it)
-		}
+	path := transcriptFiles(m.root)[id]
+	if path == "" {
+		return nil
 	}
-	return prompts
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	t := newTranscript(m.root)
+	t.Feed(data)
+	return t.Items(m.leaf(id, t.Last()))
 }
 
 // Edit is the diff a tool call in a session made.

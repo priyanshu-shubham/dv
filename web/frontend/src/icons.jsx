@@ -47,6 +47,7 @@ export const IconDots = svg(<><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" c
 export const IconMoon = svg(<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z" />, { stroke: true });
 export const IconSun = svg(<><circle cx="8" cy="8" r="3" /><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M13 3l-1 1M4 12l-1 1" /></>, { stroke: true });
 export const IconSpark = svg(<path d="M8 1.5l1.5 4L13.5 7 9.5 8.5 8 12.5 6.5 8.5 2.5 7l4-1.5zM12.5 11l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />);
+export const IconBolt = svg(<path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z" />, { stroke: true });
 export const IconKeyboard = svg(<><rect x="1.5" y="4" width="13" height="8" rx="1.5" /><path d="M4.5 7h.01M7 7h.01M9.5 7h.01M12 7h.01M5 9.5h6" /></>, { stroke: true });
 export const IconWrap = svg(<path d="M3 4h9a2 2 0 0 1 0 4H6M8 6l-2 2 2 2M3 12h6" />, { stroke: true });
 export const IconPin = svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { stroke: true });

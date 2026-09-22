@@ -167,7 +167,7 @@ func (c *Conversation) Send(n notify.Notice) {
 		}
 		var m sent
 		buttons := c.keyboard(n, true)
-		err := c.inThread(ctx, n.Folder, n.Session, n.Where, n.Place, func(thread string) (err error) {
+		post := func(thread string) (err error) {
 			m.thread = thread
 			shown := n
 			if thread != "" && n.Kind == notify.Done && n.Body != "" {
@@ -175,7 +175,13 @@ func (c *Conversation) Send(n notify.Notice) {
 			}
 			m.ref, err = c.p.Post(ctx, thread, Out{Text: notice(shown, thread != "", ""), Buttons: buttons, Private: n.Kind == notify.Ask})
 			return err
-		})
+		}
+		var err error
+		if n.Session == "" {
+			err = post("") // of no session - a command an action ran - so in the chat itself
+		} else {
+			err = c.inThread(ctx, n.Folder, n.Session, n.Where, n.Place, post)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "dv: could not send a notice to %s: %v\n", c.p.Via(), err)
 			return

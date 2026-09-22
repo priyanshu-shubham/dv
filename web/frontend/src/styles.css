@@ -3011,6 +3011,58 @@ mark {
   margin-left: auto;
 }
 
+/* One height whichever tab is open, so the tabs stay where they were clicked. */
+.modal.settings {
+  height: min(640px, 80vh);
+}
+
+.modal.settings > .settings-body {
+  flex: 1;
+  align-content: start;
+}
+
+.settings-tabs {
+  padding: 8px 14px 4px;
+  background: var(--bg);
+}
+
+.settings-tabs > .seg {
+  display: flex;
+  overflow-x: auto;
+}
+
+.settings-tabs > .seg > button {
+  flex: 1 0 auto;
+}
+
+.action-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* An action is its name over where it runs. */
+.palette-row.action-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding-block: 5px;
+}
+
+.action-row .sym {
+  font-family: var(--font-ui);
+}
+
+.action-row .dim {
+  font-size: var(--fs-xs);
+}
+
+.palette-row.unready {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .settings-note {
   margin-top: 2px;
   color: var(--fg-3);
@@ -3060,6 +3112,24 @@ mark {
   .settings-actions > button {
     flex: 1 1 auto;
     height: 36px;
+  }
+
+  /* Six tabs are two rows of three, rather than a row scrolled sideways. */
+  .settings-tabs {
+    padding: 8px 16px 4px;
+  }
+
+  .settings-tabs > .seg {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--r-md);
+    background: var(--bg-input);
+  }
+
+  .settings-tabs > .seg > button {
+    height: 34px;
   }
 }
 

@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { boot } from "./boot.js";
 import { cx, modKey, useDismiss } from "./util.js";
 import {
-  IconBack, IconBell, IconBranch, IconCheck, IconChevronDown, IconComment, IconFile, IconKeyboard, IconMenu, IconPin, IconPlus, IconSearch, IconSettings, IconUndo,
+  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconFile, IconKeyboard, IconMenu, IconPin, IconPlus, IconSearch, IconSettings, IconUndo,
 } from "./icons.jsx";
 
 // NewSession is the phone's +: a session here, or - where the hub can make
@@ -160,7 +160,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // slides in from.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onOpenFile, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, sideOn, onSide, sideRight, onNewSession, onNewWorktree, canStart, update, pr,
+  comments, commentsOn, onComments, sideOn, onSide, sideRight, onNewSession, onNewWorktree, canStart, update, pr, onActions,
 }) {
   const agent = mode === "agent";
   const menu = (
@@ -227,6 +227,9 @@ export default function Header({
       </button>
       <button className="icon phone-only" onClick={onOpenFile} title={`Open a file (${modKey}+P)`}>
         <IconFile size={14} />
+      </button>
+      <button className="icon" onClick={onActions} title="Actions (Alt+A)">
+        <IconBolt size={14} />
       </button>
       <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
         <IconSearch size={14} />

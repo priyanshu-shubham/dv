@@ -178,6 +178,24 @@ func TestACallCutOffByItsTurnsEndIsDropped(t *testing.T) {
 	}
 }
 
+func TestATurnFailsOnAnErrorOrAnInterruption(t *testing.T) {
+	reply := Item{Kind: "text", Text: "Posted."}
+	for name, c := range map[string]struct {
+		items []Item
+		want  bool
+	}{
+		"a reply":                 {[]Item{{Kind: "prompt"}, reply, {Kind: "worked"}}, false},
+		"an API error":            {[]Item{{Kind: "prompt"}, reply, {Kind: "note", Text: "API Error: 529", Error: true}}, true},
+		"interrupted":             {[]Item{{Kind: "prompt"}, {Kind: "tool"}, {Kind: "note", Text: "Interrupted"}}, true},
+		"an old error, then done": {[]Item{{Kind: "note", Error: true}, {Kind: "prompt"}, reply}, false},
+		"a plain note at the end": {[]Item{{Kind: "prompt"}, reply, {Kind: "note", Text: "Compacted"}}, false},
+	} {
+		if got := failed(c.items); got != c.want {
+			t.Errorf("%s: failed %v, want %v", name, got, c.want)
+		}
+	}
+}
+
 func resultFor(id string, text any, record map[string]any) map[string]any {
 	return map[string]any{"type": "user", "uuid": "r-" + id, "parentUuid": "a-" + id, "cwd": "/repo/sub",
 		"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": text}}},

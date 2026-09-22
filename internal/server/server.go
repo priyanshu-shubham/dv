@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dv/internal/agent"
@@ -80,6 +81,11 @@ type Server struct {
 
 	notices     *notify.Folder
 	stopNotices context.CancelFunc
+
+	actionsMu sync.Mutex
+	actions   map[string]ranAction   // by session, until its turn is done
+	commands  map[string]*ranCommand // by action, while it runs
+	closing   bool
 
 	task bool // a hub's one-off task, which has no worktrees
 }
@@ -153,6 +159,7 @@ func (s *Server) CommentsPath() string { return s.store.Path() }
 
 // Close stops the Claude Code sessions dv is running.
 func (s *Server) Close() {
+	s.stopCommands()
 	s.stopNotices()
 	if s.notices != nil {
 		s.notices.Close()
@@ -199,8 +206,12 @@ type Live struct {
 func (s *Server) Live() Live { return Live{Sessions: s.agent.Activity(), Requests: s.Waiting()} }
 
 // InUse is whether anything goes on in the folder that letting it go would
-// stop or miss: a session running, here or in a terminal, or a request waiting.
+// stop or miss: a session running, here or in a terminal, a request waiting,
+// or an action's command.
 func (s *Server) InUse() bool {
+	if s.commandsRunning() {
+		return true
+	}
 	for _, a := range s.agent.Activity() {
 		if a.Running != "" {
 			return true
@@ -260,6 +271,9 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/viewed", s.handleMarkViewed)
 	mux.HandleFunc("POST /api/reset", s.handleReset)
 	mux.HandleFunc("POST /api/pull", Guarded(s.handlePull))
+	mux.HandleFunc("POST /api/actions/run", Guarded(s.handleRunAction))
+	mux.HandleFunc("GET /api/actions/running", Guarded(s.handleCommands))
+	mux.HandleFunc("POST /api/actions/{id}/stop", Guarded(s.handleStopCommand))
 	mux.HandleFunc("GET /api/pr", Guarded(s.handlePR))
 
 	mux.HandleFunc("GET /api/prefs", Guarded(s.handlePrefs))

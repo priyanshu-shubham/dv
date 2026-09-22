@@ -115,8 +115,9 @@ function Notice({ id, kind, agent, title, detail, last, actions }) {
   );
 }
 
-// say is a notice of the page's own.
-export const say = (title, detail) => toast.custom((t) => <Notice id={t} kind="info" title={title} detail={detail} />, { duration: 6000 });
+// say is a notice of the page's own, with actions as a Notice takes them.
+export const say = (title, detail, actions) =>
+  toast.custom((t) => <Notice id={t} kind="info" title={title} detail={detail} actions={actions} />, { duration: 6000 });
 
 // useHubActivity is what the hub's folders are doing: every folder on the hub's
 // own page, the others on a folder's. Outside a hub there is nothing to follow.
@@ -211,12 +212,16 @@ export function useNotices({ looking, desktop, review, open, go }) {
     }
 
     for (const n of notices) {
-      const own = n.folder === slug;
+      const own = (n.folder || "") === slug; // a lone dv's folder is "", and left out
       const asking = n.kind === "ask";
       const session = n.where || (asking ? "a new session" : "A session");
       const where = own ? session : `${n.place}: ${session}`;
-      const goThere = () => (own ? now.current.open(n.session) : now.current.go(n.folder, n.session));
-      const onScreen = own && n.session === looking;
+      // A command an action ran has no session, only its folder to go to.
+      const goThere = () => {
+        if (n.session) own ? now.current.open(n.session) : now.current.go(n.folder, n.session);
+        else if (!own) location.href = `/${n.folder}/`;
+      };
+      const onScreen = own && !!n.session && n.session === looking;
 
       if (n.loud && !told.current.has(n.id)) {
         const shown = inFront() ? null : notify(n.id, asking ? n.title : `${n.title}: ${where}`, asking ? `in ${where}` : oneLine(n.body), goThere);
@@ -232,7 +237,11 @@ export function useNotices({ looking, desktop, review, open, go }) {
       if (toasted.current.has(n.id)) continue;
       toasted.current.set(n.id, n.kind);
       if (onScreen) continue;
-      const actions = !asking
+      const actions = !n.session
+        ? own
+          ? []
+          : [{ label: "Open folder", opens: true, run: goThere }]
+        : !asking
         ? [{ label: "Open session", opens: true, run: goThere }]
         : own
           ? [

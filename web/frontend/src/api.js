@@ -74,6 +74,11 @@ export const api = {
   version: () => req("/api/version"),
   // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
   pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
+  // runAction sends an action's prompt, to its session or a new one: { session }.
+  runAction: (action) => req("/api/actions/run", { method: "POST", body: JSON.stringify(action) }),
+  // actionsRunning: { running: [{ id, name, started }] }, the command actions under way.
+  actionsRunning: () => req("/api/actions/running"),
+  stopAction: (id) => req(`/api/actions/${encodeURIComponent(id)}/stop`, { method: "POST", body: "{}" }),
   // pr: { pr }, the checked-out branch's pull request or null.
   pr: () => req("/api/pr"),
 

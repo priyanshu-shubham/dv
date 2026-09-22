@@ -74,7 +74,7 @@ function sourceNote(source, n, name) {
 
 // usePaletteNav drives a result list from its input: arrows or Ctrl+N/P move
 // the selection, which is kept in sight, and Enter opens it.
-function usePaletteNav(count, open) {
+export function usePaletteNav(count, open) {
   const [sel, setSel] = useState(0);
   const listRef = useRef(null);
 
@@ -606,7 +606,7 @@ export function FileViewer({
   );
 }
 
-const OFF_ON = [
+export const OFF_ON = [
   [false, "Off"],
   [true, "On"],
 ];
@@ -622,12 +622,24 @@ const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
 // onChange's patches. A phone always shows the diff unified, so it has no
 // layout to pick.
 // SettingsOverlay is `,` in a folder's page, and in the hub's, which has no
-// keys to toggle the diff with (keys false).
+// keys to toggle the diff with (keys false). Its tabs are its sections, and
+// actions, a folder page's, a tab of their own; tab is the one it opens on.
 export function SettingsOverlay({
   theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
   working = 0,
   update,
+  actions,
+  tab: opening = "appearance",
 }) {
+  const [tab, setTab] = useState(opening);
+  const tabs = [
+    ["appearance", "Appearance"],
+    ["diff", "Diff"],
+    ["notifications", "Notifications"],
+    ["agent", "Agent"],
+    ...(actions ? [["actions", "Actions"]] : []),
+    ["server", "Server"],
+  ];
   return (
     <Modal onClose={onClose} centred className="settings">
       <div className="viewer-head">
@@ -637,94 +649,119 @@ export function SettingsOverlay({
           <IconX size={13} />
         </button>
       </div>
+      <div className="settings-tabs">
+        <span className="seg" role="tablist">
+          {tabs.map(([id, name]) => (
+            <button key={id} role="tab" className={cx(id === tab && "on")} aria-selected={id === tab} onClick={() => setTab(id)}>
+              {name}
+            </button>
+          ))}
+        </span>
+      </div>
       <div className="settings-body">
-        <div className="menu-label">Appearance</div>
-        <Setting label="Theme" value={theme} onPick={onTheme} choices={[["dark", "Dark"], ["light", "Light"]]} />
-        <Setting
-          label="Code colors"
-          note="How code is highlighted. Monokai is dark only: the light theme shows GitHub's."
-          value={settings.codeColors || "github"}
-          onPick={(v) => onChange({ codeColors: v })}
-          choices={[["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]]}
-        />
-        <Setting
-          label="Sidebar"
-          note="On the right, the comments open over it."
-          value={settings.sidebar || "left"}
-          onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
-          choices={[["left", "Left"], ["right", "Right"]]}
-        />
-        <label className="settings-row">
-          <div className="settings-text">
-            <div>Name in the tab</div>
-            <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's. Every dv on this computer uses it.</div>
-          </div>
-          <input
-            value={settings.tabName || ""}
-            placeholder="dv"
-            maxLength={40}
-            spellCheck={false}
-            onChange={(e) => onChange({ tabName: e.target.value || undefined })}
-          />
-        </label>
-        <Setting
-          label="Tab icon"
-          value={settings.tabColor || ""}
-          onPick={(v) => onChange({ tabColor: v || undefined })}
-          choices={TAB_ICONS}
-        />
-        <div className="menu-label">Diff</div>
-        {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
-        <Setting label="Context around each change" value={contextLines} onPick={onContext} choices={CONTEXT_LINES.map((n) => [n, n ? String(n) : "None"])} />
-        <Setting label="Wrap long lines" note={phone || !keys ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
-        <div className="menu-label">Notifications</div>
-        <Setting
-          label="Desktop notifications"
-          note={
-            typeof Notification === "undefined"
-              ? "This browser does not offer them here: they need https or localhost."
-              : "You are told when an agent asks or finishes, if no dv page is in front of you."
-          }
-          value={!!notices}
-          onPick={onNotices}
-          choices={OFF_ON}
-        />
-        <ChatApps settings={settings} onChange={onChange} />
-        <div className="menu-label">Agent</div>
-        {hooks && (
-          <Setting
-            label="Prompts from terminal sessions"
-            note={`A session running in a terminal asks here too, through hooks dv puts in ${hooks.path}.`}
-            value={hooks.on}
-            onPick={onHooks}
-            choices={OFF_ON}
-          />
+        {tab === "appearance" && (
+          <>
+            <Setting label="Theme" value={theme} onPick={onTheme} choices={[["dark", "Dark"], ["light", "Light"]]} />
+            <Setting
+              label="Code colors"
+              note="How code is highlighted. Monokai is dark only: the light theme shows GitHub's."
+              value={settings.codeColors || "github"}
+              onPick={(v) => onChange({ codeColors: v })}
+              choices={[["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]]}
+            />
+            <Setting
+              label="Sidebar"
+              note="On the right, the comments open over it."
+              value={settings.sidebar || "left"}
+              onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
+              choices={[["left", "Left"], ["right", "Right"]]}
+            />
+            <label className="settings-row">
+              <div className="settings-text">
+                <div>Name in the tab</div>
+                <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's. Every dv on this computer uses it.</div>
+              </div>
+              <input
+                value={settings.tabName || ""}
+                placeholder="dv"
+                maxLength={40}
+                spellCheck={false}
+                onChange={(e) => onChange({ tabName: e.target.value || undefined })}
+              />
+            </label>
+            <Setting
+              label="Tab icon"
+              value={settings.tabColor || ""}
+              onPick={(v) => onChange({ tabColor: v || undefined })}
+              choices={TAB_ICONS}
+            />
+          </>
         )}
-        <Setting
-          label="Number keys answer prompts"
-          note="An option's number answers with it at once, as in the terminal. Off, it moves to the option, and Enter answers."
-          value={settings.numbersAnswer !== false}
-          onPick={(on) => onChange({ numbersAnswer: on ? undefined : false })}
-          choices={OFF_ON}
-        />
-        <Setting
-          label="Sessions opened by adding start temporary"
-          note="A new session opened from Add, or from New session over selected text, starts temporary: once closed, it leaves the session list."
-          value={!!settings.addedTemporary}
-          onPick={(on) => onChange({ addedTemporary: on })}
-          choices={OFF_ON}
-        />
-        <div className="menu-label">Server</div>
-        {boot.run.version !== "dev" && (
-          <Setting
-            label="Check for updates"
-            note="Asks GitHub which release is newest when a page opens, at most every six hours."
-            value={settings.updateCheck !== false}
-            onPick={(on) => onChange({ updateCheck: on ? undefined : false })}
-            choices={OFF_ON}
-          />
+        {tab === "diff" && (
+          <>
+            {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
+            <Setting label="Context around each change" value={contextLines} onPick={onContext} choices={CONTEXT_LINES.map((n) => [n, n ? String(n) : "None"])} />
+            <Setting label="Wrap long lines" note={phone || !keys ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
+          </>
         )}
-        <RestartRow working={working} update={update} />
+        {tab === "notifications" && (
+          <>
+            <Setting
+              label="Desktop notifications"
+              note={
+                typeof Notification === "undefined"
+                  ? "This browser does not offer them here: they need https or localhost."
+                  : "You are told when an agent asks or finishes, if no dv page is in front of you."
+              }
+              value={!!notices}
+              onPick={onNotices}
+              choices={OFF_ON}
+            />
+            <ChatApps settings={settings} onChange={onChange} />
+          </>
+        )}
+        {tab === "agent" && (
+          <>
+            {hooks && (
+              <Setting
+                label="Prompts from terminal sessions"
+                note={`A session running in a terminal asks here too, through hooks dv puts in ${hooks.path}.`}
+                value={hooks.on}
+                onPick={onHooks}
+                choices={OFF_ON}
+              />
+            )}
+            <Setting
+              label="Number keys answer prompts"
+              note="An option's number answers with it at once, as in the terminal. Off, it moves to the option, and Enter answers."
+              value={settings.numbersAnswer !== false}
+              onPick={(on) => onChange({ numbersAnswer: on ? undefined : false })}
+              choices={OFF_ON}
+            />
+            <Setting
+              label="Sessions opened by adding start temporary"
+              note="A new session opened from Add, or from New session over selected text, starts temporary: once closed, it leaves the session list."
+              value={!!settings.addedTemporary}
+              onPick={(on) => onChange({ addedTemporary: on })}
+              choices={OFF_ON}
+            />
+          </>
+        )}
+        {tab === "actions" && actions}
+        {tab === "server" && (
+          <>
+            {boot.run.version !== "dev" && (
+              <Setting
+                label="Check for updates"
+                note="Asks GitHub which release is newest when a page opens, at most every six hours."
+                value={settings.updateCheck !== false}
+                onPick={(on) => onChange({ updateCheck: on ? undefined : false })}
+                choices={OFF_ON}
+              />
+            )}
+            <RestartRow working={working} update={update} />
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -817,7 +854,7 @@ const CHAT_WORKTREE = [
   [true, "A new worktree"],
 ];
 
-const CHAT_MODES = [
+export const SESSION_MODES = [
   ["", "Usual", "The mode a new session begins in, in dv"],
   ["default", "Ask", "Ask before edits"],
   ["acceptEdits", "Edits", "Accept edits"],
@@ -1009,7 +1046,7 @@ function ChatApps({ settings, onChange }) {
             note="What they ask still comes to you in the chat."
             value={settings.chatMode ?? ""}
             onPick={(v) => onChange({ chatMode: v || undefined })}
-            choices={CHAT_MODES}
+            choices={SESSION_MODES}
           />
         </>
       )}
@@ -1205,7 +1242,7 @@ function RestartRow({ working, update }) {
 
 // Setting is one preference and its choices, [value, label] pairs, with a
 // tooltip third where the label is a picture.
-function Setting({ label, note, value, onPick, choices }) {
+export function Setting({ label, note, value, onPick, choices }) {
   return (
     <div className="settings-row">
       <div className="settings-text">
@@ -1228,6 +1265,7 @@ export function HelpOverlay({ onClose }) {
     ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent"],
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
+    ["Alt+A", `Run an action (also ${modKey}+Shift+P, where the browser allows it)`],
     [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
     ["/", "Filter the file list"],
     ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
