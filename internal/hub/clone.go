@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"dv/internal/gitx"
 	"dv/internal/server"
 	"dv/internal/store"
 )
@@ -70,7 +71,7 @@ func (h *Hub) handleClone(w http.ResponseWriter, r *http.Request) {
 	j := &job{Kind: "clone", Title: source, Path: dest, Place: server.HomeRelative(dest), Step: "Cloning"}
 	writeJSON(w, http.StatusOK, h.start(j, func(ctx context.Context) (string, error) {
 		cmd := exec.CommandContext(ctx, "git", "clone", "--progress", "--", url, dest)
-		cmd.Env = quietGit()
+		cmd.Env = gitx.QuietEnv()
 		if err := h.run(j, cmd); err != nil {
 			return "", err
 		}
@@ -80,16 +81,6 @@ func (h *Hub) handleClone(w http.ResponseWriter, r *http.Request) {
 		h.folders.SetCloneInto(into)
 		return "", nil
 	}))
-}
-
-// quietGit is the environment for git with nobody at a terminal to type a
-// password or accept a host key: without it git would wait on one forever.
-func quietGit() []string {
-	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" {
-		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
-	}
-	return env
 }
 
 // repoName is the folder git clone would make for url.

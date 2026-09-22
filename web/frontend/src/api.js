@@ -72,6 +72,8 @@ export const api = {
 
   // version fingerprints the repository; it moves whenever any diff could have.
   version: () => req("/api/version"),
+  // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
+  pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
 
   diffFile: (scope, path) => {
     const p = scopeQuery(scope);
@@ -288,6 +290,8 @@ export const api = {
   hubUpdate: (slug, patch) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   hubRemove: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "DELETE" }),
   hubClose: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/close`, { method: "POST", body: "{}" }),
+  // hubPull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
+  hubPull: (slug, main = false) => req(`/api/hub/folders/${encodeURIComponent(slug)}/pull`, { method: "POST", body: JSON.stringify({ main }) }),
   // hubBranches: { branches, base, repo, into }, what a new worktree is made with.
   hubBranches: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/branches`),
   // wt: { branch, base, name, here }, here starting the branch from what the

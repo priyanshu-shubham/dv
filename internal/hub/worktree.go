@@ -183,7 +183,7 @@ func (h *Hub) makeWorktree(slug string, req worktreeReq, fresh bool) (*job, int,
 	j := &job{Kind: "worktree", Title: branch, Path: path, Place: server.HomeRelative(path), Of: main.Slug, Step: "Creating"}
 	h.start(j, func(ctx context.Context) (string, error) {
 		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir, cmd.Env = main.Path, quietGit()
+		cmd.Dir, cmd.Env = main.Path, gitx.QuietEnv()
 		if err := h.run(j, cmd); err != nil {
 			return "", err
 		}

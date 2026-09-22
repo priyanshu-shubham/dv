@@ -93,6 +93,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/hub/folders/{slug}", server.Guarded(h.handleUpdate))
 	mux.HandleFunc("DELETE /api/hub/folders/{slug}", server.Guarded(h.handleRemove))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/close", server.Guarded(h.handleClose))
+	mux.HandleFunc("POST /api/hub/folders/{slug}/pull", server.Guarded(h.handlePull))
 	mux.HandleFunc("GET /api/hub/folders/{slug}/branches", server.Guarded(h.handleBranches))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/worktrees", server.Guarded(h.handleWorktree))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/setup", server.Guarded(h.handleSetup))
@@ -206,9 +207,10 @@ type folderView struct {
 	Elsewhere string         `json:"elsewhere,omitempty"` // another dv's address
 	// With ?details=1, what takes git to read, which the page asks for as it
 	// loads and every so often after rather than each time it polls.
-	Git    bool         `json:"git,omitempty"`
-	Remote *gitx.Remote `json:"remote,omitempty"`
-	Status *gitx.Status `json:"status,omitempty"`
+	Git     bool         `json:"git,omitempty"`
+	Remote  *gitx.Remote `json:"remote,omitempty"`
+	Status  *gitx.Status `json:"status,omitempty"`
+	Default string       `json:"default,omitempty"` // the trunk, when this clone has it
 }
 
 func (h *Hub) handleFolders(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +245,9 @@ func (h *Hub) handleFolders(w http.ResponseWriter, r *http.Request) {
 			if repo, err := gitx.Open(f.Path); err == nil && repo.IsGit() {
 				v.Git, v.Remote = true, repo.Origin()
 				v.Status, _ = repo.Status()
+				if b := repo.DefaultBranch(); b != "" && repo.HasBranch(b) {
+					v.Default = b
+				}
 				// A remote with no web page is a path on this machine, written as the folders are.
 				if v.Remote != nil && v.Remote.Web == "" {
 					v.Remote.Label = server.HomeRelative(v.Remote.Label)
@@ -318,6 +323,35 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// handlePull fast-forwards the folder's branch, or with { main } the
+// repository's trunk, to what it tracks: { branch, pulled }, pulled the
+// commits it moved by. Anything short of a fast-forward is an error.
+func (h *Hub) handlePull(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Main bool `json:"main"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	f, ok := h.folders.Get(r.PathValue("slug"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("no folder at /%s/ in this hub", r.PathValue("slug")))
+		return
+	}
+	repo, err := gitx.Open(f.Path)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	branch, n, err := repo.Pull(body.Main)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "pulled": n})
 }
 
 func writeErr(w http.ResponseWriter, status int, err error) {

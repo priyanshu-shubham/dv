@@ -57,6 +57,7 @@ export default function Hub() {
   const known = useRef({ data, details });
   known.current = { data, details };
   const [error, setError] = useState("");
+  const [pulled, setPulled] = useState("");
   const [offline, setOffline] = useState(false);
   const [filter, setFilter] = useState("");
   // The clone or worktree started here, which is opened once it is done.
@@ -85,7 +86,7 @@ export default function Hub() {
         followPrefs(d.prefs);
         if (unread) {
           detailsAt.current = Date.now();
-          const read = d.folders.filter((f) => !f.missing).map((f) => [f.path, { git: f.git, remote: f.remote, status: f.status }]);
+          const read = d.folders.filter((f) => !f.missing).map((f) => [f.path, { git: f.git, remote: f.remote, status: f.status, default: f.default }]);
           setDetails((had) => ({ ...had, ...Object.fromEntries(read) }));
         }
       },
@@ -148,6 +149,18 @@ export default function Hub() {
     newWorktree: (f) => setDialog({ worktree: f }),
     hooks: (f) => setDialog({ hooks: f }),
     setup: (f) => act(api.hubSetup(f.slug)),
+    pull: (f, main) => {
+      setPulled("");
+      setError("");
+      api.hubPull(f.slug, main).then(
+        ({ branch, pulled }) => setPulled(pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}.` : `${branch} is up to date.`),
+        (e) => setError(e.message),
+      ).finally(() => {
+        // The ahead and behind counts are read with the details, which would otherwise wait.
+        detailsAt.current = 0;
+        load();
+      });
+    },
     deleteWorktree: (f, main) => {
       const first = main?.teardown ? "The teardown hook runs first; then git" : "Git";
       if (confirm(`Delete the worktree at ${f.place}? ${first} removes it, unless it has uncommitted changes. The branch stays.`)) {
@@ -233,6 +246,14 @@ export default function Hub() {
             <div className="filter-note hub-note error">
               <span>{error}</span>
               <button className="link" onClick={() => setError("")}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {pulled && (
+            <div className="filter-note hub-note">
+              <span>{pulled}</span>
+              <button className="link" onClick={() => setPulled("")}>
                 Dismiss
               </button>
             </div>
@@ -423,6 +444,9 @@ function Entry({ folder: f, main, job, on }) {
   // A task's folder is dv's own: it is closed and deleted, never left behind off the hub.
   const menu = [
     { label: "Rename", run: () => setRenaming(true) },
+    ...(f.status?.upstream && !f.missing ? [{ label: `Pull ${f.status.branch}`, run: () => on.pull(f, false) }] : []),
+    // Worktrees share the trunk with their repository, so only its card offers it.
+    ...(!worktree && f.default && f.default !== f.status?.branch && !f.missing ? [{ label: `Update ${f.default}`, run: () => on.pull(f, true) }] : []),
     ...(!f.task && !worktree && f.git && !f.missing
       ? [
           { label: "New worktree…", run: () => on.newWorktree(f) },

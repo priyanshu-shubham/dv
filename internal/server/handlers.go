@@ -43,6 +43,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"place":         HomeRelative(s.repo.Root),
 		"head":          s.repo.Head(),
 		"defaultBranch": s.repo.DefaultBranch(),
+		"remote":        s.repo.Origin() != nil,
 		"branches":      s.repo.Branches(),
 		"recentCommits": s.repo.RecentCommits(20),
 		"commentsPath":  s.store.Path(),
@@ -367,6 +368,24 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"threads": threads, "marks": marks})
+}
+
+// handlePull fast-forwards the checked-out branch, or with { main } the trunk:
+// { branch, pulled }. Anything short of a fast-forward is an error.
+func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Main bool `json:"main"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	branch, n, err := s.repo.Pull(body.Main)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "pulled": n})
 }
 
 type threadReq struct {

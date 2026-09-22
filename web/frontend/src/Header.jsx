@@ -31,6 +31,61 @@ function NewSession({ onNew, onNewWorktree, canStart }) {
   );
 }
 
+// HeadRef is the branch in the bar; with a remote to pull from it opens on
+// pulling it, and main when on another. The outcome shows in the menu, as
+// the diff follows the new HEAD on its own.
+function HeadRef({ meta }) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState(null); // { busy } | { done } | { error }
+  const ref = useDismiss(open, () => setOpen(false));
+  const { branch, sha, subject } = meta.head;
+  const trunk = meta.defaultBranch && meta.defaultBranch !== branch && meta.branches?.includes(meta.defaultBranch) ? meta.defaultBranch : "";
+  const label = (
+    <>
+      <IconBranch size={13} />
+      <span>{branch || sha}</span>
+    </>
+  );
+  if (!meta.remote || (!branch && !trunk)) {
+    return (
+      <span className="headref" title={subject}>
+        {label}
+      </span>
+    );
+  }
+  const pull = (main) => {
+    setState({ busy: true });
+    api.pull(main).then(
+      ({ branch, pulled }) => setState({ done: pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}.` : `${branch} is up to date.` }),
+      (e) => setState({ error: e.message }),
+    );
+  };
+  return (
+    <span className="model-menu headref-menu" ref={ref}>
+      <button className="headref" title={subject} onClick={() => (setOpen((o) => !o), state?.busy || setState(null))}>
+        {label}
+      </button>
+      {open && (
+        <div className="model-list">
+          {branch && (
+            <button disabled={state?.busy} onClick={() => pull(false)}>
+              <span className="model-name">Pull {branch}</span>
+            </button>
+          )}
+          {trunk && (
+            <button disabled={state?.busy} onClick={() => pull(true)}>
+              <span className="model-name">Update {trunk}</span>
+            </button>
+          )}
+          <div className={cx("model-note", "headref-note", state?.error && "del")}>
+            {state?.busy ? "Fetching…" : state?.done || state?.error || "Only when it fast-forwards."}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 // AUTO is the scope dv starts on: whichever comparison has something in it,
 // followed as the work moves. Any other scope is a pin.
 export const AUTO = { kind: "auto", rev: "" };
@@ -76,12 +131,7 @@ export default function Header({
         <span className="repo" title={meta?.root}>
           {meta?.repo}
         </span>
-        {(meta?.head?.branch || meta?.head?.sha) && (
-          <span className="headref" title={meta.head.subject}>
-            <IconBranch size={13} />
-            <span>{meta.head.branch || meta.head.sha}</span>
-          </span>
-        )}
+        {(meta?.head?.branch || meta?.head?.sha) && <HeadRef meta={meta} />}
       </div>
 
       <div className="topbar-right">

@@ -569,6 +569,39 @@ a.logo.to-hub:hover > svg {
   text-overflow: ellipsis;
 }
 
+.headref-menu {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+button.headref {
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: var(--r-md);
+}
+
+button.headref:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* Under the bar's middle, so centred on the branch. */
+.headref-menu > .model-list {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.headref-note {
+  padding: 5px 8px 3px;
+  font-size: var(--fs-xs);
+  white-space: pre-line; /* git's refusals list files a line each */
+}
+
+.headref-note.del {
+  color: var(--del);
+}
+
 .topbar .divider {
   width: 1px;
   height: 16px;
@@ -6031,6 +6064,7 @@ button.ghost.back {
 
 .hub-note.error {
   color: var(--del);
+  white-space: pre-line; /* git's refusals list files a line each */
 }
 
 /* A card is its folder's link over its worktrees' rows, each a link of its own,

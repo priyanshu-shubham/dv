@@ -259,6 +259,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("GET /api/viewed", s.handleViewed)
 	mux.HandleFunc("POST /api/viewed", s.handleMarkViewed)
 	mux.HandleFunc("POST /api/reset", s.handleReset)
+	mux.HandleFunc("POST /api/pull", Guarded(s.handlePull))
 
 	mux.HandleFunc("GET /api/prefs", Guarded(s.handlePrefs))
 	mux.HandleFunc("PATCH /api/prefs", Guarded(s.handleSetPref))
