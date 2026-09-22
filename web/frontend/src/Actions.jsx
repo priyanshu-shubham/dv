@@ -67,6 +67,7 @@ const modelsFor = (a, info) => (a.agent === "codex" ? info?.codex?.models : info
 // describe is what an action does, in the few words under its name, from the
 // action alone where it can be: the model's label is kept with it.
 function describe(a, info) {
+  if (a.note) return a.note;
   if (a.builtin) return "Built in · only when it fast-forwards";
   if (a.kind === "command") return "Runs " + a.command.trim().split("\n")[0];
   if (a.where === "current") return "Current session";
@@ -119,14 +120,14 @@ function elapsed(from, at) {
 // ActionsPalette is Alt+A: the actions, found by name, run with Enter. One for
 // the current session waits for there to be one; Enter on a command running
 // stops it.
-export function ActionsPalette({ meta, session, onRun, onEdit, onClose }) {
+export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onClose }) {
   const { all } = useActions();
   const info = useAgentChoices();
   const { running, at, look } = useRunning();
   const [q, setQ] = useState("");
-  const shown = [...all, ...builtIns(meta)].filter((a) => a.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const shown = [...all, ...builtIns(meta), ...extra].filter((a) => a.name.toLowerCase().includes(q.trim().toLowerCase()));
   const rows = [...shown, EDIT];
-  const ready = (a) => a.kind === "command" || a.builtin || a.where !== "current" || !!session;
+  const ready = (a) => a.kind === "command" || a.builtin || a.run || a.where !== "current" || !!session;
   const stop = (a) => api.stopAction(a.id).then(look, () => {});
   const pick = (row) => (row === EDIT ? onEdit() : running[row.id] ? stop(row) : ready(row) && onRun(row));
   const { sel, setSel, onKey, listRef } = usePaletteNav(rows.length, (i) => pick(rows[i]));

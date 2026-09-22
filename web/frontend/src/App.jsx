@@ -1090,11 +1090,34 @@ export default function App() {
     [agent.sessions, agentId, setAgentId, loadSessions],
   );
 
+  // The page's own actions, which do what their buttons and keys do.
+  const pageActions = [
+    {
+      id: "new-session",
+      name: "New session",
+      note: "In the Agent view · also Alt+N there",
+      run: () => {
+        switchMode("agent");
+        startSession();
+      },
+    },
+    newWorktree && { id: "new-worktree", name: "New worktree", note: "A session in a new worktree of this repo", run: newWorktree },
+    {
+      id: "comments",
+      name: "Open comments",
+      note: "The comments in the review",
+      run: () => (phone ? setPanel("comments") : setCommentsOpen(true)),
+    },
+    { id: "settings", name: "Open settings", note: "Also the , key", run: () => openOverlay({ type: "settings" }) },
+    boot.base && { id: "hub", name: "Back to the hub", note: "Also Alt+H", run: () => (location.href = "/") },
+  ].filter(Boolean);
+
   // An action run from outside the Agent view, or in a session of its own,
   // happens out of sight, so the page says it went.
   const doAction = useCallback(
     (a) => {
       closeOverlay();
+      if (a.run) return a.run();
       if (a.builtin) {
         api.pull(a.builtin === "main").then(
           ({ branch, pulled }) => say(pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}` : `${branch} is up to date`),
@@ -1842,7 +1865,7 @@ export default function App() {
       )}
       {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
       {overlay?.type === "actions" && (
-        <ActionsPalette meta={meta} session={agentId} onRun={doAction} onEdit={() => openOverlay({ type: "settings", tab: "actions" })} onClose={closeOverlay} />
+        <ActionsPalette meta={meta} session={agentId} extra={pageActions} onRun={doAction} onEdit={() => openOverlay({ type: "settings", tab: "actions" })} onClose={closeOverlay} />
       )}
       {overlay?.type === "settings" && (
         <SettingsOverlay
