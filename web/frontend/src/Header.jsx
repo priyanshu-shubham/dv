@@ -31,6 +31,67 @@ function NewSession({ onNew, onNewWorktree, canStart }) {
   );
 }
 
+const PR_MS = 60000;
+
+// usePR follows the branch's pull request, asked again each minute while the
+// page is in view; GitHub is only asked when the server's answer is stale.
+export function usePR(branch, remote) {
+  const [pr, setPR] = useState(null);
+  useEffect(() => {
+    setPR(null);
+    if (!branch || !remote) return;
+    let live = true;
+    const read = () => document.hidden || api.pr().then((d) => live && setPR(d.pr), () => {});
+    read();
+    const t = setInterval(read, PR_MS);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [branch, remote]);
+  return pr;
+}
+
+const PR_STATE = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" };
+const PR_CHECKS = { passing: "checks passing", failing: "checks failing", pending: "checks running" };
+const PR_REVIEW = { approved: "approved", changes: "changes requested", required: "review required" };
+
+// PRChip is a branch's pull request, opening it on GitHub: its number, its
+// state when not open, and a dot while its checks fail or run. A button, as
+// a hub card is a link already.
+export function PRChip({ pr }) {
+  if (!pr) return null;
+  const live = pr.state === "open" || pr.state === "draft";
+  const about = [PR_STATE[pr.state], live && PR_CHECKS[pr.checks], live && PR_REVIEW[pr.review]].filter(Boolean).join(", ");
+  return (
+    <button
+      className={cx("pr-chip", pr.state)}
+      title={`#${pr.number} ${pr.title}\n${about}`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.open(pr.url, "_blank", "noopener");
+      }}
+    >
+      #{pr.number}
+      {pr.state !== "open" && <span>{pr.state}</span>}
+      {live && (pr.checks === "failing" || pr.checks === "pending") && <span className={cx("pr-checks", pr.checks)} />}
+    </button>
+  );
+}
+
+// BranchRow is the bar's branch and pull request at the top of the sidebar,
+// for windows too narrow for the bar to have them.
+export function BranchRow({ meta, pr }) {
+  if (!meta?.head?.branch && !meta?.head?.sha) return null;
+  return (
+    <div className="side-branch">
+      <HeadRef meta={meta} />
+      <PRChip pr={pr} />
+    </div>
+  );
+}
+
 // HeadRef is the branch in the bar; with a remote to pull from it opens on
 // pulling it, and main when on another. The outcome shows in the menu, as
 // the diff follows the new HEAD on its own.
@@ -99,7 +160,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // slides in from.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onOpenFile, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, sideOn, onSide, sideRight, onNewSession, onNewWorktree, canStart, update,
+  comments, commentsOn, onComments, sideOn, onSide, sideRight, onNewSession, onNewWorktree, canStart, update, pr,
 }) {
   const agent = mode === "agent";
   const menu = (
@@ -132,6 +193,7 @@ export default function Header({
           {meta?.repo}
         </span>
         {(meta?.head?.branch || meta?.head?.sha) && <HeadRef meta={meta} />}
+        <PRChip pr={pr} />
       </div>
 
       <div className="topbar-right">

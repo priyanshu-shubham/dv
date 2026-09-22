@@ -50,6 +50,7 @@
   --add: #3fb950;
   --del: #f85149;
   --mod: #d29922;
+  --merged: #a371f7;
   --ren: var(--accent);
   --add-bg: rgba(63, 185, 80, 0.11);
   --del-bg: rgba(248, 81, 73, 0.11);
@@ -108,6 +109,7 @@
   --add: #1a7f37;
   --del: #cf222e;
   --mod: #9a6700;
+  --merged: #8250df;
   --add-bg: rgba(26, 127, 55, 0.09);
   --del-bg: rgba(207, 34, 46, 0.08);
   --mod-bg: rgba(154, 103, 0, 0.08);
@@ -545,10 +547,15 @@ a.logo.to-hub:hover > svg {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  /* Sized by what it holds, so a long branch would crowd the tools out. */
+  max-width: 44vw;
   font-size: var(--fs-sm);
 }
 
+/* The branch gives way first; the name only when it is half the title. */
 .topbar-title .repo {
+  flex: none;
+  max-width: 50%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -556,7 +563,8 @@ a.logo.to-hub:hover > svg {
   font-weight: 600;
 }
 
-.topbar .headref {
+.topbar .headref,
+.side-branch .headref {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -569,9 +577,13 @@ a.logo.to-hub:hover > svg {
   text-overflow: ellipsis;
 }
 
-.headref-menu {
+.model-menu.headref-menu {
   flex: 0 1 auto;
   min-width: 0;
+}
+
+.headref > svg {
+  flex: none;
 }
 
 button.headref {
@@ -600,6 +612,62 @@ button.headref:hover {
 
 .headref-note.del {
   color: var(--del);
+}
+
+/* Coloured as GitHub colours a pull request's state. */
+.pr-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
+  color: var(--add);
+  font: var(--fs-xs) / 1.6 var(--font-mono);
+}
+
+.pr-chip:hover {
+  background: var(--bg-hover);
+}
+
+.pr-chip.draft {
+  color: var(--fg-3);
+}
+
+.pr-chip.merged {
+  color: var(--merged);
+}
+
+.pr-chip.closed {
+  color: var(--del);
+}
+
+.pr-checks {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mod);
+}
+
+.pr-checks.failing {
+  background: var(--del);
+}
+
+.side-branch {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 8px 0;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.side-branch .headref-menu > .model-list {
+  left: 0;
+  transform: none;
+  white-space: normal;
 }
 
 .topbar .divider {
@@ -5810,8 +5878,13 @@ button.ghost.back {
 }
 
 @media (max-width: 1000px) {
-  .topbar .headref {
+  .topbar .headref,
+  .topbar .pr-chip {
     display: none;
+  }
+
+  .side-branch {
+    display: flex;
   }
 }
 

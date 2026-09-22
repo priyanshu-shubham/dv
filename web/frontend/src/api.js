@@ -74,6 +74,8 @@ export const api = {
   version: () => req("/api/version"),
   // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
   pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
+  // pr: { pr }, the checked-out branch's pull request or null.
+  pr: () => req("/api/pr"),
 
   diffFile: (scope, path) => {
     const p = scopeQuery(scope);
@@ -285,6 +287,8 @@ export const api = {
   // user's settings' version; with details, each git folder has its remote and
   // branch too.
   hubFolders: (details) => req(`/api/hub/folders${details ? "?details=1" : ""}`, {}, ""),
+  // hubPRs: { prs: { slug: pr } }, for the folders whose branch has one.
+  hubPRs: () => req("/api/hub/prs", {}, ""),
   hubAdd: (path) => req("/api/hub/folders", { method: "POST", body: JSON.stringify({ path }) }),
   // patch: { name, setup, teardown }, any of them.
   hubUpdate: (slug, patch) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "PATCH", body: JSON.stringify(patch) }),

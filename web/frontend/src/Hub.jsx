@@ -7,12 +7,15 @@ import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { setTabIcon, tabDot } from "./favicon.js";
+import { PRChip } from "./Header.jsx";
 
 const POLL_MS = 2000;
 const BUSY_POLL_MS = 700;
 // How often git is asked again where each folder stands, which costs a few git
 // commands a folder where the rest of a poll costs none.
 const DETAILS_MS = 10000;
+// Pull requests are asked of GitHub, and so more seldom still.
+const PRS_MS = 60000;
 const NO_SETTINGS = {};
 
 // Hub is the page of a hub: the folders it serves, each opened at /<slug>/,
@@ -54,6 +57,8 @@ export default function Hub() {
   // folder first shows, and every DETAILS_MS.
   const [details, setDetails] = useState({});
   const detailsAt = useRef(0);
+  const [prs, setPRs] = useState({});
+  const prsAt = useRef(0);
   const known = useRef({ data, details });
   known.current = { data, details };
   const [error, setError] = useState("");
@@ -84,6 +89,10 @@ export default function Hub() {
         setData(d);
         setOffline(false);
         followPrefs(d.prefs);
+        if (Date.now() - prsAt.current > PRS_MS) {
+          prsAt.current = Date.now();
+          api.hubPRs().then((p) => setPRs(p.prs), () => {});
+        }
         if (unread) {
           detailsAt.current = Date.now();
           const read = d.folders.filter((f) => !f.missing).map((f) => [f.path, { git: f.git, remote: f.remote, status: f.status, default: f.default }]);
@@ -184,7 +193,7 @@ export default function Hub() {
   };
 
   // Worktrees go under the repository they were made of, when it is listed.
-  const folders = useMemo(() => (data?.folders || []).map((f) => ({ ...f, ...details[f.path] })), [data, details]);
+  const folders = useMemo(() => (data?.folders || []).map((f) => ({ ...f, ...details[f.path], pr: prs[f.slug] })), [data, details, prs]);
   const jobs = data?.jobs || [];
   const { mains, worktreesOf } = useMemo(() => {
     const paths = new Set(folders.map((f) => f.path));
@@ -505,7 +514,7 @@ function Entry({ folder: f, main, job, on }) {
             {LRM}
             {f.place}
           </span>
-          <GitState status={f.status} />
+          <GitState status={f.status} pr={f.pr} />
         </div>
       ) : (
         <div className="hub-place">
@@ -522,7 +531,7 @@ function Entry({ folder: f, main, job, on }) {
           ) : (
             f.remote && <span title={f.remote.url}>{f.remote.label}</span>
           )}
-          <GitState status={f.status} />
+          <GitState status={f.status} pr={f.pr} />
         </div>
       )}
       {state && <div className="session-meta">{state}</div>}
@@ -544,7 +553,7 @@ function Branch({ name, title }) {
 // GitState is where a checkout stands: its branch, how far it has moved from
 // what it tracks, and how much is uncommitted in it. Nothing is said of a
 // clean one but its branch.
-function GitState({ status: s }) {
+function GitState({ status: s, pr }) {
   if (!s?.branch) return null;
   const n = (k) => s[k] || 0;
   const changed = n("staged") + n("unstaged") + n("untracked");
@@ -559,6 +568,7 @@ function GitState({ status: s }) {
   return (
     <span className="hub-git">
       <Branch name={s.branch} title={s.upstream ? `${s.branch}, tracking ${s.upstream}` : s.branch} />
+      <PRChip pr={pr} />
       {(n("ahead") > 0 || n("behind") > 0) && (
         <span className="hub-ab" title={`${n("ahead")} to push and ${n("behind")} to pull, against ${s.upstream}`}>
           {[n("ahead") && `↑${n("ahead")}`, n("behind") && `↓${n("behind")}`].filter(Boolean).join(" ")}

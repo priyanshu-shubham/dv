@@ -3,7 +3,7 @@ import { cx, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tree.js";
 import { AttachButton, ThreadList } from "./Threads.jsx";
 import { SessionList } from "./Agent.jsx";
-import { ModeSwitch } from "./Header.jsx";
+import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
   IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFilter,
 } from "./icons.jsx";
@@ -18,7 +18,7 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 // as they are in the diff. In Agent mode the tree's place is taken by the
 // sessions.
 export default function Sidebar({
-  right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
+  meta, pr, right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
   filtersPaused, onPauseFilters, onReset, agent, onWidth, modes, onMode, attached,
 }) {
@@ -183,6 +183,7 @@ export default function Sidebar({
           onWidth(0);
         }}
       />
+      <BranchRow meta={meta} pr={pr} />
       <div className="sidebar-modes">
         <ModeSwitch mode={mode} modes={modes} onMode={onMode} attached={attached} />
       </div>

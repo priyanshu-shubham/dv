@@ -89,6 +89,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("GET /api/update", server.Guarded(server.HandleUpdateCheck))
 	mux.HandleFunc("POST /api/update", server.Guarded(server.HandleUpdateInstall))
 	mux.HandleFunc("GET /api/hub/folders", server.Guarded(h.handleFolders))
+	mux.HandleFunc("GET /api/hub/prs", server.Guarded(h.handlePRs))
 	mux.HandleFunc("POST /api/hub/folders", server.Guarded(h.handleAdd))
 	mux.HandleFunc("PATCH /api/hub/folders/{slug}", server.Guarded(h.handleUpdate))
 	mux.HandleFunc("DELETE /api/hub/folders/{slug}", server.Guarded(h.handleRemove))
@@ -352,6 +353,32 @@ func (h *Hub) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "pulled": n})
+}
+
+// handlePRs is each folder's pull request, by slug, for folders with one. It
+// is asked apart from the details, as GitHub can take a second to answer.
+func (h *Hub) handlePRs(w http.ResponseWriter, r *http.Request) {
+	prs := map[string]*gitx.PR{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	for _, f := range h.folders.List() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			if repo, err := gitx.Open(f.Path); err == nil && repo.IsGit() {
+				if pr := repo.PullRequest(); pr != nil {
+					mu.Lock()
+					prs[f.Slug] = pr
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	writeJSON(w, http.StatusOK, map[string]any{"prs": prs})
 }
 
 func writeErr(w http.ResponseWriter, status int, err error) {

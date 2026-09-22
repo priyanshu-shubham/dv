@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
-import Header, { AUTO } from "./Header.jsx";
+import Header, { AUTO, usePR } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
@@ -1138,6 +1138,7 @@ export default function App() {
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
   }, [requests, dot, meta, settings.tabName]);
   const update = useUpdate(settings.updateCheck === false);
+  const pr = usePR(meta?.head?.branch, meta?.remote);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   // Shift+Up and Down go through the open sessions in the order the list has
@@ -1480,6 +1481,7 @@ export default function App() {
         onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
         bellOn={promptOpen}
         update={update}
+        pr={pr}
         comments={threads.filter((t) => !t.resolved).length}
         commentsOn={showComments}
         onComments={() => (phone ? setPanel((p) => (p === "comments" ? null : "comments")) : setCommentsOpen((o) => !o))}
@@ -1500,6 +1502,8 @@ export default function App() {
       >
         {phone && <div className={cx("panel-backdrop", panel && "on")} onClick={() => setPanel(null)} />}
         <Sidebar
+          meta={meta}
+          pr={pr}
           right={sideRight}
           mode={mode}
           modes={modes}

@@ -388,6 +388,15 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "pulled": n})
 }
 
+// handlePR is the checked-out branch's pull request: { pr }, null for none.
+func (s *Server) handlePR(w http.ResponseWriter, r *http.Request) {
+	var pr *gitx.PR
+	if s.repo.IsGit() {
+		pr = s.repo.PullRequest()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pr": pr})
+}
+
 type threadReq struct {
 	File      string        `json:"file"`
 	Side      string        `json:"side"`
