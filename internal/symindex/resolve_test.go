@@ -228,6 +228,37 @@ func TestResolveRanksByProximity(t *testing.T) {
 	}
 }
 
+func TestResolveKeepsToTheLanguage(t *testing.T) {
+	ix := build(t, map[string]string{
+		"server/status.go": "package server\n\nfunc Status() {}\n",
+		"web/status.js":    "export function Status() {}\n",
+		"web/app.tsx":      "export function Badge() {}\n",
+		"web/badge.ts":     "export function Badge() {}\n",
+		"lib/only.py":      "def only_here():\n    pass\n",
+		"server/limits.go": "package server\n\ntype T struct {\n\tlimit int\n}\n",
+		"web/limits.js":    "export function limit() {}\n",
+	})
+	for _, c := range []struct {
+		name, from, source string
+		want               []string
+	}{
+		{"Status", "server/main.go", "index", []string{"server/status.go:3"}},
+		{"Badge", "web/other.jsx", "index", []string{"web/badge.ts:1", "web/app.tsx:1"}},
+		// None in its own language, so the others'.
+		{"only_here", "server/main.go", "index", []string{"lib/only.py:1"}},
+		// Prose names code in any language.
+		{"Status", "README.md", "index", []string{"server/status.go:3", "web/status.js:1"}},
+		// A field in Go outranks a function the index has in JS.
+		{"limit", "server/main.go", "scan", []string{"server/limits.go:4"}},
+	} {
+		res := ix.Resolve(c.name, c.from, 10)
+		got := names(res.Defs)
+		if res.Source != c.source || strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Errorf("%s from %s: %s %v, want %s %v", c.name, c.from, res.Source, got, c.source, c.want)
+		}
+	}
+}
+
 func TestResolveNoOriginStillWorks(t *testing.T) {
 	ix := build(t, map[string]string{"a.go": "package a\n\nfunc Handle() {}\n"})
 	res := ix.Resolve("Handle", "", 10)

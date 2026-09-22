@@ -191,6 +191,17 @@ func langFor(path string) *lang {
 	return nil
 }
 
+// family is which files a file's code uses the definitions of: those parsed
+// by the same rules, as a .tsx by JS's or a header by C's. Prose, which
+// names code in any language, and files not indexed have none: nil.
+func family(path string) *rule {
+	l := langFor(path)
+	if l == nil || len(l.rules) == 0 || &l.rules[0] == &mdRules[0] {
+		return nil
+	}
+	return &l.rules[0]
+}
+
 // scanState carries comment and string state across the lines of one file.
 type scanState struct {
 	block int  // index into lang.blocks, or -1

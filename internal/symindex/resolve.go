@@ -38,18 +38,41 @@ const maxScanMatches = 400
 // to the file the reader is standing in. Matching is exact and whole-word
 // throughout: a go-to-definition that lands on MaxInflightLogChunks because
 // the reader clicked "inflight" is worse than no answer at all.
+//
+// Definitions in the reader's own language come first, and alone: a Status in
+// the JS is no answer to one clicked in Go, and would stand between the reader
+// and the jump. Only when that language has none are the others offered, as a
+// class in CSS is to a name clicked in JSX.
 func (ix *Index) Resolve(name, from string, limit int) Resolution {
 	res := Resolution{Name: name, Source: "none", Defs: []Candidate{}}
 	if !isIdentifier(name) {
 		return res
 	}
 
+	var indexed []Candidate
 	for _, s := range ix.Lookup(name) {
-		res.Defs = append(res.Defs, score(s, from, 0))
+		indexed = append(indexed, score(s, from, 0))
 	}
-	if len(res.Defs) > 0 {
-		res.Source = "index"
-	} else if scanned := ix.scanDefs(name, from); len(scanned) > 0 {
+	fam := family(from)
+	ours := func(defs []Candidate) []Candidate {
+		if fam == nil {
+			return defs
+		}
+		var out []Candidate
+		for _, d := range defs {
+			if family(d.File) == fam {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+	if defs := ours(indexed); len(defs) > 0 {
+		res.Defs, res.Source = defs, "index"
+	} else if scanned := ix.scanDefs(name, from); len(ours(scanned)) > 0 {
+		res.Defs, res.Source = ours(scanned), "scan"
+	} else if len(indexed) > 0 {
+		res.Defs, res.Source = indexed, "index"
+	} else if len(scanned) > 0 {
 		res.Defs, res.Source = scanned, "scan"
 	}
 
