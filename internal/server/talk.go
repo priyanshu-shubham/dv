@@ -92,16 +92,8 @@ func (t talk) Start(m notify.Message) (string, error) {
 	var last newModel
 	json.Unmarshal(prefs["newModel"], &last)
 	want := last[with]
-	var model, mode, effort *string
-	models := t.s.agent.OptionsFor(id).Models
-	if i := slices.IndexFunc(models, func(m agent.Model) bool { return m.ID == want.Model }); i >= 0 {
-		if want.Model != "" {
-			model = &want.Model
-		}
-		if want.Effort != "" && slices.Contains(models[i].Efforts, want.Effort) {
-			effort = &want.Effort
-		}
-	}
+	var mode *string
+	model, effort := t.s.picks(id, want.Model, want.Effort)
 	var settings struct {
 		ChatMode string `json:"chatMode"`
 	}
