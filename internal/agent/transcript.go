@@ -34,6 +34,9 @@ type Item struct {
 	Result *Result         `json:"result,omitempty"`
 	// Task is how a call left running in the background ended, once it has.
 	Task *Task `json:"task,omitempty"`
+	// Dropped is a call its turn ended without a result for, as when the
+	// process running it was stopped mid-call: not running, however busy.
+	Dropped bool `json:"dropped,omitempty"`
 
 	Error bool `json:"error,omitempty"` // a note about something that failed, or a command's error
 
@@ -359,6 +362,15 @@ func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 		}
 		if e.assistant {
 			before = e.uuid
+		}
+	}
+	ended := false
+	for i := len(items) - 1; i >= 0; i-- {
+		switch it := &items[i]; {
+		case it.Turn || it.Kind == "worked":
+			ended = true
+		case ended && it.Kind == "tool" && it.Result == nil:
+			it.Dropped = true
 		}
 	}
 	return compactedBy(items)

@@ -152,6 +152,32 @@ func TestCallsMadeTogetherAllGetTheirResults(t *testing.T) {
 	}
 }
 
+// A call whose process was stopped before its result has none ever, so once
+// the next turn begins it is no longer running, however busy the session.
+func TestACallCutOffByItsTurnsEndIsDropped(t *testing.T) {
+	bash := func(id string) map[string]any {
+		return map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "restart"}}
+	}
+	dropped := func(tr *Transcript) map[string]bool {
+		out := map[string]bool{}
+		for _, it := range tr.Items("") {
+			if it.Kind == "tool" {
+				out[it.ToolID] = it.Dropped
+			}
+		}
+		return out
+	}
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "restart it")) + line(t, assistant("a1", "u1", "msg_1", bash("t1")))))
+	if got := dropped(tr); got["t1"] {
+		t.Fatal("a call still out in the turn it began in is dropped")
+	}
+	tr.Feed([]byte(line(t, user("u2", "a1", "Continue from where you left off.")) + line(t, assistant("a2", "u2", "msg_2", bash("t2")))))
+	if got := dropped(tr); !got["t1"] || got["t2"] {
+		t.Fatalf("dropped %v, want t1 alone", got)
+	}
+}
+
 func resultFor(id string, text any, record map[string]any) map[string]any {
 	return map[string]any{"type": "user", "uuid": "r-" + id, "parentUuid": "a-" + id, "cwd": "/repo/sub",
 		"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": text}}},

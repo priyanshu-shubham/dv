@@ -2068,7 +2068,7 @@ function AtWork({ calls, open, root, onOpen }) {
 function PeekTitle({ item, root, busy, running, onBack }) {
   const agent = peekable(item) === "agent";
   const { what } = toolSummary(item.tool, item.input, root);
-  const state = toolState(item.result, item.task, busy, running);
+  const state = toolState(item, busy, running);
   return (
     <span className="agent-peek-title">
       <button className="ghost" onClick={onBack} title="Back to the conversation (Esc)">
@@ -2491,7 +2491,7 @@ function activityOf(live, items, root) {
   if (block?.kind === "thinking") return ["solving", "Thinking"];
   if (block?.kind === "text") return ["composing", "Writing"];
   // A call still out, the latest first: its name, and what it is on.
-  const call = block?.kind === "tool" ? { tool: block.tool } : items.findLast((it) => it.kind === "tool" && !it.result);
+  const call = block?.kind === "tool" ? { tool: block.tool } : items.findLast((it) => it.kind === "tool" && !it.result && !it.dropped);
   if (call) {
     const { name, what } = toolSummary(call.tool, call.input, root);
     return [TOOL_ORBS[call.tool] || "working", [name || call.tool, what].filter(Boolean).join(" · ")];
@@ -2552,7 +2552,7 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
   const r = item.result;
   const d = r?.detail;
   const { name, what, mono } = toolSummary(item.tool, input, root);
-  const state = toolState(r, item.task, busy, running);
+  const state = toolState(item, busy, running);
   const command = item.tool === "Bash" || item.tool === "PowerShell";
   // One left in the background ran on after its result, so its time is not known.
   const took = command && r?.took > 0 && !item.task && state !== "background" && duration(r.took);
@@ -2678,7 +2678,7 @@ function didTogether(calls) {
 const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode", "ImageGeneration"]);
 function foldable(it, busy, running) {
   if (it.kind !== "tool" || it.result?.edited || UNFOLDED.has(it.tool)) return false;
-  return ["done", "failed", "stopped"].includes(toolState(it.result, it.task, busy, running));
+  return ["done", "failed", "stopped"].includes(toolState(it, busy, running));
 }
 
 // runsOf finds calls done one after another, which read as one line: by the
@@ -2711,7 +2711,7 @@ function peekable(it) {
   return "";
 }
 
-const working = (it, busy, running) => ["running", "background"].includes(toolState(it.result, it.task, busy, running));
+const working = (it, busy, running) => ["running", "background"].includes(toolState(it, busy, running));
 
 const STATES = {
   running: "Running",
@@ -2725,8 +2725,8 @@ const STATES = {
 // toolState is what a call's dot says. Work left in the background is not done
 // when its result comes, which only says it started, but when Claude Code says
 // it ended - or never, once nothing is running it.
-function toolState(r, task, busy, running) {
-  if (!r) return busy ? "running" : "unfinished";
+function toolState({ result: r, task, dropped }, busy, running) {
+  if (!r) return busy && !dropped ? "running" : "unfinished";
   if (r.isError) return "failed";
   if (task) return task.status === "completed" ? "done" : task.status === "failed" ? "failed" : "stopped";
   if (r.detail?.background) return running ? "background" : "unfinished";
