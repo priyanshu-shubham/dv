@@ -387,14 +387,14 @@ func restart() {
 	}
 }
 
-// HandleUpdateCheck says whether a newer release than this dv is out. Builds
-// of one's own, "dev", are not checked.
+// HandleUpdateCheck says whether a newer release than this dv is out, asking
+// GitHub afresh with ?fresh. Builds of one's own, "dev", are not checked.
 func HandleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if Version == "dev" {
 		writeJSON(w, http.StatusOK, map[string]string{"version": Version})
 		return
 	}
-	latest, err := update.Latest(r.Context())
+	latest, err := update.Latest(r.Context(), r.URL.Query().Has("fresh"))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return

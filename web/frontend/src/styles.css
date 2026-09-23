@@ -5923,6 +5923,18 @@ button.ghost.composer-add {
   background: var(--accent);
 }
 
+/* The same dot on Settings' tab, after its name. */
+.settings-tabs button.has-update::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 2px;
+}
+
 /* The header's bell: what is waiting, one click from the request. */
 .topbar .bell {
   color: var(--accent);

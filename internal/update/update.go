@@ -43,15 +43,15 @@ var (
 
 // Latest is the newest release's version, as "0.8.2". GitHub answers
 // releases/latest with a redirect to its tag, which is all that is read: no
-// API, so no rate limit.
-func Latest(ctx context.Context) (string, error) {
+// API, so no rate limit. fresh asks again however recently it was asked.
+func Latest(ctx context.Context, fresh bool) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	keep := checkEvery
 	if lastErr != nil {
 		keep = retryAfter
 	}
-	if !checked.IsZero() && time.Since(checked) < keep {
+	if !fresh && !checked.IsZero() && time.Since(checked) < keep {
 		return latest, lastErr
 	}
 	latest, lastErr = ask(ctx)

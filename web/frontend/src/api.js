@@ -268,8 +268,9 @@ export const api = {
   run: () => req("/api/restart", {}, ""),
   restart: () => req("/api/restart", { method: "POST", body: "{}" }, ""),
   // updateCheck: { version, latest, newer }, or just { version: "dev" } for a
-  // build of one's own; update installs latest and restarts into it.
-  updateCheck: () => req("/api/update", {}, ""),
+  // build of one's own, fresh from GitHub if asked; update installs latest
+  // and restarts into it.
+  updateCheck: (fresh) => req("/api/update" + (fresh ? "?fresh" : ""), {}, ""),
   update: (version) => req("/api/update", { method: "POST", body: JSON.stringify({ version }) }, ""),
 
   // notices follows what the reader is told of - the whole process's, a hub's

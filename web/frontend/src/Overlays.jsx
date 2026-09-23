@@ -687,11 +687,22 @@ export function SettingsOverlay({
       </div>
       <div className="settings-tabs">
         <span className="seg" role="tablist">
-          {tabs.map(([id, name]) => (
-            <button key={id} role="tab" className={cx(id === tab && "on")} aria-selected={id === tab} onClick={() => setTab(id)}>
-              {name}
-            </button>
-          ))}
+          {tabs.map(([id, name]) => {
+            // The Settings button's dot, on the tab the update is in.
+            const dot = id === "server" && update;
+            return (
+              <button
+                key={id}
+                role="tab"
+                className={cx(id === tab && "on", dot && "has-update")}
+                aria-selected={id === tab}
+                title={dot ? `dv v${update.latest} is out` : undefined}
+                onClick={() => setTab(id)}
+              >
+                {name}
+              </button>
+            );
+          })}
         </span>
       </div>
       <div className="settings-body">
@@ -786,15 +797,7 @@ export function SettingsOverlay({
         {tab === "actions" && actions}
         {tab === "server" && (
           <>
-            {boot.run.version !== "dev" && (
-              <Setting
-                label="Check for updates"
-                note="Asks GitHub which release is newest when a page opens, at most every six hours."
-                value={settings.updateCheck !== false}
-                onPick={(on) => onChange({ updateCheck: on ? undefined : false })}
-                choices={OFF_ON}
-              />
-            )}
+            <UpdateCheck settings={settings} onChange={onChange} />
             <RestartRow working={working} update={update} />
           </>
         )}
@@ -1211,7 +1214,80 @@ export function useUpdate(off) {
     document.addEventListener("visibilitychange", check);
     return () => document.removeEventListener("visibilitychange", check);
   }, [off]);
+  useEffect(() => {
+    updateHeard.add(setFound);
+    return () => updateHeard.delete(setFound);
+  }, []);
   return found;
+}
+
+// checkUpdate asks GitHub now, whenever it was last asked, and tells each
+// useUpdate what it said, checks turned off or not: this one was asked for.
+const updateHeard = new Set();
+async function checkUpdate() {
+  const u = await api.updateCheck(true);
+  for (const set of updateHeard) set(u.newer ? u : null);
+  return u;
+}
+
+// UpdateCheck is the Server tab's say over checking: whether a page does as
+// it opens, and a check now, which says what it found. It names the version
+// running, which a build of one's own has none of to check.
+function UpdateCheck({ settings, onChange }) {
+  // A newer release is for the Restart row below to say.
+  const [state, setState] = useState(""); // "", "checking", "latest", or what went wrong
+  const check = async () => {
+    setState("checking");
+    try {
+      const u = await checkUpdate();
+      setState(u.newer ? "" : "latest");
+    } catch (e) {
+      setState(e.message);
+    }
+  };
+  const version = boot.run.version;
+  if (version === "dev") {
+    return (
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Version</div>
+          <div className="settings-note">This is a build of your own, so it is not checked for updates.</div>
+        </div>
+      </div>
+    );
+  }
+  const said = {
+    "": ". A page asks GitHub which release is newest as it opens, at most every six hours.",
+    checking: ". Asking GitHub…",
+    latest: ", the newest release.",
+  }[state];
+  return (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>Check for updates</div>
+        <div className="settings-note">
+          This is v{version}
+          {said ?? (
+            <>
+              . <span className="prompt-error">{state}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <span className="settings-actions">
+        <button className="btn" disabled={state === "checking"} onClick={check}>
+          Check now
+        </button>
+        <span className="seg">
+          {OFF_ON.map(([v, name]) => (
+            <button key={name} className={cx(v === (settings.updateCheck !== false) && "on")} aria-pressed={v === (settings.updateCheck !== false)} onClick={() => onChange({ updateCheck: v ? undefined : false })}>
+              {name}
+            </button>
+          ))}
+        </span>
+      </span>
+    </div>
+  );
 }
 
 const RESTART_WAIT_MS = 60000;
@@ -1248,7 +1324,7 @@ function RestartRow({ working, update }) {
   const failed = state && !busy;
   const note = update ? (
     <>
-      v{update.latest} is out; this is v{update.version}.{" "}
+      v{update.latest} is out.{" "}
       <a className="link" href={`https://github.com/priyanshu-shubham/dv/releases/tag/v${update.latest}`} target="_blank" rel="noopener">
         What is new
       </a>
