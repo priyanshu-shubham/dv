@@ -320,7 +320,7 @@ button.ghost,
 .toggles > button,
 .scope-chips > button,
 .file-note.skipped button,
-.gap-side button,
+.gap button,
 .file-collapse,
 .file-head .nav,
 .scope-button {
@@ -350,7 +350,7 @@ button.ghost:hover,
 .toggles > button:hover,
 .scope-chips > button:hover,
 .file-note.skipped button:hover,
-.gap-side button:hover,
+.gap button:hover,
 .file-collapse:hover,
 .file-head .nav:hover:not(:disabled),
 .scope-button:hover {
@@ -388,7 +388,7 @@ button.ghost.on {
 .file-head .btn,
 .file-collapse,
 .file-head .nav,
-.gap-side button,
+.gap button,
 .file-note.skipped button,
 .mini {
   height: var(--ctl-h-sm);
@@ -1951,13 +1951,11 @@ button.headref:hover {
   background: var(--mark-on);
 }
 
-/* The gap bar spans the full scrollable width of the diff, and its two control
-   groups are sticky to the viewport's edges — so whichever column you are
-   reading, and however far the diff is scrolled sideways, the expand controls
-   are right there. Clicking anywhere on the bar expands it. */
+/* The gap bar is laid out as a code row: the expand control in the gutter,
+   what the change below sits inside in the code's column, and in split one
+   half per side. Clicking anywhere on the bar expands it. */
 /* The blank cells' half-step, so a gap right under a file head is not one
-   block with it. Opaque, so the sticky sides can inherit it and still cover
-   shifted code. */
+   block with it. */
 .gap {
   display: flex;
   align-items: center;
@@ -1973,31 +1971,68 @@ button.headref:hover {
   color: var(--fg-2);
 }
 
-.gap-side {
-  position: sticky;
+.gap-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.gap-half {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+}
+
+.gap-split .gap-half + .gap-half {
+  border-left: 1px solid var(--border-soft);
+}
+
+.gap .gutter {
+  align-self: stretch;
+  background: none;
+}
+
+.gap button {
+  font-family: var(--font-mono);
+}
+
+.gap-code {
+  color: var(--fg);
+  font: 12px/20px var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.gap-code:not(code) {
+  font: inherit;
+}
+
+.gap-dim {
+  color: var(--fg-3);
+}
+
+.gap-part:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--fg-3);
+  text-underline-offset: 3px;
+}
+
+.gap-end {
   display: flex;
   align-items: center;
-  gap: 2px;
   padding: 0 4px;
-  background: inherit;
-}
-
-.gap-side.gap-left {
-  left: 0;
-}
-
-.gap-side.gap-right {
-  right: 0;
-}
-
-.gap-side button {
-  font-family: var(--font-mono);
 }
 
 /* The expand chevrons, drawn in CSS. A large review has thousands of gap bars
    and an inline SVG icon is three elements each; this is one pseudo-element. */
-.gap-side .gap-icon {
-  position: relative;
+.gap .gap-icon {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 0;
 }
 
@@ -4502,6 +4537,18 @@ button.ghost.agent-context {
 }
 
 /* A command's output as it runs, the whole view to itself. */
+.agent-peer {
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+}
+
+.agent-peer-from {
+  margin-bottom: 4px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
 .agent-task-output {
   margin: 0;
   padding: 10px 14px;
@@ -4541,6 +4588,11 @@ button.ghost.agent-context {
 
 .agent-pane > .agent-at-work + .agent-composer::before {
   content: none;
+}
+
+/* Standing in for the message box's bottom padding. */
+.agent-at-work.last {
+  padding-bottom: 14px;
 }
 
 .agent-at-work-call {

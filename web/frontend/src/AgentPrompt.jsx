@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
+import { grow } from "./hunks.js";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { useLayer } from "./Overlays.jsx";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
@@ -792,7 +793,7 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
   }, [fd?.lang]);
 
   const expand = useCallback((id, amount) => {
-    setExpanded((e) => ({ ...e, [id]: amount === "all" ? "all" : (typeof e[id] === "number" ? e[id] : 0) + amount }));
+    setExpanded((e) => ({ ...e, [id]: grow(e[id], amount) }));
   }, []);
 
   if (!p) {

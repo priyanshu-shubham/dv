@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { buildBlocks, codeLines, pairRows, unifiedRows } from "./hunks.js";
+import { buildBlocks, codeLines, grow, pairRows, revealFor, stripOpener, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
-import { applyRanges, ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
 import { charWidth, cx, isMac, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
@@ -48,10 +48,7 @@ function FileDiff({
   const oneSided = entry.status === "A" || entry.status === "D";
 
   const expand = useCallback((id, amount) => {
-    setExpanded((e) => ({
-      ...e,
-      [id]: amount === "all" ? "all" : (typeof e[id] === "number" ? e[id] : 0) + amount,
-    }));
+    setExpanded((e) => ({ ...e, [id]: grow(e[id], amount) }));
   }, []);
 
   const startComment = useCallback(
@@ -355,6 +352,13 @@ export function DiffBody({
   const ready = langReady(fd.lang);
   const oldHtml = useMemo(() => highlightLines(path + " old", fd.oldLines, fd.lang), [path, fd, ready]);
   const newHtml = useMemo(() => highlightLines(path + " new", fd.newLines, fd.lang), [path, fd, ready]);
+  const html = useMemo(() => ({ old: oldHtml, new: newHtml }), [oldHtml, newHtml]);
+  const revealScope = useCallback(
+    (scope) => {
+      for (const [id, amount] of revealFor(fd, blocks, scope)) onExpand(id, amount);
+    },
+    [fd, blocks, onExpand],
+  );
 
   // Threads keyed by the row they hang under, so rendering stays a lookup.
   const byAnchor = useMemo(() => {
@@ -701,7 +705,7 @@ export function DiffBody({
     >
       {blocks.map((b, i) =>
         b.kind === "gap" ? (
-          <GapRow key={b.id + i} gap={b} onExpand={unknown ? null : onExpand} />
+          <GapRow key={b.id + i} gap={b} onExpand={unknown ? null : onExpand} onScope={revealScope} view={view} html={html} />
         ) : (
           <Block
             key={`${i}:${view}:${wrap}`}
@@ -842,52 +846,87 @@ function Block({ lines, view, wrap, ctx, onMeasure, force }) {
   );
 }
 
-function GapRow({ gap, onExpand }) {
+function GapRow({ gap, onExpand, onScope, view, html }) {
   if (!onExpand) {
     return (
       <div className="gap unknown">
-        <div className="gap-side gap-left">
-          <span className="gap-label">
-            {gap.hidden} line{gap.hidden === 1 ? "" : "s"} not kept in the transcript
-          </span>
-        </div>
+        <span className="gap-label gap-end">
+          {gap.hidden} line{gap.hidden === 1 ? "" : "s"} not kept in the transcript
+        </span>
       </div>
     );
   }
-  const actions = (
-    <>
-      <button
-        className="gap-icon"
-        onClick={(e) => {
-          e.stopPropagation();
-          onExpand(gap.id, 20);
-        }}
-        title="Expand 20 lines"
-        aria-label="Expand 20 lines"
-      />
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onExpand(gap.id, "all");
-        }}
-        title="Expand the whole gap"
-      >
-        all
-      </button>
-    </>
+  const count = (
+    <span className="gap-label">
+      {gap.hidden} unchanged line{gap.hidden === 1 ? "" : "s"}
+    </span>
   );
-  return (
-    <div className="gap" onClick={() => onExpand(gap.id, 20)} title="Expand 20 lines">
-      <div className="gap-side gap-left">
-        {actions}
-        <span className="gap-label">
-          {gap.hidden} unchanged line{gap.hidden === 1 ? "" : "s"}
-        </span>
+  // Laid out as a code row, so the scope sits in the code's column, and in
+  // split each side names its own.
+  const half = (side, first, last) => {
+    const scope = gap.scope?.[side];
+    return (
+      <div className="gap-half" key={side}>
+        <div className="gutter gap-gutter">
+          <span className="ln" />
+          {view === "unified" && <span className="ln" />}
+          <button
+            className="gap-icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              onExpand(gap.id, 20);
+            }}
+            aria-label="Expand 20 lines"
+          />
+        </div>
+        {scope ? (
+          <code
+            className="code gap-code"
+            onClick={(e) => {
+              const part = e.target.closest(".gap-part");
+              if (!part) return;
+              e.stopPropagation();
+              onScope(scope[part.dataset.i]);
+            }}
+            dangerouslySetInnerHTML={{ __html: scopeHtml(scope, html[side]) }}
+          />
+        ) : (
+          <span className="gap-code">{first && !gap.scope && count}</span>
+        )}
+        {last && (
+          <div className="gap-end">
+            {gap.scope && count}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExpand(gap.id, "all");
+              }}
+              title="Expand the whole gap"
+            >
+              all
+            </button>
+          </div>
+        )}
       </div>
-      <span className="spacer" />
-      <div className="gap-side gap-right">{actions}</div>
+    );
+  };
+  return (
+    <div className={cx("gap", view === "split" && "gap-split")} onClick={() => onExpand(gap.id, 20)} title="Expand 20 lines">
+      {view === "split" ? [half("old", true, false), half("new", false, true)] : half(gap.scope?.side ?? "new", true, true)}
     </div>
   );
+}
+
+// scopeHtml draws a gap's scope from the lines' own highlighting, outdented,
+// each header a part that opens the whole of what it heads.
+function scopeHtml(scope, html) {
+  const line = (i) => (html[i] ?? "").replace(/^((?:<span[^>]*>)*)[ \t]+/, "$1");
+  return scope
+    .map((s, i) => {
+      const body = stripOpener(s.lines.map(line).join('<span class="gap-dim">…</span>'));
+      return `<span class="gap-part" data-i="${i}" title="Show all of ${escapeHtml(s.text)}">${body}</span>`;
+    })
+    .join(' <span class="gap-dim">›</span> ');
 }
 
 // wordRanges computes the changed character ranges for a replaced line pair,

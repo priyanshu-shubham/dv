@@ -335,6 +335,34 @@ func TestAFailedCallsOutputIsItsText(t *testing.T) {
 	}
 }
 
+// Another session's message shows whether it came while this one was idle, as
+// a meta line, or busy, as a queued message.
+func TestPeerMessages(t *testing.T) {
+	msg := func(body string) string {
+		return "<cross-session-message from=\"uds:/run/user/1000/cc-socks/9.sock\" from-name=\"dv-3e\" from-mode=\"prompting\">\n" + body + "\n</cross-session-message>"
+	}
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "go")) +
+		line(t, assistant("a1", "u1", "m1", text("ok"))) +
+		line(t, map[string]any{"type": "user", "uuid": "p1", "parentUuid": "a1", "isMeta": true,
+			"origin":  map[string]any{"kind": "peer", "name": "dv-3e"},
+			"message": map[string]any{"role": "user", "content": "Another Claude session sent a message:\n" + msg("Chunk 1 is done.")}}) +
+		line(t, map[string]any{"type": "attachment", "uuid": "p2", "parentUuid": "p1",
+			"attachment": map[string]any{"type": "queued_command", "prompt": msg("And chunk 2.")}})))
+	var got []Item
+	for _, it := range tr.Items("") {
+		if it.Kind == "peer" {
+			got = append(got, it)
+		}
+		if it.Kind == "prompt" && it.Text != "go" {
+			t.Errorf("a peer's message shows as a prompt: %q", it.Text)
+		}
+	}
+	if len(got) != 2 || got[0].From != "dv-3e" || got[0].Text != "Chunk 1 is done." || !got[0].Turn || got[1].Text != "And chunk 2." || got[1].Turn {
+		t.Fatalf("peer messages = %+v", got)
+	}
+}
+
 // A background command's result only says it started; it ends when Claude
 // Code's notification says so, or when Claude stops it.
 func TestBackgroundWorkRunsUntilItsNotification(t *testing.T) {
@@ -756,6 +784,29 @@ func TestProcArgsResumeAtARewind(t *testing.T) {
 	p = &proc{id: "s2"}
 	if got := strings.Join(p.args(), " "); !strings.Contains(got, "--session-id s2") || strings.Contains(got, "--resume") {
 		t.Fatalf("new session args %s", got)
+	}
+}
+
+// A headless resume forgets the session's name, so dv passes the one its
+// transcript last gave it; a rename while stopped leaves it there too.
+func TestAResumeKeepsTheSessionsName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s1.jsonl")
+	os.WriteFile(path, []byte(line(t, user("u1", "", "go"))+`{"type":"agent-name","agentName":"old","sessionId":"s1"}`+"\n"), 0o600)
+	if got := agentName(path); got != "old" {
+		t.Fatalf("agentName = %q", got)
+	}
+	p := &proc{id: "s1", resume: true, named: func() string { return agentName(path) }}
+	if got := strings.Join(p.args(), " "); !strings.Contains(got, "--name old") {
+		t.Fatalf("resume args %s", got)
+	}
+	if err := writeTitle(path, "s1", "new name"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(p.args(), " "); !strings.Contains(got, "--name new name") {
+		t.Fatalf("after a rename %s", got)
+	}
+	if got := agentName(filepath.Join(t.TempDir(), "none.jsonl")); got != "" {
+		t.Fatalf("no transcript: %q", got)
 	}
 }
 

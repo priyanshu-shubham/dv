@@ -103,6 +103,18 @@ func (s *Server) handleAgentOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleAgentStart(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	if err := s.agent.Start(id); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleAgentTemporary(w http.ResponseWriter, r *http.Request) {
 	id, ok := session(w, r)
 	if !ok {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -35,10 +36,11 @@ type Block struct {
 type proc struct {
 	id, cwd string
 	broker  *permit.Broker
-	changed func() // its live state moved
-	wrote   func() // it put something in the transcript
-	sent    func() // a message went to it
-	ended   func() // a turn is over
+	changed func()        // its live state moved
+	wrote   func()        // it put something in the transcript
+	sent    func()        // a message went to it
+	ended   func()        // a turn is over
+	named   func() string // the name its transcript last gave it, for a resume
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
@@ -120,8 +122,14 @@ func (p *proc) args() []string {
 	if p.effort != "" {
 		args = append(args, "--effort", p.effort)
 	}
-	if p.title != "" && !p.resume {
-		args = append(args, "--name", p.title)
+	// The name other sessions send to. A headless resume does not take back the
+	// one the transcript keeps, as the terminal does, so it is passed again.
+	name := p.title
+	if p.resume && p.named != nil {
+		name = cmp.Or(p.named(), p.title)
+	}
+	if name != "" {
+		args = append(args, "--name", name)
 	}
 	return args
 }

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -437,6 +439,26 @@ func (m *Manager) SetOpen(id string, open bool) error {
 	return nil
 }
 
+// Start runs a session ahead of a message, as looking at one does: stopped
+// while idle, it has no process for other sessions to send to. Codex has no
+// such messages to wait for.
+func (m *Manager) Start(id string) error {
+	if m.isCodex(id) {
+		return nil
+	}
+	p, err := m.procFor(id)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	err = p.startLocked()
+	// Idle from the look, so it is not stopped again straight away.
+	p.lastUsed = time.Now()
+	p.mu.Unlock()
+	m.broker.Notify()
+	return err
+}
+
 func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p := &proc{id: id, cwd: cwd, broker: m.broker, resume: resume, lastUsed: time.Now()}
 	if r, ok := m.saved.Rewound(id); ok && !r.Sent {
@@ -444,6 +466,7 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	}
 	p.changed = func() { m.signal(id, false) }
 	p.wrote = func() { m.signal(id, true) }
+	p.named = func() string { return agentName(transcriptFiles(m.root)[id]) }
 	p.ended = func() {
 		// A turn spends from the plan; the next look should show it.
 		m.mu.Lock()
@@ -741,16 +764,52 @@ func (m *Manager) Rename(id, title string) error {
 		}
 		return fmt.Errorf("no session %s in this repository", id)
 	}
-	// Nothing is writing the transcript, so the title goes in as Claude Code
-	// writes one.
-	line, _ := json.Marshal(map[string]string{"type": "custom-title", "customTitle": title, "sessionId": id})
+	return writeTitle(path, id, title)
+}
+
+// writeTitle names a session nothing is running, as Claude Code's /rename
+// does: its title, and the name other sessions send to.
+func writeTitle(path, id, title string) error {
+	var lines []byte
+	for _, v := range []map[string]string{
+		{"type": "custom-title", "customTitle": title, "sessionId": id},
+		{"type": "agent-name", "agentName": title, "sessionId": id},
+	} {
+		b, _ := json.Marshal(v)
+		lines = append(append(lines, b...), '\n')
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	_, err = f.Write(append(line, '\n'))
+	_, err = f.Write(lines)
 	return err
+}
+
+// agentName is the name a transcript last gave its session, "" for none.
+func agentName(path string) string {
+	f, err := os.Open(path)
+	if path == "" || err != nil {
+		return ""
+	}
+	defer f.Close()
+	name := ""
+	rd := bufio.NewReaderSize(f, 1<<16)
+	for {
+		line, err := rd.ReadBytes('\n')
+		if bytes.Contains(line, []byte(`"type":"agent-name"`)) {
+			var r struct {
+				Name string `json:"agentName"`
+			}
+			if json.Unmarshal(line, &r) == nil && r.Name != "" {
+				name = r.Name
+			}
+		}
+		if err != nil {
+			return name
+		}
+	}
 }
 
 // Rewind takes a session back to just before one of its prompts, as the

@@ -19,7 +19,7 @@ import (
 // Item is one thing in a conversation as the page draws it.
 type Item struct {
 	Key  string `json:"key"`
-	Kind string `json:"kind"` // prompt | command | output | text | thinking | tool | note | compact | mode
+	Kind string `json:"kind"` // prompt | command | output | text | thinking | tool | note | compact | mode | peer
 	At   string `json:"at,omitempty"`
 	Text string `json:"text,omitempty"`
 
@@ -53,8 +53,9 @@ type Item struct {
 	// On a compaction, whose Text is Claude's summary of what came before.
 	Compacted *Compacted `json:"compacted,omitempty"`
 
-	From string `json:"from,omitempty"` // on a change of mode, whose Text is the new one
-
+	// On a change of mode, whose Text is the new one; on a peer's message, the
+	// session that sent it.
+	From string `json:"from,omitempty"`
 }
 
 type Compacted struct {
@@ -566,7 +567,8 @@ func (t *Transcript) parse(line []byte) *entry {
 			break
 		}
 		t.finished(text)
-		if text == "" && images == 0 || r.Meta {
+		// Another session's message comes in as a meta line when this one is idle.
+		if text == "" && images == 0 || r.Meta && r.Origin.Kind != "peer" {
 			break
 		}
 		t.prompt(e, r, text, images, note, true)
@@ -622,6 +624,8 @@ var (
 	commandName = regexp.MustCompile(`<command-name>([^<]*)</command-name>`)
 	commandArgs = regexp.MustCompile(`(?s)<command-args>(.*?)</command-args>`)
 	taskSummary = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)
+	peerMessage = regexp.MustCompile(`(?s)<cross-session-message\b([^>]*)>(.*?)(?:</cross-session-message>|$)`)
+	peerName    = regexp.MustCompile(`from-name="([^"]*)"`)
 	taskTool    = regexp.MustCompile(`<tool-use-id>([^<]*)</tool-use-id>`)
 	taskID      = regexp.MustCompile(`<task-id>([^<]*)</task-id>`)
 	taskStatus  = regexp.MustCompile(`<status>([^<]*)</status>`)
@@ -722,6 +726,14 @@ func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note 
 	case r.Origin.Kind == "task-notification" || strings.HasPrefix(text, "<task-notification>"):
 		note(strings.TrimSpace(firstGroup(taskSummary, text)), false)
 		e.items[len(e.items)-1].Turn = turn
+	// Sent by another session with SendMessage. Busy, this one gets it as a
+	// queued message, which has only the tag to say so.
+	case r.Origin.Kind == "peer" || strings.HasPrefix(text, "<cross-session-message"):
+		m := peerMessage.FindStringSubmatch(text)
+		if m == nil {
+			break
+		}
+		e.items = append(e.items, Item{Key: r.UUID, Kind: "peer", At: r.Timestamp, From: firstGroup(peerName, m[1]), Text: strings.TrimSpace(m[2]), Turn: turn})
 	default:
 		e.items = append(e.items, Item{Key: r.UUID, Kind: "prompt", At: r.Timestamp, Text: text, Images: images, UUID: r.UUID, Turn: turn})
 	}

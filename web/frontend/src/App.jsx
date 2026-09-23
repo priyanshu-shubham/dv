@@ -147,6 +147,21 @@ export default function App() {
     document.documentElement.dataset.code = settings.codeColors || "github";
   }, [settings.codeColors]);
 
+  // Automatic moves to another comparison as the work does - a commit leaves
+  // nothing uncommitted - and says so, or the diff changes under the reader
+  // with nothing to show why. Not on the first load, nor on picking it. Only
+  // the diff shows it, so a move made elsewhere is told on coming back to it.
+  const autoWas = useRef(null); // { picked, label }
+  const autoNow = scope.kind === "auto" && diff?.scope?.picked ? diff.scope : null;
+  useEffect(() => {
+    if (mode !== "diff") return;
+    const was = autoWas.current;
+    autoWas.current = autoNow && { picked: autoNow.picked, label: autoNow.label };
+    if (!was || !autoNow || was.picked === autoNow.picked) return;
+    const why = was.picked === "working" ? "Nothing is uncommitted any more" : autoNow.picked === "working" ? "There are uncommitted changes again" : autoNow.desc;
+    say(`Diff now shows ${autoNow.label}`, why);
+  }, [autoNow?.picked, mode]);
+
   // Claude Code's prompts waiting on the reader. The session on screen in the
   // Agent view asks in its conversation; the rest are told of in notices, and
   // answered in a window over the page opened from one or from the bell.
@@ -1077,6 +1092,8 @@ export default function App() {
   const loadSessions = useCallback(() => {
     api.agentSessions().then(setAgent).catch(() => {});
   }, []);
+  // Once in any mode: Send can go to a session that is not open, and names it.
+  useEffect(() => loadSessions(), [loadSessions]);
   useEffect(() => {
     if (mode !== "agent") return;
     loadSessions();
@@ -1100,6 +1117,16 @@ export default function App() {
     },
     [agent.sessions, setAgentId, loadSessions],
   );
+  // An open session dv stopped while it sat idle starts again once looked at
+  // for a moment, so other sessions can send to it; stepping through the list
+  // does not start each one passed.
+  const onScreen = mode === "agent" ? agent.sessions.find((x) => x.id === agentId) : null;
+  const wake = onScreen?.open && !onScreen.running && onScreen.agent !== "codex" ? onScreen.id : "";
+  useEffect(() => {
+    if (!wake) return;
+    const t = setTimeout(() => api.agentStart(wake).then(loadSessions, () => {}), 1000);
+    return () => clearTimeout(t);
+  }, [wake, loadSessions]);
   // A session is made when its first message is sent; until then it is the
   // page's blank one.
   const newSession = useCallback(async () => {
@@ -1304,12 +1331,19 @@ export default function App() {
   }, [mode, agent.sessions, agentId, selectSession]);
 
   // What is added from Diff and Code goes to a session that can be written to:
-  // the one picked while it stays open, else the first in the list, else a new
-  // one. The open sessions come with the requests, in every mode.
-  const attachChoices = useMemo(
-    () => (activity || []).filter((s) => s.running !== "terminal").map((s) => ({ id: s.id, label: s.title || "Untitled session", agent: s.agent || "" })),
-    [activity],
-  );
+  // the one last looked at or picked, open or not, else the first open one,
+  // else a new one. The open sessions come with the requests, in every mode.
+  const writable = (s) => s && s.running !== "terminal";
+  useEffect(() => {
+    if (agentId && agentId !== attachPick && writable(agent.sessions.find((s) => s.id === agentId))) setAttachPick(agentId);
+  }, [agentId, agent.sessions, attachPick, setAttachPick]);
+  const attachChoices = useMemo(() => {
+    const choice = (s) => ({ id: s.id, label: s.title || s.prompt || "Untitled session", agent: s.agent || "" });
+    const out = (activity || []).filter(writable).map(choice);
+    const picked = agent.sessions.find((s) => s.id === attachPick);
+    if (writable(picked) && !out.some((c) => c.id === picked.id)) out.unshift(choice(picked));
+    return out;
+  }, [activity, agent.sessions, attachPick]);
   const attachTo = attachChoices.some((c) => c.id === attachPick) ? attachPick : attachChoices[0]?.id || "";
   const attachTarget = useMemo(
     () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent }),

@@ -5,6 +5,7 @@ import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
+import { grow } from "./hunks.js";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
@@ -1749,7 +1750,7 @@ export default function AgentView({
             onOpenFile={onOpenFile}
           />
         ) : (
-          <TaskOutput key={peek} session={id} call={peek} />
+          <TaskOutput key={peek} session={id} call={peek} item={peekItem} />
         ))}
       {/* Kept, hidden, while a call is open: coming back finds the place held. */}
       <div className="agent-scroll" ref={scrollRef} onScroll={onScroll} hidden={!!peekItem}>
@@ -1842,7 +1843,9 @@ export default function AgentView({
         )}
       </div>
 
-      {atWork.length > 0 && <AtWork calls={atWork} open={peekItem?.toolId} root={root} onOpen={(call) => setPeek(peekItem?.toolId === call ? null : call)} />}
+      {atWork.length > 0 && (
+        <AtWork calls={atWork} open={peekItem?.toolId} last={!!peekItem} root={root} onOpen={(call) => setPeek(peekItem?.toolId === call ? null : call)} />
+      )}
       {lost && id && (
         <div className="agent-readonly agent-lost">
           Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back
@@ -2048,9 +2051,10 @@ function quote(text, code) {
   return `${fence}\n${text}\n${fence}`;
 }
 
-function AtWork({ calls, open, root, onOpen }) {
+// `last` is for when a call is open, which hides the message box under it.
+function AtWork({ calls, open, last, root, onOpen }) {
   return (
-    <div className="agent-at-work">
+    <div className={cx("agent-at-work", last && "last")}>
       {calls.map((c) => {
         const agent = peekable(c) === "agent";
         const { what } = toolSummary(c.tool, c.input, root);
@@ -2159,8 +2163,9 @@ const OUTPUT_MAX = 1 << 20;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 // TaskOutput is what a command left running in the background has written,
-// followed as it writes more.
-function TaskOutput({ session, call }) {
+// followed as it writes more, under the command whole: the header has room
+// for its description or first line only.
+function TaskOutput({ session, call, item }) {
   const [out, setOut] = useState(null); // { text, cut, gone }
   useEffect(
     () =>
@@ -2182,6 +2187,7 @@ function TaskOutput({ session, call }) {
   return (
     <div className="agent-scroll" ref={ref}>
       <div className="agent-log">
+        {item.input?.command && <Command text={item.input.command} lang={item.tool === "PowerShell" ? "powershell" : "bash"} />}
         {out?.cut && <div className="agent-note">Earlier output is left out.</div>}
         {shown && <pre className="agent-task-output">{shown}</pre>}
         {out && !shown && <div className="agent-note">{out.gone ? "The output is no longer kept." : "No output yet."}</div>}
@@ -2260,6 +2266,8 @@ const Item = memo(function Item(props) {
       return <Compacted item={item} />;
     case "mode":
       return <div className="agent-mode-line">{modeChange(item.from, item.text)}</div>;
+    case "peer":
+      return <PeerMessage item={item} />;
     case "tool":
       // Folded into the run's first call, but still one child per item: the
       // view finds items by their place among the conversation's children.
@@ -2282,6 +2290,17 @@ const Item = memo(function Item(props) {
   }
   return null;
 });
+
+// PeerMessage is what another session sent this one with SendMessage. It is
+// not what you said, so it keeps to the left, with who sent it.
+function PeerMessage({ item }) {
+  return (
+    <div className="agent-peer">
+      <div className="agent-peer-from">Message from {item.from || "another session"}</div>
+      <Markdown md={md} text={item.text} className="markdown agent-text" />
+    </div>
+  );
+}
 
 // Prompt is what you said, set to the right. One still on its way in is
 // pending; its pictures are the ones sent, where the transcript's are fetched.
@@ -2581,6 +2600,8 @@ function toolSummary(tool, input = {}, root) {
       return { what: input.skill || input.command || "" };
     case "ImageGeneration":
       return { name: "Image", what: firstLine(input.prompt) || rel(input.file_path) };
+    case "SendMessage":
+      return { name: "Message", what: [`to ${input.to}`, input.summary].filter(Boolean).join(" · ") };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
   if (mcp) return { name: mcp[1], what: mcp[2] };
@@ -2717,7 +2738,7 @@ function didTogether(calls) {
 // foldable is a call that goes into a run of them: done, and saying no more
 // on its own line than the run's does. An edit is its diff, the to-do list
 // its list, and a question or a plan is read for itself.
-const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode", "ImageGeneration"]);
+const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode", "ImageGeneration", "SendMessage"]);
 function foldable(it, busy, running) {
   if (it.kind !== "tool" || it.result?.edited || it.result?.said || UNFOLDED.has(it.tool)) return false;
   return ["done", "failed", "stopped"].includes(toolState(it, busy, running));
@@ -2871,6 +2892,8 @@ function ToolBody({ item, session, root, onOpenFile }) {
         <Markdown md={md} text={input.plan} className="markdown agent-plan" />
       ) : (tool === "Agent" || tool === "Task") && input.prompt ? (
         <Markdown md={md} text={input.prompt} className="markdown agent-page" />
+      ) : tool === "SendMessage" && typeof input.message === "string" ? (
+        <Markdown md={md} text={input.message} className="markdown agent-page" />
       ) : (
         !SAID.has(tool) && <Fields input={input} />
       )}
@@ -3125,7 +3148,7 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
   }, [fd?.lang]);
 
   const expand = useCallback((gid, amount) => {
-    setExpanded((x) => ({ ...x, [gid]: amount === "all" ? "all" : (typeof x[gid] === "number" ? x[gid] : 0) + amount }));
+    setExpanded((x) => ({ ...x, [gid]: grow(x[gid], amount) }));
   }, []);
 
   const startComment = useCallback(
