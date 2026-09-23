@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
-import Header, { AUTO, usePR } from "./Header.jsx";
+import Header, { AUTO, PRESETS, usePR } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
@@ -1114,7 +1114,11 @@ export default function App() {
     [agent.sessions, agentId, setAgentId, loadSessions],
   );
 
-  // The page's own actions, which do what their buttons and keys do.
+  const pr = usePR(meta?.head?.branch, meta?.remote);
+  // The page's own actions, which do what their buttons and keys do. What the
+  // diff compares is the bar's menu in Diff mode; Files reads by it instead.
+  const base = meta?.defaultBranch || "";
+  const comparing = mode === "diff" && !folder;
   const pageActions = [
     {
       id: "new-session",
@@ -1126,12 +1130,30 @@ export default function App() {
       },
     },
     newWorktree && { id: "new-worktree", name: "New worktree", note: "A session in a new worktree of this repo", run: newWorktree },
+    // A task's folder is the hub's to make and hold, as the hub's button does.
+    boot.base && {
+      id: "new-task",
+      name: "New task",
+      note: "A session in a new folder, deleted when you close it",
+      run: () => api.hubNewTask().then((f) => openFolderSession(f.slug, ""), (e) => say("Could not start a task", e.message)),
+    },
     {
       id: "comments",
-      name: "Open comments",
+      // Open, it closes them, as the header's button does.
+      name: showComments ? "Close comments" : "Open comments",
       note: "The comments in the review",
-      run: () => (phone ? setPanel("comments") : setCommentsOpen(true)),
+      run: () => (phone ? setPanel(showComments ? null : "comments") : setCommentsOpen(!showComments)),
     },
+    ...(comparing
+      ? PRESETS.filter((p) => p.kind !== scope.kind).map((p) => ({
+          id: "scope-" + p.kind,
+          name: `Show ${p.label.toLowerCase()}`,
+          note: `${p.hint(base)} · pinned for this tab`,
+          run: () => setScope({ kind: p.kind, rev: "" }),
+        }))
+      : []),
+    comparing && scope.kind !== "auto" && { id: "scope-auto", name: "Show automatically", note: "Follows your work, as the page starts", run: () => setScope(AUTO) },
+    pr && { id: "pr", name: `Open pull request #${pr.number}`, note: pr.title, run: () => window.open(pr.url, "_blank", "noopener") },
     meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
     { id: "settings", name: "Open settings", note: "Also the , key", run: () => openOverlay({ type: "settings" }) },
     boot.base && { id: "hub", name: "Back to the hub", note: "Also Alt+H", run: () => (location.href = "/") },
@@ -1243,7 +1265,6 @@ export default function App() {
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
   }, [requests, dot, meta, settings.tabName]);
   const update = useUpdate(settings.updateCheck === false);
-  const pr = usePR(meta?.head?.branch, meta?.remote);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   // Shift+Up and Down go through the open sessions in the order the list has

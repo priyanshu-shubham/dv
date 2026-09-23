@@ -307,7 +307,7 @@ export function ModeSwitch({ mode, modes, onMode, attached }) {
 
 export const CONTEXT_LINES = [0, 3, 8, 20];
 
-const PRESETS = [
+export const PRESETS = [
   { kind: "working", label: "Uncommitted", hint: () => "working tree vs HEAD" },
   { kind: "staged", label: "Staged", hint: () => "index vs HEAD" },
   { kind: "head", label: "Last commit", hint: () => "HEAD vs its parent" },
