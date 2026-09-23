@@ -968,7 +968,20 @@ export default function App() {
   // it was scrolled to, what had been typed - so stepping back returns to it as
   // it was rather than to the top of the definition they arrived at.
   const openOverlay = useCallback((o) => setStack([o]), []);
-  const openSearch = useCallback((query) => openOverlay({ type: "search", query: query || undefined }), [openOverlay]);
+  // The last search as it was left, which asking for search again without a
+  // new query brings back: its results, and the row and scroll it had.
+  const lastSearch = useRef(null);
+  const keepSearch = useCallback((o, { query, opts, place }) => {
+    const same = query === o.query;
+    lastSearch.current = { type: "search", query, opts, place, from: o.from, seed: same ? o.seed : undefined, source: same ? o.source : undefined };
+  }, []);
+  const openSearch = useCallback(
+    (query) => {
+      const last = lastSearch.current;
+      openOverlay(last && (!query || query === last.query) ? last : { type: "search", query: query || undefined });
+    },
+    [openOverlay],
+  );
   const pushOverlay = useCallback((o, left) => {
     setStack((s) => {
       const trail = left && s.length ? [...s.slice(0, -1), { ...s[s.length - 1], ...left }] : s;
@@ -1599,7 +1612,7 @@ export default function App() {
         scope={scope}
         resolvedScope={diff?.scope}
         onScope={setScope}
-        onSearch={() => openOverlay({ type: "search" })}
+        onSearch={() => openSearch()}
         onOpenFile={() => {
           setPanel(null);
           openOverlay({ type: "files" });
@@ -1881,12 +1894,14 @@ export default function App() {
           source={overlay.source}
           from={overlay.from || activePath}
           opts={overlay.opts}
+          place={overlay.place}
           onClose={closeOverlay}
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
-          onOpen={({ file, line }, { query, opts }) =>
+          onLeave={(left) => keepSearch(overlay, left)}
+          onOpen={({ file, line }, { query, opts, place }) =>
             // Kept for the way back. The seed answered the query it came with, not an edited one.
-            goTo(file, line, query === overlay.query ? { opts } : { query, opts, seed: undefined, source: undefined })
+            goTo(file, line, query === overlay.query ? { opts, place } : { query, opts, place, seed: undefined, source: undefined })
           }
         />
       )}

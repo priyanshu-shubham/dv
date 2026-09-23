@@ -2902,6 +2902,58 @@ a.path-link:hover {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* The results, and beside them the file around the one selected. Set high
+   while it previews, so the window does not jump as results come and go. */
+/* Wider where it can preview, from the start, so it does not grow as results come. */
+.modal.search.split {
+  width: min(1440px, 100%);
+}
+
+.search-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.search-split > .search-results {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-split.previewing {
+  height: 70vh;
+}
+
+.search-split.previewing > .search-results {
+  flex: 0 0 42%;
+}
+
+.search-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+
+.search-preview-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.search-preview .search-hit {
+  cursor: pointer;
+  width: max-content;
+  min-width: 100%;
+}
+
+.search-preview .search-hit code {
+  overflow: visible;
+}
+
 /* Definitions and text, each under a label. */
 .search-section {
   display: flex;

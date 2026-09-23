@@ -7,8 +7,9 @@ import { CONTEXT_LINES } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
-import { cx, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced } from "./util.js";
-import { ensureLanguage, escapeHtml } from "./highlight.js";
+import { cx, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
+import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
+import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
@@ -233,7 +234,7 @@ const DEFS_SHOWN = 5;
 // the symbol index first, then the lines that contain it, grouped by file. A
 // Cmd/Ctrl+clicked identifier that did not resolve to exactly one definition
 // opens it seeded with its candidates, the text narrowed to the whole word.
-export function SearchPanel({ initialQuery = "", seed, source, from = "", opts = {}, onOpen, onClose, onBack, backTo }) {
+export function SearchPanel({ initialQuery = "", seed, source, from = "", opts = {}, place, onOpen, onLeave, onClose, onBack, backTo }) {
   const [query, setQuery] = useState(initialQuery);
   const inputRef = useRef(null);
   // A query it opens with was picked up elsewhere, so typing replaces it.
@@ -296,7 +297,9 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
       if (!m.has(hit.file)) m.set(hit.file, []);
       m.get(hit.file).push(hit);
     }
-    return [...m.entries()];
+    // In path order: the search reads files in parallel, and hands them back
+    // in whatever order they finished, which would move them each time.
+    return [...m.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   }, [res]);
 
   useEffect(() => setAllDefs(false), [debouncedName]);
@@ -309,19 +312,48 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
     ...(moreDefs ? [{ more: true }] : []),
     ...groups.flatMap(([file, hits]) => hits.map((h) => ({ file, line: h.line }))),
   ];
-  const open = (i) => {
+  // What it was left at goes with it: the query and toggles, and the row and
+  // scroll of the results, which come back with it however it was left.
+  const scrolled = useRef(place?.scroll || 0);
+  const state = () => ({ query, opts: { regex, caseSens, wholeWord, glob }, place: { sel, at: items[sel], scroll: scrolled.current } });
+  const left = useRef(null);
+  const open = (i, line) => {
     const it = items[i];
     if (it.more) setAllDefs(true);
-    else onOpen(it, { query, opts: { regex, caseSens, wholeWord, glob } });
+    else onOpen(line ? { ...it, line } : it, state());
   };
   const { sel, setSel, onKey, listRef } = usePaletteNav(items.length, open);
-  useEffect(() => setSel(0), [debounced, debouncedName, regex, caseSens, wholeWord, debouncedGlob, setSel]);
+  left.current = state();
+  useEffect(() => () => onLeave?.(left.current), []);
+  // Coming back, the row and scroll it had, once its results are in again.
+  const restoring = useRef(place);
+  useEffect(() => {
+    if (!restoring.current) setSel(0);
+  }, [debounced, debouncedName, regex, caseSens, wholeWord, debouncedGlob, setSel]);
+  useLayoutEffect(() => {
+    const p = restoring.current;
+    if (!p || busy || debounced !== query || (!res && !error)) return;
+    restoring.current = null;
+    if (listRef.current) listRef.current.scrollTop = p.scroll;
+    // The same result, found again: the text search may list files in another order.
+    const i = items.findIndex((it) => it.file === p.at?.file && it.line === p.at?.line);
+    setSel(i >= 0 ? i : Math.max(0, Math.min(p.sel, items.length - 1)));
+  });
+  const wide = useMedia(SPLIT);
+  const shown = !items[sel]?.more && items[sel];
+  const cache = useMemo(() => new Map(), []);
+  // The query as the search took it: without Match case, an upper-case letter
+  // makes it case-sensitive, as ripgrep's smart case does.
+  const re = useMemo(
+    () => findRegExp({ query: debounced.trim(), regex, wholeWord, caseSens: caseSens || /\p{Lu}/u.test(debounced) })?.re,
+    [debounced, regex, wholeWord, caseSens],
+  );
 
   let n = shownDefs.length + (moreDefs ? 1 : 0);
   const matched = res?.matches.length || 0;
 
   return (
-    <Modal onClose={onClose} onBack={onBack} wide className="search">
+    <Modal onClose={onClose} onBack={onBack} wide className={cx("search", wide && "split")}>
       <div className="palette-input">
         <Back onBack={onBack} to={backTo} />
         <IconSearch size={15} />
@@ -358,7 +390,8 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
         />
       </div>
 
-      <div className="search-results" ref={listRef}>
+      <div className={cx("search-split", wide && shown && "previewing")}>
+      <div className="search-results" ref={listRef} onScroll={(e) => (scrolled.current = e.currentTarget.scrollTop)}>
         {shownDefs.length > 0 && (
           <div className="search-group">
             <div className="search-section">
@@ -438,6 +471,8 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
           </div>
         )}
       </div>
+      {wide && shown && <SearchPreview file={shown.file} line={shown.line} re={re} cache={cache} onOpen={(line) => open(sel, line)} />}
+      </div>
       {(res || status) && (
         <div className="palette-foot dim">
           {[status && `${status.symbols.toLocaleString()} symbols indexed${status.building ? ", refreshing" : ""}`, res?.engine]
@@ -451,6 +486,80 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
       )}
     </Modal>
   );
+}
+
+// Beside the results only where both have room.
+const SPLIT = "(min-width: 900px)";
+// How many lines either side of the result the preview draws.
+const PREVIEW_AROUND = 150;
+
+// SearchPreview is the file around the selected result as it is on disk,
+// its line marked; each file is fetched once, into cache. A click on a line
+// opens the file there.
+function SearchPreview({ file, line, re, cache, onOpen }) {
+  const [data, setData] = useState(() => cache.get(file) || null);
+  const [, force] = useState(0);
+  const bodyRef = useRef(null);
+  useEffect(() => {
+    if (cache.has(file)) return setData(cache.get(file));
+    setData(null);
+    let live = true;
+    api.file(file).then(
+      (d) => (cache.set(file, d), live && setData(d)),
+      (e) => live && setData({ error: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [file, cache]);
+  useEffect(() => {
+    if (data?.lang) ensureLanguage(data.lang, () => force((n) => n + 1));
+  }, [data?.lang]);
+  const lines = data?.lines;
+  const ready = langReady(data?.lang);
+  const html = useMemo(() => lines && highlightLines("preview:" + file, lines, data.lang), [lines, file, data?.lang, ready]);
+  const from = Math.max(0, line - 1 - PREVIEW_AROUND);
+  const to = lines ? Math.min(lines.length, line + PREVIEW_AROUND) : 0;
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const el = body?.querySelector(".on");
+    if (el) body.scrollTop = el.offsetTop - (body.clientHeight - el.offsetHeight) / 2;
+  }, [file, line, html]);
+  return (
+    <div className="search-preview">
+      <div className="search-file">
+        {LRM}
+        {file}
+        <span className="dim">:{line}</span>
+      </div>
+      <div className="search-preview-body" ref={bodyRef}>
+        {data?.error && <div className="empty error">{data.error}</div>}
+        {!data && <div className="empty">Loading...</div>}
+        {data?.media && <div className="empty">Open it to see it.</div>}
+        {html?.slice(from, to).map((h, i) => {
+          const n = from + i + 1;
+          const marks = re ? matchesIn(lines[n - 1], re) : [];
+          return (
+            <div key={n} className={cx("search-hit", n === line && "on")} onClick={() => onOpen(n)} title="Open the file here">
+              <span className="ln">{n}</span>
+              <code dangerouslySetInnerHTML={{ __html: applyRanges(h, marks, n === line ? "fm fm-on" : "fm") || " " }} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// matchesIn is where re matches in text, as [start, end) ranges.
+function matchesIn(text, re) {
+  const out = [];
+  re.lastIndex = 0;
+  for (let m; (m = re.exec(text)); ) {
+    if (!m[0]) re.lastIndex++;
+    else out.push([m.index, m.index + m[0].length]);
+  }
+  return out;
 }
 
 // markSpans highlights matched byte ranges. Offsets come from ripgrep in bytes,
