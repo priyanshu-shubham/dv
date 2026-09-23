@@ -156,7 +156,7 @@ func (m *Manager) Sessions() []Session {
 	for i, id := range m.saved.IDs() {
 		opened[id] = i + 1
 	}
-	temporary := m.saved.TemporaryIDs()
+	temporary, kept := m.saved.TemporaryIDs(), m.saved.KeptIDs()
 	m.mu.Lock()
 	procs := make(map[string]*proc, len(m.procs))
 	for id, p := range m.procs {
@@ -172,7 +172,7 @@ func (m *Manager) Sessions() []Session {
 		}
 		row.ID, row.Open = id, opened[id] > 0
 		row.Running, row.Busy = where(procs[id], live[id])
-		row.Temporary = slices.Contains(temporary, id)
+		row.Temporary, row.Kept = slices.Contains(temporary, id), slices.Contains(kept, id)
 		if row.Temporary && !row.Open && row.Running == "" {
 			delete(procs, id)
 			continue
@@ -199,14 +199,14 @@ func (m *Manager) Sessions() []Session {
 	// Started here, with nothing said yet.
 	for id, p := range procs {
 		p.mu.Lock()
-		row := Session{ID: id, Title: p.title, Cwd: p.cwd, Updated: p.lastUsed, Open: opened[id] > 0, Temporary: slices.Contains(temporary, id)}
+		row := Session{ID: id, Title: p.title, Cwd: p.cwd, Updated: p.lastUsed, Open: opened[id] > 0, Temporary: slices.Contains(temporary, id), Kept: slices.Contains(kept, id)}
 		p.mu.Unlock()
 		row.Running, row.Busy = where(p, running{})
 		row.Status = statusOf(p)
 		out = append(out, row)
 	}
 	for _, row := range m.codex.sessions() {
-		row.Open, row.Temporary = opened[row.ID] > 0, slices.Contains(temporary, row.ID)
+		row.Open, row.Temporary, row.Kept = opened[row.ID] > 0, slices.Contains(temporary, row.ID), slices.Contains(kept, row.ID)
 		if row.Temporary && !row.Open && row.Running == "" {
 			continue
 		}
@@ -418,11 +418,42 @@ func (m *Manager) SetTemporary(id string, on bool) error {
 	return nil
 }
 
+// SetKept keeps a session running: it is not stopped for being idle, and
+// starts with dv. Keeping one opens and starts it.
+func (m *Manager) SetKept(id string, on bool) error {
+	if on {
+		if _, err := m.saved.Set(id, true); err != nil {
+			return err
+		}
+	}
+	if err := m.saved.SetKept(id, on); err != nil {
+		return err
+	}
+	if on {
+		return m.Start(id)
+	}
+	m.broker.Notify()
+	return nil
+}
+
+// StartKept starts the sessions kept running, as dv starts. One a terminal
+// has open is the terminal's, and is left to it.
+func (m *Manager) StartKept() {
+	for _, id := range m.saved.KeptIDs() {
+		m.Start(id)
+	}
+}
+
 // SetOpen opens a session in the Agent view or closes it. Closing one dv runs
-// stops it; the session stays on disk.
+// stops it, and it is kept running no longer; the session stays on disk.
 func (m *Manager) SetOpen(id string, open bool) error {
 	if _, err := m.saved.Set(id, open); err != nil {
 		return err
+	}
+	if !open {
+		if err := m.saved.SetKept(id, false); err != nil {
+			return err
+		}
 	}
 	if !open && m.isCodex(id) {
 		m.codex.thread(id).release()
@@ -1073,11 +1104,12 @@ const idleFor = 30 * time.Minute
 
 func (m *Manager) reap() {
 	for range time.Tick(time.Minute) {
+		kept := m.saved.KeptIDs()
 		m.mu.Lock()
 		var idle []*proc
 		for id, p := range m.procs {
 			p.mu.Lock()
-			if p.cmd != nil && !p.busy && len(p.asks) == 0 && time.Since(p.lastUsed) > idleFor && m.follows[id] == nil {
+			if p.cmd != nil && !p.busy && len(p.asks) == 0 && time.Since(p.lastUsed) > idleFor && m.follows[id] == nil && !slices.Contains(kept, id) {
 				idle = append(idle, p)
 			}
 			p.mu.Unlock()
@@ -1086,7 +1118,7 @@ func (m *Manager) reap() {
 		for _, p := range idle {
 			p.stop()
 		}
-		m.codex.reap(idleFor)
+		m.codex.reap(idleFor, kept)
 	}
 }
 

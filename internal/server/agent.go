@@ -134,6 +134,29 @@ func (s *Server) handleAgentTemporary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleAgentKeep(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Keep bool `json:"keep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.agent.SetKept(id, req.Keep); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// StartKept starts the sessions kept running, once this dv is where Claude
+// Code's prompts go.
+func (s *Server) StartKept() { s.agent.StartKept() }
+
 // handleAgentEvents streams a session to the page: the conversation as its
 // transcript grows, and what the session is doing now.
 func (s *Server) handleAgentEvents(w http.ResponseWriter, r *http.Request) {

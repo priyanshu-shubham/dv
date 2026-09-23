@@ -3124,6 +3124,12 @@ mark {
   margin-left: auto;
 }
 
+/* At the row's right end, so the list opens leftwards, inside the settings. */
+.settings-row > .model-menu > .model-list {
+  left: auto;
+  right: 0;
+}
+
 .settings-row > input {
   flex: 0 1 200px;
   min-width: 0;

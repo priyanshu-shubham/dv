@@ -1223,19 +1223,21 @@ export default function App() {
         );
         return;
       }
+      const openSession = (session) => {
+        setPromptOpen(false);
+        setPanel(null);
+        setAgentId(session);
+        switchMode("agent");
+      };
+      // Into the message box instead, after what is typed there, to be edited.
+      if (a.where === "current" && a.draft) {
+        const key = "draft:" + agentId;
+        setPref("repo", key, [readPref("repo", key, ""), a.prompt].filter((t) => t.trim()).join("\n\n"), "");
+        return openSession(agentId);
+      }
       runAction(a, agentId).then(
         ({ session }) => {
-          const open = {
-            label: "Open",
-            primary: true,
-            opens: true,
-            run: () => {
-              setPromptOpen(false);
-              setPanel(null);
-              setAgentId(session);
-              switchMode("agent");
-            },
-          };
+          const open = { label: "Open", primary: true, opens: true, run: () => openSession(session) };
           if (a.where === "new") say(`${a.name} started`, "In a new session. You are told when it is done.", [open]);
           else if (mode !== "agent") say(`${a.name} sent`, "To the session open in the Agent view.", [open]);
           loadSessions();

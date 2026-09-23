@@ -51,6 +51,20 @@ func (h *Hub) sweep(now time.Time) {
 	}
 }
 
+// StartKept opens the folders with sessions kept running, and starts them, as
+// the hub starts. Running, they keep their folder open.
+func (h *Hub) StartKept() {
+	for _, f := range h.folders.List() {
+		saved, err := store.OpenSessions(f.Path)
+		if err != nil || len(saved.KeptIDs()) == 0 {
+			continue
+		}
+		if rv, err := h.review(f.Slug); err == nil {
+			rv.srv.StartKept()
+		}
+	}
+}
+
 // asking marks a request to a folder's review under way, until the func it
 // returns is called: a page open on it keeps it asking.
 func (h *Hub) asking(slug string, rv *review) func() {

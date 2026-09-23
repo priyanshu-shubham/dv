@@ -23,6 +23,7 @@ type sessionsDoc struct {
 	Format    int                 `json:"format"`
 	Open      []string            `json:"open"`                // most recently opened first
 	Temporary []string            `json:"temporary,omitempty"` // left out of the list once closed
+	Kept      []string            `json:"kept,omitempty"`      // never stopped for being idle, and started with dv
 	Rewinds   map[string]Rewind   `json:"rewinds,omitempty"`
 	Switches  map[string][]Switch `json:"switches,omitempty"`
 	// Agents names the agent of a session that is not Claude Code's: "codex".
@@ -96,17 +97,36 @@ func (s *Sessions) TemporaryIDs() []string {
 
 // SetTemporary marks a session temporary or not.
 func (s *Sessions) SetTemporary(id string, on bool) error {
+	return s.mark(&s.doc.Temporary, id, on)
+}
+
+// KeptIDs lists the sessions kept running.
+func (s *Sessions) KeptIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return slices.Clone(s.doc.Kept)
+}
+
+// SetKept marks a session kept running or not.
+func (s *Sessions) SetKept(id string, on bool) error {
+	return s.mark(&s.doc.Kept, id, on)
+}
+
+// mark puts id in the list or takes it out. The list is the doc's, read
+// again once the file is synced.
+func (s *Sessions) mark(list *[]string, id string, on bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.sync(); err != nil {
 		return err
 	}
-	i := slices.Index(s.doc.Temporary, id)
+	i := slices.Index(*list, id)
 	switch {
 	case on && i < 0:
-		s.doc.Temporary = append(s.doc.Temporary, id)
+		*list = append(*list, id)
 	case !on && i >= 0:
-		s.doc.Temporary = slices.Delete(s.doc.Temporary, i, i+1)
+		*list = slices.Delete(*list, i, i+1)
 	default:
 		return nil
 	}

@@ -14,7 +14,7 @@ import { IconBolt, IconPlus } from "./icons.jsx";
 const NONE = [];
 const BLANK = {
   name: "", kind: "prompt", prompt: "", command: "", scope: "repo", where: "new",
-  agent: "", model: "", effort: "", mode: "", temporary: true, close: false,
+  agent: "", model: "", effort: "", mode: "", temporary: true, close: false, draft: false,
 };
 const EDIT = { edit: true };
 
@@ -70,7 +70,7 @@ function describe(a, info) {
   if (a.note) return a.note;
   if (a.builtin) return "Built in · only when it fast-forwards";
   if (a.kind === "command") return "Runs " + a.command.trim().split("\n")[0];
-  if (a.where === "current") return "Current session";
+  if (a.where === "current") return a.draft ? "Current session · into its message box" : "Current session";
   const model = modelsFor(a, info).find((m) => m.id === a.model);
   return [
     a.temporary ? "New temporary session" : "New session",
@@ -273,6 +273,15 @@ function ActionForm({ action, info, onSave, onCancel }) {
           value={a.where}
           onPick={(where) => edit({ where })}
           choices={[["new", "A new session"], ["current", "The current session"]]}
+        />
+      )}
+      {!command && a.where === "current" && (
+        <Setting
+          label="The prompt"
+          note={a.draft ? "Added to what is already typed there, to edit before you send it." : ""}
+          value={!!a.draft}
+          onPick={(draft) => edit({ draft })}
+          choices={[[false, "Is sent"], [true, "Goes in the message box"]]}
         />
       )}
       {!command && a.where === "new" && (

@@ -554,13 +554,13 @@ func (c *codexSide) agentThread(id, call string) *codexThread {
 
 // reap lets go of threads dv has loaded and nothing has used for a while, so
 // the app-server can stop. They load again on the next message.
-func (c *codexSide) reap(after time.Duration) {
+func (c *codexSide) reap(after time.Duration, kept []string) {
 	c.mu.Lock()
 	threads := slices.Collect(maps.Values(c.threads))
 	c.mu.Unlock()
 	for _, t := range threads {
 		t.mu.Lock()
-		idle := t.loaded && t.active == "" && len(t.asks) == 0 && len(t.held) == 0 && len(t.subs) == 0 && time.Since(t.lastUsed) > after
+		idle := t.loaded && t.active == "" && len(t.asks) == 0 && len(t.held) == 0 && len(t.subs) == 0 && time.Since(t.lastUsed) > after && !slices.Contains(kept, t.id)
 		t.mu.Unlock()
 		if idle {
 			t.release()

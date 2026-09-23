@@ -27,6 +27,8 @@ type Session struct {
 	Open    bool   `json:"open"`
 	// Temporary leaves the list once nothing has it open.
 	Temporary bool `json:"temporary,omitempty"`
+	// Kept is never stopped for being idle, and starts with dv.
+	Kept bool `json:"kept,omitempty"`
 	// The last thing said in it, by "you" or "claude" ("agent" for Codex).
 	Last   string `json:"last,omitempty"`
 	LastBy string `json:"lastBy,omitempty"`

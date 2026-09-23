@@ -15,7 +15,7 @@ import { AttachTarget } from "./Threads.jsx";
 import { agentName, cx, duration, isTyping, LRM, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import {
-  AgentIcon, IconArrowUp, IconBack, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPlus, IconReply, IconStop, IconTemporary,
+  AgentIcon, IconArrowUp, IconBack, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPin, IconPlus, IconReply, IconStop, IconTemporary,
   IconUndo, IconX,
 } from "./icons.jsx";
 
@@ -1152,6 +1152,8 @@ export default function AgentView({
     if (!id) return onTemporaryNew(!temporary);
     api.agentTemporary(id, !temporary).then(onChanged, (e) => setError(e.message));
   };
+  const kept = !!session?.kept;
+  const toggleKept = () => api.agentKeep(id, !kept).then(onChanged, (e) => setError(e.message));
   // The models are the agent's own, so what was picked goes with the agent.
   const pickAgent = (kind) => {
     setPicks({});
@@ -1626,6 +1628,21 @@ export default function AgentView({
             >
               <IconTemporary size={13} />
               {temporary && <span className="btn-label">Temporary</span>}
+            </button>
+          )}
+          {id && !readOnly && (
+            <button
+              className={cx("ghost", kept && "on")}
+              aria-pressed={kept}
+              onClick={toggleKept}
+              title={
+                kept
+                  ? "Kept running: dv doesn't stop it when idle, and starts it with dv. Click to let it stop when idle again."
+                  : "Keep this session running: dv won't stop it when idle, and starts it with dv, so other sessions can always reach it"
+              }
+            >
+              <IconPin size={13} />
+              {kept && <span className="btn-label">Kept running</span>}
             </button>
           )}
           <span className="spacer" />
@@ -3522,6 +3539,11 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
           {s.temporary && (
             <span className="session-temporary" title="Temporary: it leaves the list once closed">
               <IconTemporary size={11} />
+            </span>
+          )}
+          {s.kept && (
+            <span className="session-temporary" title="Kept running: not stopped when idle, and started with dv">
+              <IconPin size={11} />
             </span>
           )}
           {added[s.id]?.length > 0 && (

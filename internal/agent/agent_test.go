@@ -970,6 +970,36 @@ func TestATemporarySessionLeavesTheListOnceClosed(t *testing.T) {
 	}
 }
 
+func TestAKeptSessionIsKeptUntilClosed(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "") // no claude to start
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	kept := func() bool {
+		for _, s := range m.Sessions() {
+			if s.ID == "s1" {
+				return s.Kept && s.Open
+			}
+		}
+		return false
+	}
+	// Starting it fails here, but it stays kept, to start with dv.
+	if err := m.SetKept("s1", true); err == nil {
+		t.Fatal("started with no claude")
+	}
+	if !kept() {
+		t.Fatal("not kept and open once kept")
+	}
+	m.SetOpen("s1", false)
+	if kept() || len(saved.KeptIDs()) != 0 {
+		t.Fatal("still kept once closed")
+	}
+}
+
 func TestASessionKeepsItsRecordedMode(t *testing.T) {
 	root, cfg := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)

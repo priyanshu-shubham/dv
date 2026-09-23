@@ -185,6 +185,9 @@ func run() error {
 	} else {
 		defer unannounce()
 	}
+	if !trial {
+		go srv.StartKept()
+	}
 	apps, stop := sendOn(notices, url)
 	defer stop()
 	return serve(ln, withNotices(srv.Handler(""), notices, apps), cmp.Or(*auth, authKey))
@@ -314,6 +317,8 @@ func runHub(args []string) error {
 	// none: where Claude Code's prompts go stays with the hub running.
 	if trial {
 		fmt.Println(update.TrialMark + ln.Addr().String())
+	} else {
+		go h.StartKept()
 	}
 	apps, stop := sendOn(notices, url)
 	defer stop()

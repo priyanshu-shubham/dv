@@ -126,6 +126,16 @@ func TestSessionsOpenMostRecentFirstAndSurviveReopening(t *testing.T) {
 	if got := s.TemporaryIDs(); len(got) != 0 {
 		t.Fatalf("temporary after unmarking elsewhere %v", got)
 	}
+
+	s.SetKept("a", true)
+	s.SetTemporary("b", true)
+	if got := again.KeptIDs(); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("kept %v", got)
+	}
+	again.SetKept("a", false)
+	if got, tmp := s.KeptIDs(), s.TemporaryIDs(); len(got) != 0 || !slices.Equal(tmp, []string{"b"}) {
+		t.Fatalf("kept %v, temporary %v after unkeeping elsewhere", got, tmp)
+	}
 }
 
 func TestFindServerInAFolderAndNotPastARepository(t *testing.T) {
