@@ -1216,3 +1216,76 @@ window.addEventListener("mousemove", (e) => ((pointer = { x: e.clientX, y: e.cli
 window.addEventListener("keydown", showJump);
 window.addEventListener("keyup", showJump);
 window.addEventListener("blur", () => showJump({}));
+
+// Text selected on one line is marked wherever else it is in that file, as an
+// editor does. A CSS highlight rather than the rows' HTML, which would take the
+// selection away; laid again as rows mount, since only those are in the page.
+let same = null; // { root, text, observer, frame }
+let selFrame = 0;
+
+function clearSame() {
+  if (!same) return;
+  same.observer.disconnect();
+  cancelAnimationFrame(same.frame);
+  same = null;
+  CSS.highlights.delete("same");
+}
+
+function laySame() {
+  const { root, text } = same;
+  const ranges = [];
+  for (const code of root.querySelectorAll(".cell > .code")) {
+    const whole = code.textContent;
+    let at = whole.indexOf(text);
+    if (at < 0) continue;
+    // A match can run across the highlighter's spans.
+    const nodes = [];
+    let n = 0;
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      nodes.push([t, n]);
+      n += t.length;
+    }
+    const point = (off) => {
+      let i = nodes.length - 1;
+      while (i > 0 && nodes[i][1] > off) i--;
+      return [nodes[i][0], off - nodes[i][1]];
+    };
+    for (; at >= 0; at = whole.indexOf(text, at + text.length)) {
+      const r = document.createRange();
+      r.setStart(...point(at));
+      r.setEnd(...point(at + text.length));
+      ranges.push(r);
+    }
+  }
+  CSS.highlights.set("same", new Highlight(...ranges));
+}
+
+function markSame() {
+  selFrame = 0;
+  // Selecting code opens the comment box, which takes the selection: what it
+  // marked stays while that is written.
+  if (document.activeElement?.matches("textarea, input")) return;
+  const sel = window.getSelection();
+  const text = sel && !sel.isCollapsed ? sel.toString() : "";
+  const cell = text.trim().length > 1 && !text.includes("\n") && cellOf(sel.anchorNode);
+  const inCode = cell && cell === cellOf(sel.focusNode) && cell.querySelector(".code")?.contains(sel.anchorNode);
+  const root = inCode && cell.closest(".diff");
+  if (!root) return clearSame();
+  if (same?.root === root && same.text === text) return;
+  clearSame();
+  const s = { root, text, frame: 0 };
+  s.observer = new MutationObserver(() => {
+    s.frame ||= requestAnimationFrame(() => {
+      s.frame = 0;
+      if (same === s) laySame();
+    });
+  });
+  s.observer.observe(root, { childList: true, subtree: true });
+  same = s;
+  laySame();
+}
+
+if (typeof Highlight !== "undefined") {
+  document.addEventListener("selectionchange", () => (selFrame ||= requestAnimationFrame(markSame)));
+}

@@ -639,6 +639,10 @@ export default function App() {
     };
   }, [mode, codePath, codeEntry, scope, diff, needFile, repoAt]);
   const codeState = codeEntry ? fileData[codePath] : plain?.path === codePath ? plain : null;
+  const viewing = overlay?.type === "file" ? overlay.file : "";
+  useEffect(() => {
+    if (viewing && diff?.files.some((f) => f.path === viewing)) needFile(viewing);
+  }, [viewing, diff, needFile]);
 
   // Find in page, in whichever pane is showing. DiffBody publishes the rows each
   // file lays out into `bodies`, drawn or not, and the matches come from those,

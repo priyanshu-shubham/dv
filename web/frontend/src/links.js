@@ -72,11 +72,27 @@ export function pathsIn(text) {
 // A link's own href is the file from the root, which a Markdown file's links
 // are read as; the class and data are for the page's own text.
 const hrefOf = (hit) => "/" + hit.path + (hit.line ? "#L" + hit.line : "");
+const pathAttrs = (hit) => [["href", hrefOf(hit)], ["class", "path-link"], ["data-path", hit.path], ["data-line", String(hit.line)], ["title", hit.path + (hit.line ? ":" + hit.line : "")]];
 
 function linkTokens(state, hit, inner) {
   const open = new state.Token("link_open", "a", 1);
-  open.attrs = [["href", hrefOf(hit)], ["class", "path-link"], ["data-path", hit.path], ["data-line", String(hit.line)], ["title", hit.path + (hit.line ? ":" + hit.line : "")]];
+  open.attrs = pathAttrs(hit);
   return [open, ...inner, new state.Token("link_close", "a", -1)];
+}
+
+// fileLinked is the file here a written link goes to, as Codex links one: its
+// absolute path, the line after a colon.
+function fileLinked(href) {
+  let s = (href || "").replace(/^file:\/\//, "");
+  if (/^[a-z][\w+.-]*:\/\//i.test(s)) return null;
+  try {
+    s = decodeURI(s);
+  } catch {
+    return null;
+  }
+  const [, p, a, b] = PARTS.exec(s);
+  const path = resolve(p);
+  return path ? { path, line: Number(a || b || 0) } : null;
 }
 
 function textToken(state, content) {
@@ -86,7 +102,8 @@ function textToken(state, content) {
 }
 
 // linkPaths has md link the paths in its text and inline code, outside the
-// links written already, and open web links in a tab of their own.
+// links written already, and open web links in a tab of their own. A written
+// link to a file here opens it as a path does.
 export function linkPaths(md) {
   md.core.ruler.after("linkify", "dv_paths", (state) => {
     if (!known.files.size) return;
@@ -121,7 +138,9 @@ export function linkPaths(md) {
   const render = md.renderer.rules.link_open || ((tokens, i, opts, env, self) => self.renderToken(tokens, i, opts));
   md.renderer.rules.link_open = (tokens, i, opts, env, self) => {
     const t = tokens[i];
-    if (!t.attrGet("data-path")) {
+    const hit = !t.attrGet("data-path") && fileLinked(t.attrGet("href"));
+    if (hit) t.attrs = pathAttrs(hit);
+    else if (!t.attrGet("data-path")) {
       t.attrSet("target", "_blank");
       t.attrSet("rel", "noopener noreferrer");
     }

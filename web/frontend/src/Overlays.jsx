@@ -583,7 +583,7 @@ function markSpans(text, spans) {
 // hits land. It is read-only on purpose: dv reviews, it does not edit. `side`
 // reads the file off that side of the scope instead of the working tree. It
 // draws through Code mode's rows, so its code is commented on, and added to a
-// session, as there; `changes` is the file's diff, for where comments hang.
+// session, as there; `changes` is the file's diff, once loaded.
 export function FileViewer({
   file, line, side, scope, scroll = 0, threads, changes, wrap, preview, onPreview, onOpenFile, onClose, onBack, backTo, onSymbol, onComment, onThreadAction, onAttach, onSearch,
 }) {
@@ -597,6 +597,8 @@ export function FileViewer({
   const at = side === "old" ? "old" : "new";
   const kind = data && !data.media ? previewKind(file) : "";
   const rendered = !!kind && preview;
+  // A file in the diff is drawn through it, so what changed is marked as in Code mode.
+  const marked = !!changes && !changes.binary && !changes.tooLarge;
 
   useEffect(() => {
     setData(null);
@@ -613,7 +615,7 @@ export function FileViewer({
 
   // Arriving at a definition centres the line it is on; stepping back into a
   // file already read restores the position it was left at instead, so the way
-  // out looks like the way in.
+  // out looks like the way in. The diff's removed lines move it once they come.
   useEffect(() => {
     if (!data) return;
     if (scroll && bodyRef.current) {
@@ -623,7 +625,7 @@ export function FileViewer({
     const body = bodyRef.current;
     const el = body && (body.querySelector(`[data-line="${line}"][data-side]`) || blockAt(body, line));
     el?.scrollIntoView({ block: "center" });
-  }, [data, line, scroll]);
+  }, [data, line, scroll, marked]);
 
   // Rendered or as source, the line at the top stays there: noted as Preview
   // is toggled, and put back once the other is drawn.
@@ -657,7 +659,7 @@ export function FileViewer({
     if (barsIn && body) barsIn.style.paddingRight = `${body.offsetWidth - body.clientWidth}px`;
   });
 
-  const fd = useMemo(() => data?.lines && plainDiff({ ...data, path: file }, at), [data, file, at]);
+  const fd = useMemo(() => (marked ? changes : data?.lines && plainDiff({ ...data, path: file }, at)), [marked, changes, data, file, at]);
   const shown = useMemo(() => commentsOn(threads, at, changes), [threads, at, changes]);
   const startComment = useCallback(
     (s, start, end, selected) => {

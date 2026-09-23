@@ -1923,6 +1923,11 @@ button.headref:hover {
   text-decoration: underline;
 }
 
+/* The selected text wherever else it is in the file. Not find's yellow. */
+::highlight(same) {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 .wd {
   border-radius: 2px;
   padding: 1px 0;

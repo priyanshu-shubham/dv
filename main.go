@@ -98,11 +98,12 @@ func run() error {
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv hub [-port n] [-host addr] [-no-open] [-auth key]\n       dv reset [-y]\n\n"+
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: dv [flags]\n       dv hub [-port n] [-host addr] [-no-open] [-auth key]\n       dv reset [-y]\n       dv comment <file>[:line[-end]] [message]\n\n"+
 			"Review the current repository's diff in a browser (outside git, read the\n"+
 			"folder's files). hub serves many folders from one port, with a page to\n"+
 			"add, clone and open them. reset deletes the\n"+
-			"review's comments and viewed marks, to start it over.\n\nflags:\n")
+			"review's comments and viewed marks, to start it over. comment adds one\n"+
+			"to the review, for an agent to report what it found (dv comment -h).\n\nflags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -119,6 +120,8 @@ func run() error {
 		return runHub(flag.Args()[1:])
 	case "reset":
 		return reset(*dir, flag.Args()[1:])
+	case "comment":
+		return comment(*dir, flag.Args()[1:], os.Stdin)
 	case "claude":
 		return claude(flag.Args()[1:])
 	default:

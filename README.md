@@ -126,6 +126,14 @@ folder's page or on the hub's own, named by its folder.
 `dv reset` deletes the review — every comment and viewed mark — after asking.
 `-y` skips the question, and is needed when stdin is not a terminal.
 
+`dv comment <file>[:line[-end]] "message"` adds a comment to the review, the
+same as leaving one in the page. It's meant for agents: an action can ask
+Claude or Codex to review the diff and leave each finding as a comment. It
+works whether or not dv is running, and the page shows new comments as they
+arrive. Without a line the comment is on the whole file; without a message
+it reads one from stdin; `-old` is for a line the change removed. See
+`dv comment -h`.
+
 ## What dv keeps, and where
 
 In the repository, in `.dv/` at its root:
