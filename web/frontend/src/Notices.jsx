@@ -3,6 +3,7 @@
 // notification as well while the page is not in front of them, if they allowed
 // it. dv decides what to tell and when (internal/notify); the page shows it.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
@@ -11,11 +12,13 @@ import { cx, PHONE, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 
-// Below the header, clear of the message box.
+// Below the header, clear of the message box. Outside the page, which an
+// overlay makes inert, so a notice can still be acted on over one.
 export function Notices() {
   useRestartNotice();
-  return (
-    <Toaster position="top-right" offset={{ top: 46, right: 14 }} mobileOffset={{ top: 48 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />
+  return createPortal(
+    <Toaster position="top-right" offset={{ top: 46, right: 14 }} mobileOffset={{ top: 48 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />,
+    document.body,
   );
 }
 

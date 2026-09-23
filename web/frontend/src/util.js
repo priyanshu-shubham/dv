@@ -247,6 +247,9 @@ export function isTyping(el) {
   return tag === "INPUT" && !NON_TEXT_INPUTS.has(el.type);
 }
 
+// selecting is text selected on the page, which Shift and an arrow extend.
+export const selecting = () => !(window.getSelection()?.isCollapsed ?? true);
+
 export const statusLabel = {
   A: "added",
   M: "modified",

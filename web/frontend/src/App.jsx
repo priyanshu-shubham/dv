@@ -21,7 +21,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
@@ -1247,13 +1247,15 @@ export default function App() {
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 
   // Shift+Up and Down go through the open sessions in the order the list has
-  // them. The message box keeps them for selecting text, unless it is empty.
+  // them. The message box keeps them for selecting text, unless it is empty,
+  // and so does text selected in the page.
   // Captured, because the box stops the keys it handles from bubbling.
   useEffect(() => {
     if (mode !== "agent") return;
     const onKey = (e) => {
       if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
       if (isTyping(e.target) && !(e.target.matches(".agent-composer textarea") && !e.target.value)) return;
+      if (selecting()) return;
       if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
       const open = agent.sessions.filter((s) => s.open || s.running === "dv");
       if (!open.length) return;
@@ -1429,7 +1431,9 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       // Round the modes in the order the sidebar has them. The Agent view's
       // message box nearly always has focus, so an empty one lets these by.
+      // Selected text keeps them, as does an overlay, which has the page.
       if (e.shiftKey && !mod && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        if (selecting() || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
         if (!isTyping(e.target) || (e.target.closest(".agent-composer") && !e.target.value)) {
           e.preventDefault();
           const i = modes.indexOf(mode) + (e.key === "ArrowRight" ? 1 : -1);

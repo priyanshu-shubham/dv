@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { commentsOn, NO_EXPAND, noop } from "./CodeView.jsx";
@@ -36,11 +37,46 @@ export function Modal({ onClose, onBack, className, children, wide, centred }) {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose, onBack]);
 
-  return (
-    <div className={cx("backdrop", centred && "centred")} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+  const ref = useRef(null);
+  useLayer(ref, 100);
+  return createPortal(
+    <div className={cx("backdrop", centred && "centred")} ref={ref} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={cx("modal", wide && "modal-wide", className)}>{children}</div>
-    </div>
+    </div>,
+    document.body,
   );
+}
+
+// The overlays open, each drawn outside the page so the page can be made inert
+// while one is: find in page, Tab and a screen reader then keep to the one on
+// top, the highest rank (its CSS z-index), the last opened among equals.
+const layers = [];
+
+function restack() {
+  const top = layers.reduce((t, l) => (t && t.rank > l.rank ? t : l), null);
+  for (const l of layers) l.el.inert = l !== top;
+  document.getElementById("root").inert = layers.length > 0;
+}
+
+// useLayer makes the element ref holds, portalled to the body, such a layer
+// while open. Put away, it hands the focus back to wherever the reader was,
+// which only the page made inert again can take.
+export function useLayer(ref, rank, open = true) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!open || !el) return;
+    const before = document.activeElement;
+    const l = { el, rank };
+    layers.push(l);
+    restack();
+    return () => {
+      layers.splice(layers.indexOf(l), 1);
+      el.inert = false;
+      restack();
+      const now = document.activeElement;
+      if (before?.isConnected && before !== document.body && (!now || now === document.body || el.contains(now))) before.focus({ preventScroll: true });
+    };
+  }, [ref, rank, open]);
 }
 
 // Back is only rendered when there is somewhere to go, and names where that is.
@@ -1262,7 +1298,7 @@ export function Setting({ label, note, value, onPick, choices }) {
 
 export function HelpOverlay({ onClose }) {
   const keys = [
-    ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent"],
+    ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent (with text selected, they extend it)"],
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
     ["Alt+A", `Run an action (also ${modKey}+Shift+P, where the browser allows it)`],
@@ -1297,7 +1333,7 @@ export function HelpOverlay({ onClose }) {
     [`${modKey}+↓`, "In the Agent view, the end of the conversation (from the message box too)"],
     ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],
     ["Shift+Tab", "In the Agent view's message box, change the permission mode"],
-    ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty)"],
+    ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty; with text selected, they extend it)"],
     ["Alt+N", "In the Agent view, a new session (from the message box too)"],
     ["Esc", "Back a step, or close what is open"],
     ["Shift+Esc", "Close whatever is open"],

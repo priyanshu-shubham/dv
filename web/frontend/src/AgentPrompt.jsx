@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { DiffBody } from "./FileDiff.jsx";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { useLayer } from "./Overlays.jsx";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { agentName, cx, isTyping, LRM, splitPath, useCopy, usePersisted } from "./util.js";
 import { readPref, usePref } from "./prefs.js";
@@ -51,21 +53,16 @@ export default function AgentPrompt({
   const req = requests[idx];
   const [drafts, setDrafts] = useState({}); // id -> { note, comments }
 
-  // Put away, the focus goes back to wherever the reader was.
-  useEffect(() => {
-    if (!open) return;
-    const before = document.activeElement;
-    return () => {
-      if (before?.isConnected && before !== document.body) before.focus({ preventScroll: true });
-    };
-  }, [open]);
+  // Below the other overlays, as its CSS has it.
+  const ref = useRef(null);
+  useLayer(ref, 90, open);
 
   const step = (d) => setShownId(requests[idx + d]?.id ?? req.id);
 
   // Built from the page's own parts: the overlays' shell and title bar, the
   // request as a file in the review, the answers as palette rows.
-  return (
-    <div className="prompt-backdrop" hidden={!open} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+  return createPortal(
+    <div className="prompt-backdrop" ref={ref} hidden={!open} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal modal-wide prompt" role="dialog" aria-modal="true" aria-label={`${agentName(req.via)} is asking`}>
         <div className="viewer-head prompt-head">
           <RequestTitle req={req} />
@@ -103,7 +100,8 @@ export default function AgentPrompt({
           onOpenFile={onOpenFile}
         />
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
