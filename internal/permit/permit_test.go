@@ -108,6 +108,22 @@ func TestDenyInterruptsUnlessItSaysWhy(t *testing.T) {
 	}
 }
 
+func TestWhatWasWrittenWithAnAnswerReadsBack(t *testing.T) {
+	for _, c := range []struct {
+		told, words string
+		yes, ok     bool
+	}{
+		{Declined("use make clean"), "use make clean", false, true},
+		{Allowed("Bash", "and then lint"), "and then lint", true, true},
+		{Allowed("", "in dv, with a note: too"), "in dv, with a note: too", true, true},
+		{"The user declined this in dv.", "", false, false},
+	} {
+		if w, yes, ok := Said(c.told); w != c.words || yes != c.yes || ok != c.ok {
+			t.Errorf("Said(%q) = %q, %v, %v", c.told, w, yes, ok)
+		}
+	}
+}
+
 // A yes in the terminal is only heard when the call reports back, and the
 // report need not spell the input the way the prompt did.
 func TestTheTerminalAnsweringFirstReleasesTheHook(t *testing.T) {

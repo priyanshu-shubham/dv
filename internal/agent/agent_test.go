@@ -280,6 +280,61 @@ func TestResultsSayWhatTheirToolsFound(t *testing.T) {
 	}
 }
 
+// A no's words come back in the call's result; a yes's in a hook's attachment
+// after it.
+func TestWhatWasWrittenWithAnAnswerStaysWithItsCall(t *testing.T) {
+	bash := func(id string) map[string]any {
+		return map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "make"}}
+	}
+	result := func(id, parent, text string, failed bool) map[string]any {
+		return map[string]any{"type": "user", "uuid": "r-" + id, "parentUuid": parent,
+			"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": text, "is_error": failed}}}}
+	}
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "build it")) +
+		line(t, assistant("a1", "u1", "msg_1", bash("t1"))) +
+		line(t, result("t1", "a1", permit.Declined("not yet"), true)) +
+		line(t, assistant("a2", "r-t1", "msg_2", bash("t2"))) +
+		line(t, result("t2", "a2", "built", false))))
+	said := func(items []Item) map[string]Result {
+		out := map[string]Result{}
+		for _, it := range items {
+			if it.Kind == "tool" {
+				out[it.ToolID] = *it.Result
+			}
+		}
+		return out
+	}
+	before := tr.Items("")
+	tr.Feed([]byte(line(t, map[string]any{"type": "attachment", "uuid": "h1", "parentUuid": "r-t2",
+		"attachment": map[string]any{"type": "hook_additional_context", "toolUseID": "t2", "content": []string{permit.Allowed("Bash", "then lint")}}})))
+	got := said(tr.Items(""))
+	if r := got["t1"]; r.Said != "not yet" || r.Yes {
+		t.Errorf("no = %+v", r)
+	}
+	if r := got["t2"]; r.Said != "then lint" || !r.Yes || r.Text != "built" {
+		t.Errorf("yes = %+v", r)
+	}
+	if r := said(before)["t2"]; r.Said != "" {
+		t.Errorf("items handed out before the note changed under their holder: %+v", r)
+	}
+}
+
+func TestAFailedCallsOutputIsItsText(t *testing.T) {
+	said := "The user declined this in dv and said: not yet"
+	r := resultFor("no", said, nil)
+	r["toolUseResult"] = "Error: " + said
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(path, []byte(line(t, r)), 0o644)
+	l, err := resultLine(path, "no")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o, err := outputFrom(l, "/repo", "no"); err != nil || o.Text != said {
+		t.Errorf("output %+v, %v", o, err)
+	}
+}
+
 // A background command's result only says it started; it ends when Claude
 // Code's notification says so, or when Claude stops it.
 func TestBackgroundWorkRunsUntilItsNotification(t *testing.T) {

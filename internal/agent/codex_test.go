@@ -35,6 +35,7 @@ func TestCodexItems(t *testing.T) {
 	second := codexTurn(t, `{"id":"turn2","status":"interrupted","items":[
 		{"type":"userMessage","id":"m2","clientId":null,"content":[{"type":"skill","name":"review","path":"/skills/review"},{"type":"text","text":"the diff"}]},
 		{"type":"userMessage","id":"m3","content":[{"type":"text","text":"steered in"}]},
+		{"type":"userMessage","id":"m4","content":[{"type":"text","text":"The user declined this in dv and said: not there"}]},
 		{"type":"commandExecution","id":"x2","command":"sleep 30","status":"inProgress"}]}`)
 	todos := map[string]*todoList{"turn1": {after: "r1", steps: []map[string]string{{"content": "read", "status": "completed"}}}}
 	items := codexItems("/repo", []codex.Turn{first, second}, todos, nil, nil)
@@ -43,7 +44,7 @@ func TestCodexItems(t *testing.T) {
 	for _, it := range items {
 		got = append(got, it.Kind+":"+it.Key)
 	}
-	want := "prompt:m1 thinking:r1 tool:todos:turn1 tool:x1 tool:f1:0 tool:f1:1 text:a1 command:m2 prompt:m3 tool:x2 note:turn2:interrupted"
+	want := "prompt:m1 thinking:r1 tool:todos:turn1 tool:x1 tool:f1:0 tool:f1:1 text:a1 command:m2 prompt:m3 prompt:m4 tool:x2 note:turn2:interrupted"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("items:\n got %s\nwant %s", strings.Join(got, " "), want)
 	}
@@ -59,6 +60,9 @@ func TestCodexItems(t *testing.T) {
 	}
 	if p := byKey["m3"]; p.UUID != "" {
 		t.Errorf("a steered message cannot be rewound to, got uuid %q", p.UUID)
+	}
+	if p := byKey["m4"]; p.Text != "not there" || p.Answer != "no" {
+		t.Errorf("words with a no = %+v", p)
 	}
 	if x := byKey["x1"]; x.Tool != "Bash" || !strings.Contains(string(x.Input), `"rg --files | head"`) || x.Result == nil || x.Result.IsError || x.Result.Detail.Lines != 2 {
 		t.Errorf("command = %+v %s", x, x.Input)

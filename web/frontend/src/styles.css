@@ -3975,6 +3975,16 @@ button.ghost.agent-context {
   margin-top: 0;
 }
 
+/* What you wrote with an answer, under the call: one of the log's items with it. */
+.agent-answered {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-answered > .agent-prompt {
+  margin: 6px 0 10px;
+}
+
 .agent-prompt-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

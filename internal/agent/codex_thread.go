@@ -1191,9 +1191,9 @@ func (t *codexThread) tell(allowed bool, note string) {
 	if note == "" {
 		return
 	}
-	text := "The user declined this in dv and said: " + note
+	text := permit.Declined(note)
 	if allowed {
-		text = "The user allowed this in dv, with a note: " + note
+		text = permit.Allowed("", note)
 	}
 	go func() {
 		t.op.Lock()

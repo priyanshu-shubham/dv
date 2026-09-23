@@ -16,6 +16,7 @@ import (
 
 	"dv/internal/codex"
 	"dv/internal/gitx"
+	"dv/internal/permit"
 )
 
 // A Codex thread is read through the app-server rather than from its files,
@@ -134,6 +135,12 @@ func codexItem(root string, it codex.Item, at string, prompted *bool, before, re
 			p.Kind, p.Text = "command", strings.TrimSpace("/"+skill+" "+text)
 		case strings.HasPrefix(text, "<bash-input>"):
 			p.Kind, p.Text, p.Result = "shell", strings.TrimSpace(firstGroup(bashInput, text)), shellOutput(text)
+		}
+		if w, yes, ok := permit.Said(text); ok {
+			p.Text, p.Answer = w, "no"
+			if yes {
+				p.Answer = "yes"
+			}
 		}
 		if !*prompted {
 			p.UUID, p.Before = cmp.Or(it.ClientID, it.ID), before

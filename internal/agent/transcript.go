@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"dv/internal/permit"
 	"dv/internal/store"
 )
 
@@ -27,6 +28,9 @@ type Item struct {
 	UUID   string `json:"uuid,omitempty"`
 	Before string `json:"before,omitempty"`
 	Images int    `json:"images,omitempty"` // fetched one by one, by the prompt's uuid
+	// Answer marks a prompt that is only the reader's words on an answer to a
+	// call, which Codex takes as a message of its own: "yes" or "no".
+	Answer string `json:"answer,omitempty"`
 
 	Tool   string          `json:"tool,omitempty"`
 	ToolID string          `json:"toolId,omitempty"`
@@ -71,6 +75,10 @@ type Result struct {
 	// such thing, so for Claude it runs from the call to its result, and takes
 	// in any wait for the reader to allow it.
 	Took int64 `json:"took,omitempty"`
+	// Said is what the reader wrote with their answer to the call, which went
+	// to the agent beside it; Yes says the answer allowed it.
+	Said string `json:"said,omitempty"`
+	Yes  bool   `json:"yes,omitempty"`
 }
 
 // Detail is what a result records beyond its text, for the one line that
@@ -457,6 +465,8 @@ type rawEntry struct {
 		Type        string          `json:"type"`
 		Prompt      json.RawMessage `json:"prompt"`
 		CommandMode string          `json:"commandMode"`
+		Content     json.RawMessage `json:"content"`
+		ToolUseID   string          `json:"toolUseID"`
 	} `json:"attachment"`
 
 	Cwd         string `json:"cwd"`
@@ -568,6 +578,19 @@ func (t *Transcript) parse(line []byte) *entry {
 			t.finished(text)
 			if text != "" || images > 0 {
 				t.prompt(e, r, text, images, note, false)
+			}
+		}
+		// A note with a yes reaches Claude from a hook, after the call's result.
+		if res := t.results[r.Attachment.ToolUseID]; res != nil && r.Attachment.Type == "hook_additional_context" {
+			var told []string
+			json.Unmarshal(r.Attachment.Content, &told)
+			for _, s := range told {
+				if w, yes, ok := permit.Said(s); ok && yes {
+					// A copy: items already handed out hold the old one.
+					said := *res
+					said.Said, said.Yes = w, true
+					t.results[r.Attachment.ToolUseID] = &said
+				}
 			}
 		}
 
@@ -715,7 +738,11 @@ func output(e *entry, r rawEntry, text string) {
 }
 
 func (t *Transcript) result(b block, ed *toolUseResult) *Result {
-	res := &Result{IsError: b.IsError, Text: cut(resultText(b), maxResult)}
+	text := resultText(b)
+	res := &Result{IsError: b.IsError, Text: cut(text, maxResult)}
+	if w, yes, ok := permit.Said(text); ok && !yes && b.IsError {
+		res.Said = w
+	}
 	res.Detail = ed.detail()
 	if ed.FilePath == "" || ed.Patch == nil && ed.Type != "create" {
 		return res
@@ -784,6 +811,16 @@ type toolUseResult struct {
 	Async      bool   `json:"isAsync"`
 	AgentID    string `json:"agentId"`
 	Stopped    string `json:"task_id"` // TaskStop's
+}
+
+// A failed call's record is only its error as a string, which the result's
+// own text already says.
+func (r *toolUseResult) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		return nil
+	}
+	type record toolUseResult
+	return json.Unmarshal(b, (*record)(r))
 }
 
 // detail tells the tools apart by what their records hold, since a result

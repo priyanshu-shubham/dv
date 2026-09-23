@@ -1058,7 +1058,7 @@ function saidWith(note, comments) {
 }
 
 // withComments is the note with the comments on the edit after it, set out as
-// the Agent view sets out comments in a message.
+// the Agent view sets out comments in a message, which reads them back.
 function withComments(note, comments, req) {
   const on = req.tool === "ExitPlanMode" ? "your plan" : "your proposed edit";
   const parts = comments.map((c) => {
@@ -1066,7 +1066,8 @@ function withComments(note, comments, req) {
     const quote = c.quote.map((l) => `> ${l}\n`).join("");
     return `<comment path="${c.path}" lines="${lines}" side="${c.side}" on="${on}">\n${quote}${c.body}\n</comment>`;
   });
-  return [note.trim(), ...parts].filter(Boolean).join("\n\n");
+  const context = parts.length && `<dv-context>\n${parts.join("\n")}\n</dv-context>`;
+  return [note.trim(), context].filter(Boolean).join("\n\n");
 }
 
 // commentEvent asks the card a line is in to open a comment on it, for the c key.

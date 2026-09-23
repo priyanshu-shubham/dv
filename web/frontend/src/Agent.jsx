@@ -227,11 +227,22 @@ function composeMessage(text, attached, threads) {
 // saidAs is a message as it was typed: a command run with ! keeps its !.
 const saidAs = (it) => (it.kind === "shell" ? "!" + it.text : splitContext(it.text).text);
 
+const refsOf = (block) => contextEntries(block).map(({ kind, a, body }) => ({ kind, path: a.path, lines: a.lines, from: a.from, body }));
+
 function splitContext(text) {
   const m = CONTEXT.exec(text || "");
   if (!m) return { text: text || "", refs: [] };
-  const refs = contextEntries(m[1]).map(({ kind, a, body }) => ({ kind, path: a.path, lines: a.lines, from: a.from, body }));
-  return { text: text.slice(0, m.index), refs, via: VIA.exec(m[1])?.[1] };
+  return { text: text.slice(0, m.index), refs: refsOf(m[1]), via: VIA.exec(m[1])?.[1] };
+}
+
+// splitSaid is what was written with an answer to a call, as splitContext has
+// a message.
+function splitSaid(said) {
+  const s = splitContext(said);
+  if (s.refs.length) return s;
+  // Comments once followed the note bare.
+  const i = said.search(/<(comment|note) /);
+  return i < 0 ? s : { text: said.slice(0, i).trim(), refs: refsOf(said) };
 }
 
 // The server notes in a message where it was written - a chat app, or dv again
@@ -2256,10 +2267,17 @@ const Item = memo(function Item(props) {
       if (props.run) {
         return <ToolGroup calls={props.run} session={props.session} root={props.root} busy={props.busy} running={props.running} onOpenFile={props.onOpenFile} />;
       }
-      return item.result?.edited ? (
+      const call = item.result?.edited ? (
         <EditCard {...props} />
       ) : (
         <ToolRow item={item} session={props.session} root={props.root} busy={props.busy} running={props.running} onOpenFile={props.onOpenFile} />
+      );
+      if (!item.result?.said) return call;
+      return (
+        <div className="agent-answered">
+          {call}
+          <Answered result={item.result} onOpenFile={props.onOpenFile} />
+        </div>
       );
   }
   return null;
@@ -2268,8 +2286,7 @@ const Item = memo(function Item(props) {
 // Prompt is what you said, set to the right. One still on its way in is
 // pending; its pictures are the ones sent, where the transcript's are fetched.
 function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind, onOpenFile }) {
-  const { text, refs, via: viaApp } = useMemo(() => splitContext(item.text), [item.text]);
-  const [shown, setShown] = useState(-1);
+  const { text, refs, via: viaApp } = useMemo(() => (item.answer ? splitSaid : splitContext)(item.text), [item.text, item.answer]);
   const via = viaApp !== "dv" && viaApp;
   const n = item.images || 0;
   const srcs = pictures ? pictures.map(dataURL) : pending ? [] : Array.from({ length: n }, (_, i) => api.agentPromptImageURL(session, item.uuid, i));
@@ -2294,24 +2311,10 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
       ) : (
         text && <div className="agent-prompt-text">{text}</div>
       )}
-      {refs.length > 0 && (
-        <div className="agent-chips">
-          {refs.map((r, i) => (
-            <Chip
-              key={i}
-              kind={r.kind}
-              path={r.path}
-              lines={r.lines}
-              on={i === shown}
-              // Only a file's name went, so there is nothing to show but the file.
-              onClick={r.kind === "file" ? onOpenFile && (() => onOpenFile(r.path)) : () => setShown(i === shown ? -1 : i)}
-            />
-          ))}
-        </div>
-      )}
-      {refs[shown] && <Sent entry={refs[shown]} onOpenFile={onOpenFile} />}
-      {(queued || hint || via) && (
+      <Refs refs={refs} onOpenFile={onOpenFile} />
+      {(queued || hint || via || item.answer) && (
         <div className="agent-prompt-foot">
+          {item.answer && <span>With your {item.answer}</span>}
           {via && <span title={`Sent from ${via}, where the reply was asked to be brief`}>via {via}</span>}
           {queued && <span title="Read once the step under way is done">Queued</span>}
           {hint && <span className="agent-prompt-hint">{hint}</span>}
@@ -2322,6 +2325,44 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
           <IconUndo size={12} />
         </button>
       )}
+    </div>
+  );
+}
+
+// Refs is what went with a message, a chip each, one opened at a time.
+function Refs({ refs, onOpenFile }) {
+  const [shown, setShown] = useState(-1);
+  if (!refs.length) return null;
+  return (
+    <>
+      <div className="agent-chips">
+        {refs.map((r, i) => (
+          <Chip
+            key={i}
+            kind={r.kind}
+            path={r.path}
+            lines={r.lines}
+            on={i === shown}
+            // Only a file's name went, so there is nothing to show but the file.
+            onClick={r.kind === "file" ? onOpenFile && (() => onOpenFile(r.path)) : () => setShown(i === shown ? -1 : i)}
+          />
+        ))}
+      </div>
+      {refs[shown] && <Sent entry={refs[shown]} onOpenFile={onOpenFile} />}
+    </>
+  );
+}
+
+// Answered is what you wrote with an answer to a call, set out as a message of yours.
+function Answered({ result: r, onOpenFile }) {
+  const { text, refs } = useMemo(() => splitSaid(r.said), [r.said]);
+  return (
+    <div className="agent-prompt">
+      {text && <div className="agent-prompt-text">{text}</div>}
+      <Refs refs={refs} onOpenFile={onOpenFile} />
+      <div className="agent-prompt-foot">
+        <span>With your {r.yes ? "yes" : "no"}</span>
+      </div>
     </div>
   );
 }
@@ -2678,7 +2719,7 @@ function didTogether(calls) {
 // its list, and a question or a plan is read for itself.
 const UNFOLDED = new Set(["TodoWrite", "AskUserQuestion", "ExitPlanMode", "ImageGeneration"]);
 function foldable(it, busy, running) {
-  if (it.kind !== "tool" || it.result?.edited || UNFOLDED.has(it.tool)) return false;
+  if (it.kind !== "tool" || it.result?.edited || it.result?.said || UNFOLDED.has(it.tool)) return false;
   return ["done", "failed", "stopped"].includes(toolState(it, busy, running));
 }
 
@@ -2833,9 +2874,14 @@ function ToolBody({ item, session, root, onOpenFile }) {
       ) : (
         !SAID.has(tool) && <Fields input={input} />
       )}
-      {r && !out && <div className="file-note loading">Loading...</div>}
-      {out?.error && <pre className={cx("agent-result", r.isError && "error")}>{linkText(r.text)}</pre>}
-      {out && !out.error && <Output tool={tool} input={input} out={out} failed={r.isError} root={root} onOpenFile={onOpenFile} />}
+      {/* A no with words is said under the call instead. */}
+      {!(r?.said && !r.yes) && (
+        <>
+          {r && !out && <div className="file-note loading">Loading...</div>}
+          {out?.error && <pre className={cx("agent-result", r.isError && "error")}>{linkText(r.text)}</pre>}
+          {out && !out.error && <Output tool={tool} input={input} out={out} failed={r.isError} root={root} onOpenFile={onOpenFile} />}
+        </>
+      )}
     </>
   );
 }

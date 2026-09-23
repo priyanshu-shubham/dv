@@ -202,7 +202,7 @@ func (b *Broker) Decision(req *Request, a *Answer) map[string]any {
 			b.mu.Unlock()
 		}
 	case text != "":
-		d = map[string]any{"behavior": "deny", "message": "The user declined this in dv and said: " + text}
+		d = map[string]any{"behavior": "deny", "message": Declined(text)}
 	default:
 		// A bare no stops Claude, as it does in the terminal, rather than leaving
 		// it to guess at another way round.
@@ -247,7 +247,36 @@ func (b *Broker) TakeNote(session, tool string, input json.RawMessage) string {
 	if text == "" {
 		return ""
 	}
-	return "The user allowed this " + tool + " call in dv, with a note: " + text
+	return Allowed(tool, text)
+}
+
+const (
+	declined = "The user declined this in dv and said: "
+	allowed  = "The user allowed this "
+	allowedA = "in dv, with a note: "
+)
+
+// Declined and Allowed tell the agent what the reader wrote with an answer;
+// Said reads the reader's words back out of either. tool is "" where the call
+// needs no naming.
+func Declined(note string) string { return declined + note }
+
+func Allowed(tool, note string) string {
+	if tool != "" {
+		tool += " call "
+	}
+	return allowed + tool + allowedA + note
+}
+
+func Said(text string) (words string, yes, ok bool) {
+	if w, ok := strings.CutPrefix(text, declined); ok {
+		return w, false, true
+	}
+	if rest, ok := strings.CutPrefix(text, allowed); ok {
+		_, w, ok := strings.Cut(rest, allowedA)
+		return w, true, ok
+	}
+	return "", false, false
 }
 
 // Answer settles request id with the reader's decision. False means it is no
