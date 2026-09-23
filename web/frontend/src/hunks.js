@@ -51,15 +51,21 @@ export function buildBlocks(fd, context, expanded, anchors = []) {
 // line above a gap is often the end of another function, which then reads as
 // the one being changed.
 function withScopes(fd, lines, blocks) {
-  // A header already on screen, above the gap, needs no naming on it.
+  // A header on screen needs no naming, nor one opening above the rows just
+  // before the gap: those rows are inside it, so it was named already.
   const shown = new Set();
   for (const b of blocks) if (b.kind === "rows") for (const l of b.lines) shown.add(l);
+  const index = new Map(lines.map((l, i) => [l, i]));
+  let above = -1;
   const hidden = (list) => {
-    const out = list?.filter((s) => !shown.has(lines[s.from]));
+    const out = list?.filter((s) => !shown.has(lines[s.from]) && s.from >= above);
     return out?.length ? out : undefined;
   };
-  for (const b of blocks) {
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
     if (b.kind !== "gap") continue;
+    above = -1;
+    for (let j = i - 1; j >= 0 && blocks[j].kind === "rows" && blocks[j].lines.length; j--) above = index.get(blocks[j].lines[0]);
     let t = b.next;
     while (t < lines.length && lines[t].t === "e") t++;
     if (t === lines.length) continue;
