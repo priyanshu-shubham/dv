@@ -5,14 +5,25 @@ import { Modal, usePaletteNav } from "./Overlays.jsx";
 import { IconBranch } from "./icons.jsx";
 
 // useBranchChoices asks, each time open turns true or HEAD moves, which
-// branches there are and what stops switching to or making one.
+// branches there are and what stops switching to or making one; then again
+// once the remotes are fetched, fetching true meanwhile.
 export function useBranchChoices(open, head) {
   const [can, setCan] = useState(null);
   useEffect(() => {
     if (!open) return;
     let live = true;
     setCan(null);
-    api.canSwitch().then((c) => live && setCan(c), () => {});
+    api.canSwitch().then(
+      (c) => {
+        if (!live) return;
+        setCan({ ...c, fetching: true });
+        api.canSwitch(true).then(
+          (f) => live && setCan(f),
+          () => live && setCan(c),
+        );
+      },
+      () => {},
+    );
     return () => {
       live = false;
     };
@@ -21,19 +32,44 @@ export function useBranchChoices(open, head) {
 }
 
 // branchRows is what the picker offers for q: the other branches matching it,
-// and a row making q when it names none of them.
+// then the remotes' ones no local branch is named for, and a row making q
+// when it names none of them - not even a remote's, which it would only
+// shadow with a branch of nothing in common.
 export function branchRows(can, fallback, current, q, max) {
   const others = (can?.branches || fallback || []).filter((b) => b !== current);
   const t = q.trim();
+  const has = (s) => s.toLowerCase().includes(t.toLowerCase());
   const rows = others
-    .filter((b) => b.toLowerCase().includes(t.toLowerCase()))
+    .filter(has)
     .slice(0, max)
     .map((b) => ({ branch: b, off: !can || !!can.blocked || !!can.elsewhere?.includes(b) }));
-  if (t && t !== current && !others.includes(t)) rows.push({ branch: t, create: true, off: !can || !!can.createBlocked });
+  const remote = can?.remote || [];
+  for (const r of remote.filter((r) => has(r.ref)).slice(0, max - rows.length)) {
+    rows.push({ branch: r.branch, track: r.ref, off: !!can.blocked });
+  }
+  const named = t === current || others.includes(t) || remote.some((r) => r.branch === t || r.ref === t);
+  if (t && !named) rows.push({ branch: t, create: true, off: !can || !!can.createBlocked });
   return rows;
 }
 
-export const switchDone = (row) => (row.create ? `Made ${row.branch} and switched to it` : `Switched to ${row.branch}`);
+export const rowLabel = (row) => (row.create ? `Create ${row.branch}` : row.track || row.branch);
+
+export function rowHint(row, can) {
+  if (row.create) return "A new branch at HEAD";
+  if (row.track) return `A new branch ${row.branch}, tracking it`;
+  return can?.elsewhere?.includes(row.branch) ? "Checked out in another worktree" : "";
+}
+
+export function switchDone(row) {
+  if (row.create) return `Made ${row.branch} and switched to it`;
+  return row.track ? `Switched to ${row.branch}, tracking ${row.track}` : `Switched to ${row.branch}`;
+}
+
+// fetchNote is how the fetch of the remotes' branches is going.
+export function fetchNote(can) {
+  if (can?.fetching) return "Fetching the remotes' branches…";
+  return can?.fetchError ? `Could not fetch the remotes: ${can.fetchError}` : "";
+}
 
 // blockedNote says what the server refuses now: switching needs nothing to
 // lose, making a branch only no merge or rebase under way.
@@ -52,10 +88,10 @@ export function BranchPalette({ meta, onDone, onClose }) {
   const pick = (row) => {
     if (row.off || state?.busy) return;
     setState({ busy: true });
-    api.switchTo(row.branch, row.create).then(() => onDone(switchDone(row)), (e) => setState({ error: e.message }));
+    api.switchTo(row).then(() => onDone(switchDone(row)), (e) => setState({ error: e.message }));
   };
   const { sel, setSel, onKey, listRef } = usePaletteNav(rows.length, (i) => pick(rows[i]));
-  const note = blockedNote(can);
+  const note = blockedNote(can) || fetchNote(can);
   return (
     <Modal onClose={onClose} className="palette">
       <div className="palette-input">
@@ -75,15 +111,13 @@ export function BranchPalette({ meta, onDone, onClose }) {
       <div className="palette-list" ref={listRef}>
         {rows.map((r, i) => (
           <button
-            key={(r.create ? "+" : "") + r.branch}
+            key={(r.create ? "+" : "") + (r.track || r.branch)}
             className={cx("palette-row", "action-row", i === sel && "on", r.off && "unready")}
             onMouseMove={() => setSel(i)}
             onClick={() => pick(r)}
           >
-            <span className="sym mono">{r.create ? `Create ${r.branch}` : r.branch}</span>
-            <span className="dim">
-              {r.create ? "A new branch at HEAD" : can?.elsewhere?.includes(r.branch) ? "Checked out in another worktree" : ""}
-            </span>
+            <span className="sym mono">{rowLabel(r)}</span>
+            <span className="dim">{rowHint(r, can)}</span>
           </button>
         ))}
         {rows.length === 0 && <div className="empty">{q.trim() ? "That branch is checked out." : "No other branches yet. Type a name to make one."}</div>}

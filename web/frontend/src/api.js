@@ -75,9 +75,12 @@ export const api = {
   // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
   pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
   // canSwitch: { blocked, createBlocked, branches, elsewhere }, each blocked the reason it can't be done now.
-  canSwitch: () => req("/api/switch"),
-  // switchTo checks out a local branch, refused where anything could be lost, or with create makes it at HEAD: { head }.
-  switchTo: (branch, create = false) => req("/api/switch", { method: "POST", body: JSON.stringify({ branch, create }) }),
+  // remote is the remotes' branches no local one is named for, { ref, branch };
+  // fetch has the remotes fetched first, which fetchError says went wrong.
+  canSwitch: (fetch) => req("/api/switch" + (fetch ? "?fetch" : "")),
+  // switchTo checks out a local branch, refused where anything could be lost, or with create makes it at HEAD,
+  // or with track makes it tracking that remote branch, as a switch: { head }. Given a branch menu's row.
+  switchTo: ({ branch, create = false, track = "" }) => req("/api/switch", { method: "POST", body: JSON.stringify({ branch, create, track }) }),
   // runAction sends an action's prompt, to its session or a new one: { session }.
   runAction: (action) => req("/api/actions/run", { method: "POST", body: JSON.stringify(action) }),
   // actionsRunning: { running: [{ id, name, started }] }, the command actions under way.

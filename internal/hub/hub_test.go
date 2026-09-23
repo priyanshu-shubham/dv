@@ -552,3 +552,60 @@ func TestWorktreeFromHere(t *testing.T) {
 		t.Fatalf("places: %+v", places)
 	}
 }
+
+// A branch a remote has, pushed since the last fetch, is checked out tracking
+// it rather than made anew from where the folder is; one on two remotes is
+// named in full.
+func TestWorktreeOfARemoteBranch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	alpha := filepath.Join(home, "code", "alpha")
+	repo(t, alpha)
+	for _, remote := range []string{"origin", "upstream"} {
+		up := filepath.Join(home, remote)
+		git(t, alpha, "clone", "-q", alpha, up)
+		git(t, up, "checkout", "-qb", "dup")
+		git(t, up, "commit", "-q", "--allow-empty", "-m", "dup on "+remote)
+		git(t, alpha, "remote", "add", remote, up)
+	}
+	origin := filepath.Join(home, "origin")
+	git(t, origin, "checkout", "-qb", "fix/login")
+	os.WriteFile(filepath.Join(origin, "fix.txt"), []byte("fix\n"), 0o644)
+	git(t, origin, "add", "fix.txt")
+	git(t, origin, "commit", "-qm", "fix")
+
+	user, _ := store.OpenUserPrefs()
+	list, _ := store.OpenFolders()
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	h := New("http://127.0.0.1:1", user, list, notices)
+	defer h.Close()
+	list.Add(store.Folder{Path: alpha})
+
+	tracks := func(dir, branch, upstream string) {
+		t.Helper()
+		out, _ := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD", "HEAD@{upstream}").Output()
+		if got := strings.Fields(string(out)); len(got) != 2 || got[0] != branch || got[1] != upstream {
+			t.Fatalf("%s is on %q, want %s tracking %s", dir, out, branch, upstream)
+		}
+	}
+	f, err := h.Worktree("alpha", "fix/login", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracks(filepath.Join(home, "code", f.Name), "fix/login", "origin/fix/login")
+	if _, err := os.Stat(filepath.Join(home, "code", f.Name, "fix.txt")); err != nil {
+		t.Fatal("the worktree is not the remote's branch")
+	}
+
+	if _, err := h.Worktree("alpha", "dup", false); err == nil || !strings.Contains(err.Error(), "origin/dup") {
+		t.Fatalf("a branch on two remotes: %v", err)
+	}
+	f, err = h.Worktree("alpha", "upstream/dup", false)
+	if err != nil || f.Name != "alpha-dup" {
+		t.Fatalf("named in full: %+v, %v", f, err)
+	}
+	tracks(filepath.Join(home, "code", "alpha-dup"), "dup", "upstream/dup")
+}

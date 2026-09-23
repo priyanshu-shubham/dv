@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { boot } from "./boot.js";
-import { blockedNote, branchRows, switchDone, useBranchChoices } from "./Branches.jsx";
+import { blockedNote, branchRows, fetchNote, rowHint, rowLabel, switchDone, useBranchChoices } from "./Branches.jsx";
 import { cx, modKey, useDismiss } from "./util.js";
 import {
   IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconFile, IconKeyboard, IconMenu, IconPin, IconPlus, IconSearch, IconSettings, IconUndo,
@@ -117,10 +117,10 @@ function HeadRef({ meta }) {
     run("Fetching…", api.pull(main), ({ branch, pulled }) => (pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}.` : `${branch} is up to date.`));
   const switchTo = (row) => {
     if (row.off || state?.busy) return;
-    run(row.create ? `Making ${row.branch}…` : `Switching to ${row.branch}…`, api.switchTo(row.branch, row.create), () => (setFilter(""), switchDone(row) + "."));
+    run(row.create ? `Making ${row.branch}…` : `Switching to ${row.branch}…`, api.switchTo(row), () => (setFilter(""), switchDone(row) + "."));
   };
   const rows = branchRows(can, meta.branches, branch, filter, SWITCH_SHOWN);
-  const note = blockedNote(can);
+  const note = blockedNote(can) || fetchNote(can);
   return (
     <span className="model-menu headref-menu" ref={ref}>
       <button className="headref" title={subject} onClick={() => (setOpen((o) => !o), state?.busy || setState(null), setFilter(""))}>
@@ -153,12 +153,12 @@ function HeadRef({ meta }) {
           />
           {rows.map((r) => (
             <button
-              key={(r.create ? "+" : "") + r.branch}
+              key={(r.create ? "+" : "") + (r.track || r.branch)}
               disabled={r.off || state?.busy}
-              title={can?.elsewhere?.includes(r.branch) ? "Checked out in another worktree" : r.create ? "A new branch at HEAD" : ""}
+              title={rowHint(r, can)}
               onClick={() => switchTo(r)}
             >
-              <span className="model-name mono">{r.create ? `Create ${r.branch}` : r.branch}</span>
+              <span className="model-name mono">{rowLabel(r)}</span>
             </button>
           ))}
           {note && <div className="model-note headref-note">{note}</div>}

@@ -841,7 +841,7 @@ export function WorktreeSession({ repo, from, onClose }) {
   }, [job?.id]);
   const note = job
     ? `${job.step || "Creating"}${job.progress ? `: ${job.progress}` : ""}…`
-    : `Starts from ${from}, in ${b ? `${repo}-${b.replaceAll("/", "-")}` : "a folder named for it"} beside ${repo}. What is not committed here stays behind.`;
+    : `A branch a remote has is checked out, tracking it; a new one starts from ${from}. In ${b ? `${repo}-${b.replaceAll("/", "-")}` : "a folder named for it"} beside ${repo}. What is not committed here stays behind.`;
   return (
     <Modal onClose={onClose} centred className="hub-form">
       <div className="viewer-head">

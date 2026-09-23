@@ -403,24 +403,39 @@ func (s *Server) switchBlocker() string {
 	return ""
 }
 
+// FetchEvery spaces the fetches of branch menus and worktree forms opened
+// again and again.
+const FetchEvery = 30 * time.Second
+
 // handleCanSwitch is whether a branch can be checked out or made now: {
-// blocked, createBlocked, branches, elsewhere }, with the branches other
-// worktrees have.
+// blocked, createBlocked, branches, remote, elsewhere, fetchError }, with the
+// remotes' branches no local one is named for and the branches other
+// worktrees have. With ?fetch the remotes are fetched first.
 func (s *Server) handleCanSwitch(w http.ResponseWriter, r *http.Request) {
+	var fetchErr string
+	if r.URL.Query().Has("fetch") {
+		if err := s.repo.FetchStale(FetchEvery); err != nil {
+			fetchErr = err.Error()
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"blocked":       s.switchBlocker(),
 		"createBlocked": s.repo.CreateBlocker(),
 		"branches":      s.repo.Branches(),
+		"remote":        s.repo.RemoteRefs(),
 		"elsewhere":     s.repo.Elsewhere(),
+		"fetchError":    fetchErr,
 	})
 }
 
 // handleSwitch checks out { branch }, when nothing would be lost to it, or
-// with { create } makes it at HEAD, which a working session does not stop.
+// with { create } makes it at HEAD, which a working session does not stop,
+// or with { track } makes it tracking that remote branch, as a switch.
 func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Branch string `json:"branch"`
 		Create bool   `json:"create"`
+		Track  string `json:"track"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -431,6 +446,8 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		err = s.repo.CreateBranch(body.Branch)
 	} else if why := s.switchBlocker(); why != "" {
 		err = errors.New(why)
+	} else if body.Track != "" {
+		err = s.repo.Track(body.Track)
 	} else {
 		err = s.repo.Switch(body.Branch)
 	}

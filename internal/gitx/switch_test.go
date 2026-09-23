@@ -85,3 +85,39 @@ func TestSwitch(t *testing.T) {
 		t.Fatal("the uncommitted change was lost")
 	}
 }
+
+func TestTrackARemoteBranch(t *testing.T) {
+	up := tempRepo(t, map[string]string{"a.txt": "a\n"})
+	commitAll(t, up, "first")
+	git(t, up, "checkout", "-qb", "fix/login")
+	write(t, up, "b.txt", "b\n")
+	commitAll(t, up, "fix")
+	repo := tempRepo(t, map[string]string{"a.txt": "a\n"})
+	commitAll(t, repo, "first")
+	git(t, repo, "remote", "add", "origin", up.Root)
+	if err := repo.Fetch(); err != nil {
+		t.Fatal(err)
+	}
+	// The remote's trunk has a local branch already, so only its fix is offered.
+	if got := repo.RemoteRefs(); !slices.Equal(got, []RemoteRef{{"origin/fix/login", "fix/login"}}) {
+		t.Fatalf("remote refs %v", got)
+	}
+
+	write(t, repo, "b.txt", "mine\n")
+	if err := repo.Track("origin/fix/login"); err == nil || !strings.Contains(err.Error(), "b.txt") {
+		t.Fatalf("track over an untracked file: %v", err)
+	}
+	os.Remove(filepath.Join(repo.Root, "b.txt"))
+	if err := repo.Track("origin/nope"); err == nil {
+		t.Fatal("tracked a branch no remote has")
+	}
+	if err := repo.Track("origin/fix/login"); err != nil || repo.Head().Branch != "fix/login" {
+		t.Fatalf("track: %v, on %s", err, repo.Head().Branch)
+	}
+	if up, _ := repo.run("rev-parse", "--abbrev-ref", "fix/login@{upstream}"); strings.TrimSpace(up) != "origin/fix/login" {
+		t.Fatalf("upstream %q", up)
+	}
+	if len(repo.RemoteRefs()) != 0 {
+		t.Fatalf("a branch with a local one still offered: %v", repo.RemoteRefs())
+	}
+}

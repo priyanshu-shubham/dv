@@ -66,7 +66,8 @@ func (h *Hub) repoOf(slug string) (store.Folder, error) {
 	return store.Folder{}, fmt.Errorf("%s, which %s is a worktree of, is not in this hub", server.HomeRelative(f.WorktreeOf), f.Path)
 }
 
-// handleBranches offers what a new worktree could check out or start from.
+// handleBranches offers what a new worktree could check out or start from,
+// the remotes' branches as fetched now. Offline, they are as last fetched.
 func (h *Hub) handleBranches(w http.ResponseWriter, r *http.Request) {
 	main, err := h.repoOf(r.PathValue("slug"))
 	if err != nil {
@@ -78,6 +79,7 @@ func (h *Hub) handleBranches(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("%s is not a git repository", server.HomeRelative(main.Path)))
 		return
 	}
+	repo.FetchStale(server.FetchEvery)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"branches": append([]string{}, repo.Branches()...),
 		"remote":   append([]string{}, repo.RemoteBranches()...),
@@ -163,9 +165,14 @@ func (h *Hub) makeWorktree(slug string, req worktreeReq, fresh bool) (*job, int,
 			base = cmp.Or(head.Branch, head.SHA)
 		}
 	}
+	// A remote's branch named in full, as origin/fix/login, is fix/login here.
+	local := branch
+	if x, err := repo.Tracking(branch); err == nil && x.Ref == branch {
+		local = x.Branch
+	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		name = filepath.Base(main.Path) + "-" + strings.ReplaceAll(branch, "/", "-")
+		name = filepath.Base(main.Path) + "-" + strings.ReplaceAll(local, "/", "-")
 		name = filepath.Base(h.freePath(filepath.Join(filepath.Dir(main.Path), name)))
 	}
 	if err := plainName(name); err != nil {
@@ -175,13 +182,31 @@ func (h *Hub) makeWorktree(slug string, req worktreeReq, fresh bool) (*job, int,
 	if h.taken(path) {
 		return nil, http.StatusConflict, fmt.Errorf("%s already exists", server.HomeRelative(path))
 	}
-	args := []string{"worktree", "add", "--", path, branch}
-	if !repo.HasBranch(branch) && (base != "" || !repo.HasRemoteBranch(branch)) {
-		args = []string{"worktree", "add", "-b", branch, "--", path, startPoint(repo, base)}
-	}
-
-	j := &job{Kind: "worktree", Title: branch, Path: path, Place: server.HomeRelative(path), Of: main.Slug, Step: "Creating"}
+	j := &job{Kind: "worktree", Title: local, Path: path, Place: server.HomeRelative(path), Of: main.Slug, Step: "Creating"}
 	h.start(j, func(ctx context.Context) (string, error) {
+		// A local branch is checked out; a remote's, fetched first so a branch
+		// just pushed is known, is tracked by a new local one; any other name
+		// is a new branch from base. A new name made up for the reader is new.
+		args := []string{"worktree", "add", "--", path, branch}
+		if !repo.HasBranch(branch) {
+			var x gitx.RemoteRef
+			if !fresh {
+				h.step(j, "Fetching")
+				repo.FetchStale(server.FetchEvery)
+				t, err := repo.Tracking(branch)
+				if err != nil {
+					return "", err
+				}
+				x = t
+				h.step(j, "Creating")
+			}
+			if x.Ref != "" {
+				branch = x.Branch
+				args = []string{"worktree", "add", "--track", "-b", branch, "--", path, "refs/remotes/" + x.Ref}
+			} else {
+				args = []string{"worktree", "add", "-b", branch, "--", path, startPoint(repo, base)}
+			}
+		}
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir, cmd.Env = main.Path, gitx.QuietEnv()
 		if err := h.run(j, cmd); err != nil {
