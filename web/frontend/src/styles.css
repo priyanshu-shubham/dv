@@ -4911,6 +4911,29 @@ button.ghost.agent-context {
   font-size: var(--fs-sm);
 }
 
+/* A model nobody picked answering, with Claude Code's word on why: the colour
+   files that changed are marked with, as it wants reading but is no failure. */
+.agent-model-note {
+  align-self: stretch;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--mod-bg);
+  font-size: var(--fs-sm);
+}
+
+.agent-model-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mod);
+  font-weight: 600;
+}
+
+.agent-model-why {
+  margin-top: 4px;
+  color: var(--fg-2);
+}
+
 .agent-note.error {
   align-self: stretch;
   padding: 8px 10px;

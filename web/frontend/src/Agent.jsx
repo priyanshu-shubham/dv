@@ -15,7 +15,7 @@ import { AttachTarget } from "./Threads.jsx";
 import { agentName, cx, duration, isTyping, LRM, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import {
-  AgentIcon, IconArrowUp, IconBack, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPin, IconPlus, IconReply, IconStop, IconTemporary,
+  AgentIcon, IconArrowUp, IconBack, IconBolt, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPin, IconPlus, IconReply, IconStop, IconTemporary,
   IconUndo, IconX,
 } from "./icons.jsx";
 
@@ -2283,6 +2283,8 @@ const Item = memo(function Item(props) {
       return <Compacted item={item} />;
     case "mode":
       return <div className="agent-mode-line">{modeChange(item.from, item.text)}</div>;
+    case "model":
+      return <ModelChange item={item} />;
     case "peer":
       return <PeerMessage item={item} />;
     case "tool":
@@ -2448,6 +2450,24 @@ function modeChange(from, to) {
   if (to === "plan") return "Entered plan mode";
   if (from === "plan") return `Exited plan mode · ${name}`;
   return `Switched to ${name}`;
+}
+
+// ModelChange is a move to another model that nobody picked. With Claude
+// Code's notice, as when a model's safeguards declined a message, it says
+// why; seen only in the transcript, which model answered from there.
+function ModelChange({ item }) {
+  const from = prettyModel(item.from);
+  const to = prettyModel(item.to);
+  if (!item.text) return <div className="agent-mode-line">{`${to} answering from here · was ${from}`}</div>;
+  return (
+    <div className="agent-model-note">
+      <div className="agent-model-head">
+        <IconBolt size={12} />
+        {to ? `${to} answering · was ${from}` : `${from} declined this message`}
+      </div>
+      <Markdown md={md} text={item.text} className="markdown agent-model-why" />
+    </div>
+  );
 }
 
 // Compacted is where Claude Code summarised the conversation to free its

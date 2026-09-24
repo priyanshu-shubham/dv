@@ -78,6 +78,72 @@ func kinds(items []Item) []string {
 	return out
 }
 
+func answer(uuid, parent, msg, model, s string) map[string]any {
+	a := assistant(uuid, parent, msg, text(s))
+	a["message"].(map[string]any)["model"] = model
+	return a
+}
+
+// A reply from another model than the last says so: why, when dv caught
+// Claude Code's notice; which, when only the transcript tells; nothing, when
+// /model or a pick in dv moved it.
+func TestAModelNobodyPickedIsShown(t *testing.T) {
+	models := func(tr *Transcript, switches ...store.Switch) []string {
+		var out []string
+		for _, it := range tr.Items("", switches...) {
+			if it.Kind == "model" {
+				out = append(out, it.From+">"+it.To+":"+it.Text)
+			}
+		}
+		return out
+	}
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "hi")) +
+		line(t, answer("a1", "u1", "m1", "claude-opus-5-5", "Hello.")) +
+		line(t, user("u2", "a1", "and this")) +
+		line(t, answer("a2", "u2", "m2", "claude-opus-4-5", "This."))))
+	if got := models(tr); !slices.Equal(got, []string{"claude-opus-5-5>claude-opus-4-5:"}) {
+		t.Fatalf("seen in the transcript alone: %q", got)
+	}
+	why := "Opus 5.5's safeguards flagged this session. Opus 4.5 is answering instead."
+	caught := store.Switch{After: "u2", Model: &store.ModelSwitch{From: "claude-opus-5-5", To: "claude-opus-4-5", Why: why}}
+	if got := models(tr, caught); !slices.Equal(got, []string{"claude-opus-5-5>claude-opus-4-5:" + why}) {
+		t.Fatalf("with the notice: %q", got)
+	}
+	if got := models(tr, store.Switch{After: "a1", Model: &store.ModelSwitch{To: "opus"}}); got != nil {
+		t.Fatalf("picked in dv: %q", got)
+	}
+	if mode := tr.Mode("", []store.Switch{caught}); mode != "" {
+		t.Fatalf("a change of model made the mode %q", mode)
+	}
+
+	byCommand := newTranscript("/repo")
+	byCommand.Feed([]byte(line(t, user("u1", "", "hi")) +
+		line(t, answer("a1", "u1", "m1", "claude-opus-5-5", "Hello.")) +
+		line(t, user("c1", "a1", "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>")) +
+		line(t, user("u2", "c1", "and this")) +
+		line(t, answer("a2", "u2", "m2", "claude-sonnet-5", "This."))))
+	if got := models(byCommand); got != nil {
+		t.Fatalf("after /model: %q", got)
+	}
+}
+
+// Claude Code's notice of a fallback reaches the page's record of it, placed
+// after the message refused.
+func TestAFallbackNoticeIsKept(t *testing.T) {
+	var at string
+	var got store.ModelSwitch
+	p := &proc{changed: func() {}, fellBack: func(a string, sw store.ModelSwitch) { at, got = a, sw }}
+	p.handle([]byte(`{"type":"system","subtype":"model_refusal_fallback","content":"Opus 5.5's safeguards flagged this session.","original_model":"claude-opus-5-5","fallback_model":"claude-opus-4-5","refused_user_message_uuid":"u2","scope":"session"}`))
+	if at != "u2" || got.From != "claude-opus-5-5" || got.To != "claude-opus-4-5" || !strings.Contains(got.Why, "safeguards") || p.using != "claude-opus-4-5" {
+		t.Fatalf("kept %+v after %q, using %q", got, at, p.using)
+	}
+	p.handle([]byte(`{"type":"system","subtype":"model_refusal_no_fallback","content":"","original_model":"claude-opus-5-5"}`))
+	if got.To != "" || got.Why == "" {
+		t.Fatalf("a refusal with no fallback: %+v", got)
+	}
+}
+
 func TestTheConversationIsTheBranchTheFileEndsOn(t *testing.T) {
 	tr := newTranscript("/repo")
 	tr.Feed([]byte(conversation(t)))

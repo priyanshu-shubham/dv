@@ -42,11 +42,23 @@ type Pick struct {
 	Effort string `json:"effort,omitempty"`
 }
 
-// Switch is a change of permission mode made in dv. Claude Code records a mode
-// only with the next message, so dv keeps where in the conversation it was.
+// Switch is a change of permission mode made in dv, or of model. Claude Code
+// records a mode only with the next message, and of a model only which one
+// answered, so dv keeps where in the conversation it was.
 type Switch struct {
-	After string `json:"after"` // the transcript's last entry then
-	To    string `json:"to"`
+	After string       `json:"after"`        // the transcript's last entry then
+	To    string       `json:"to,omitempty"` // the mode
+	Model *ModelSwitch `json:"model,omitempty"`
+}
+
+// ModelSwitch is a change of model: picked in dv, or made by Claude Code on its
+// own, as when a model's safeguards decline a message and another answers it.
+type ModelSwitch struct {
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
+	// Why is Claude Code's notice of it, as its terminal shows it; "" for one
+	// picked in dv.
+	Why string `json:"why,omitempty"`
 }
 
 // maxSwitches is how many a session keeps, the latest.
@@ -180,14 +192,20 @@ func (s *Sessions) Switches(id string) []Switch {
 	return slices.Clone(s.doc.Switches[id])
 }
 
-// AddSwitch records a change of mode.
+// AddSwitch records a change of mode or model. A model's that repeats the
+// last one's, as Claude Code can say twice, takes its place.
 func (s *Sessions) AddSwitch(id string, sw Switch) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.sync(); err != nil {
 		return err
 	}
-	list := append(s.doc.Switches[id], sw)
+	list := s.doc.Switches[id]
+	if n := len(list); n > 0 && sw.Model != nil && list[n-1].Model != nil && list[n-1].After == sw.After &&
+		list[n-1].Model.From == sw.Model.From && list[n-1].Model.To == sw.Model.To {
+		list = list[:n-1]
+	}
+	list = append(slices.Clone(list), sw)
 	if len(list) > maxSwitches {
 		list = list[len(list)-maxSwitches:]
 	}

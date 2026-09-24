@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"dv/internal/permit"
+	"dv/internal/store"
 )
 
 // Block is part of a reply still streaming in: the page draws it until the
@@ -41,6 +42,9 @@ type proc struct {
 	sent    func()        // a message went to it
 	ended   func()        // a turn is over
 	named   func() string // the name its transcript last gave it, for a resume
+	// fellBack is told of a model Claude Code moved off, after the message it
+	// refused, if one did.
+	fellBack func(at string, sw store.ModelSwitch)
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
@@ -397,7 +401,13 @@ type message struct {
 	Command   string          `json:"command_uuid"`
 	RequestID string          `json:"request_id"`
 	Request   json.RawMessage `json:"request"`
-	Response  struct {
+	// On a change of model Claude Code made itself: its notice, which is
+	// Raw as other messages carry content of other shapes, and the models.
+	Notice   json.RawMessage `json:"content"`
+	From     string          `json:"original_model"`
+	Fallback string          `json:"fallback_model"`
+	Refused  string          `json:"refused_user_message_uuid"`
+	Response struct {
 		Subtype   string          `json:"subtype"`
 		RequestID string          `json:"request_id"`
 		Response  json.RawMessage `json:"response"`
@@ -421,6 +431,28 @@ type message struct {
 	Message struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+}
+
+// modelChanged keeps Claude Code's word on a model it moved off, which it
+// shows in its terminal and writes nowhere else, and shows what answers now.
+func (p *proc) modelChanged(m *message) {
+	var why string
+	json.Unmarshal(m.Notice, &why)
+	if why == "" && m.Subtype == "model_refusal_no_fallback" {
+		why = "The model's safeguards declined this message, and no other model answered it."
+	}
+	if why == "" {
+		why = fmt.Sprintf("Claude Code moved from %s to %s.", m.From, m.Fallback)
+	}
+	if m.Fallback != "" {
+		p.mu.Lock()
+		p.using = m.Fallback
+		p.mu.Unlock()
+		p.changed()
+	}
+	if p.fellBack != nil {
+		p.fellBack(m.Refused, store.ModelSwitch{From: m.From, To: m.Fallback, Why: why})
+	}
 }
 
 func (p *proc) handle(line []byte) {
@@ -460,6 +492,10 @@ func (p *proc) handle(line []byte) {
 		}
 		if m.Subtype == "compact_boundary" {
 			p.wrote()
+		}
+		switch m.Subtype {
+		case "model_refusal_fallback", "model_fallback", "model_consent_fallback", "model_refusal_no_fallback":
+			p.modelChanged(&m)
 		}
 
 	case "stream_event":

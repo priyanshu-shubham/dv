@@ -19,7 +19,7 @@ import (
 // Item is one thing in a conversation as the page draws it.
 type Item struct {
 	Key  string `json:"key"`
-	Kind string `json:"kind"` // prompt | command | output | text | thinking | tool | note | compact | mode | peer
+	Kind string `json:"kind"` // prompt | command | output | text | thinking | tool | note | compact | mode | model | peer
 	At   string `json:"at,omitempty"`
 	Text string `json:"text,omitempty"`
 
@@ -54,8 +54,10 @@ type Item struct {
 	Compacted *Compacted `json:"compacted,omitempty"`
 
 	// On a change of mode, whose Text is the new one; on a peer's message, the
-	// session that sent it.
+	// session that sent it. On a change of model, the models, and as Text
+	// Claude Code's notice of why, when dv caught it.
 	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 }
 
 type Compacted struct {
@@ -329,8 +331,17 @@ func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 		after[sw.After] = append(after[sw.After], sw)
 	}
 	drawn := map[string]bool{} // messages
+	// The model the last reply came from, and whether a move off it since is
+	// accounted for: by /model, a pick in dv or Claude Code's own notice.
+	answering, explained := "", false
 	for i := len(chain) - 1; i >= 0; i-- {
 		e := chain[i]
+		if e.assistant && e.model != "" && e.model != "<synthetic>" {
+			if answering != "" && e.model != answering && !explained {
+				items = append(items, Item{Key: "model:" + e.uuid, Kind: "model", From: answering, To: e.model})
+			}
+			answering, explained = e.model, false
+		}
 		// Where the conversation first shows a new mode; the first it shows is
 		// the one it began in.
 		if e.mode != "" && e.mode != recorded {
@@ -354,6 +365,9 @@ func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 				switch it.Kind {
 				case "prompt", "command":
 					it.Before = before
+					if it.Kind == "command" && (it.Text == "/model" || strings.HasPrefix(it.Text, "/model ")) {
+						explained = true
+					}
 				case "tool":
 					it.Result, it.Task = t.results[it.ToolID], t.tasks[it.ToolID]
 				}
@@ -364,6 +378,13 @@ func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 			items = append(items, b.items[0])
 		}
 		for n, sw := range after[e.uuid] {
+			if sw.Model != nil {
+				explained = true
+				if sw.Model.Why != "" {
+					items = append(items, Item{Key: "fallback:" + e.uuid + ":" + strconv.Itoa(n), Kind: "model", Text: sw.Model.Why, From: sw.Model.From, To: sw.Model.To})
+				}
+				continue
+			}
 			if sw.To != shown {
 				items = append(items, Item{Key: "switch:" + e.uuid + ":" + strconv.Itoa(n), Kind: "mode", Text: sw.To, From: shown})
 				shown = sw.To
@@ -390,7 +411,9 @@ func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 func (t *Transcript) Mode(leaf string, switches []store.Switch) string {
 	after := map[string]string{}
 	for _, sw := range switches {
-		after[sw.After] = sw.To
+		if sw.Model == nil {
+			after[sw.After] = sw.To
+		}
 	}
 	recorded, mode := "", t.mode
 	for _, e := range slices.Backward(t.chain(leaf)) {

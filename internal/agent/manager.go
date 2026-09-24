@@ -501,6 +501,7 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p.changed = func() { m.signal(id, false) }
 	p.wrote = func() { m.signal(id, true) }
 	p.named = func() string { return agentName(transcriptFiles(m.root)[id]) }
+	p.fellBack = func(at string, sw store.ModelSwitch) { m.markModel(id, at, sw) }
 	p.ended = func() {
 		// A turn spends from the plan; the next look should show it.
 		m.mu.Lock()
@@ -714,6 +715,9 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	if switched {
 		m.markSwitch(id, *mode)
 	}
+	if model != nil {
+		m.markModel(id, "", store.ModelSwitch{To: *model})
+	}
 	if live {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -746,20 +750,33 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 // transcript says nothing of until the next message. Before the first there is
 // nowhere to mark: the session starts in the mode.
 func (m *Manager) markSwitch(id, to string) {
+	m.mark(id, "", store.Switch{To: to})
+}
+
+// markModel keeps a change of model where it was made: after the message
+// at names, as a refused one, or where the conversation has got to.
+func (m *Manager) markModel(id, at string, sw store.ModelSwitch) {
+	m.mark(id, at, store.Switch{Model: &sw})
+}
+
+func (m *Manager) mark(id, at string, sw store.Switch) {
 	m.mu.Lock()
 	f := m.follows[id]
 	m.mu.Unlock()
 	if f == nil {
 		return
 	}
-	f.mu.Lock()
-	last := f.t.Last()
-	f.mu.Unlock()
-	if last == "" {
-		return
+	if at == "" {
+		f.mu.Lock()
+		last := f.t.Last()
+		f.mu.Unlock()
+		if last == "" {
+			return
+		}
+		at = cmp.Or(m.leaf(id, last), last)
 	}
-	at := cmp.Or(m.leaf(id, last), last)
-	if m.saved.AddSwitch(id, store.Switch{After: at, To: to}) != nil {
+	sw.After = at
+	if m.saved.AddSwitch(id, sw) != nil {
 		return
 	}
 	f.mu.Lock()
