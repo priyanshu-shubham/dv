@@ -106,6 +106,9 @@ export default function App() {
   const [settings, setSettings] = usePref("user", "settings", NO_SETTINGS);
   const sideRight = settings.sidebar === "right";
   const [agentReveal, setAgentReveal] = useState(null);
+  // Counts what was put in the Agent view's message box from elsewhere, each
+  // to leave the box ready to write in.
+  const [boxFocus, setBoxFocus] = useState(0);
   const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false, { folder: true });
   const showComments = phone ? panel === "comments" : commentsOpen;
   const showPanel = useCallback((on) => (phone ? setPanel(on ? "comments" : null) : setCommentsOpen(on)), [phone, setCommentsOpen]);
@@ -1289,6 +1292,7 @@ export default function App() {
       if (a.where === "current" && a.draft) {
         const key = "draft:" + agentId;
         setPref("repo", key, [readPref("repo", key, ""), a.prompt].filter((t) => t.trim()).join("\n\n"), "");
+        setBoxFocus((n) => n + 1);
         return openSession(agentId);
       }
       runAction(a, agentId).then(
@@ -1431,6 +1435,7 @@ export default function App() {
         const list = by[to] || [];
         return list.some((x) => x.key === key) ? by : { ...by, [to]: [...list, { ...a, at, key }] };
       });
+      setBoxFocus((n) => n + 1);
       if (to === "") return openAdded();
       setStack([]);
       setAgentId(to);
@@ -1454,6 +1459,7 @@ export default function App() {
     (note, to = attachTo) => {
       const key = "draft:" + (to || "new");
       setPref("repo", key, [readPref("repo", key, ""), noteText(note)].filter((t) => t.trim()).join("\n\n"), "");
+      setBoxFocus((n) => n + 1);
       if (phone) setPanel(null);
       if (to === "") return openAdded();
       setStack([]);
@@ -1964,6 +1970,7 @@ export default function App() {
             onClose={closeSession}
             onChanged={loadSessions}
             reveal={agentReveal}
+            boxFocus={boxFocus}
             offline={offline}
           />
         )}

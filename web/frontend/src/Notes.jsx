@@ -59,12 +59,27 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
 
   // hidden is what the filter leaves out, paused or not.
   const { groups, hidden } = useMemo(() => {
-    // "!label" hides the notes with that label; the rest of the text is searched for.
-    const words = filter.toLowerCase().split(/\s+/);
-    const without = new Set(words.filter((w) => w.length > 1 && w.startsWith("!")).map((w) => w.slice(1)));
-    const q = words.filter((w) => !w.startsWith("!")).join(" ").trim();
+    // "is:open" keeps only that status and "!is:done" leaves it out; "!label"
+    // hides the notes with that label; the rest of the text is searched for.
+    // A status still being typed is let be, not searched for.
+    const only = new Set();
+    const notIn = new Set();
+    const without = new Set();
+    const rest = [];
+    for (const w of filter.toLowerCase().split(/\s+/)) {
+      const not = w.startsWith("!");
+      const bare = not ? w.slice(1) : w;
+      if (bare.startsWith("is:")) {
+        if (STATUS[bare.slice(3)]) (not ? notIn : only).add(bare.slice(3));
+      } else if (not) {
+        if (bare) without.add(bare);
+      } else rest.push(w);
+    }
+    const q = rest.join(" ").trim();
     const keep = (n) =>
       (!shownLabel || n.labels?.includes(shownLabel)) &&
+      (!only.size || only.has(n.status)) &&
+      !notIn.has(n.status) &&
       !n.labels?.some((l) => without.has(l.toLowerCase())) &&
       (!q || [n.title, n.body, n.author, ...(n.labels || [])].some((s) => s?.toLowerCase().includes(q)));
     const byStatus = Object.fromEntries(STATUSES.map((s) => [s.id, []]));
@@ -103,7 +118,7 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
           title={
             paused
               ? "Filter paused, showing every note. Change it, or Resume, to filter again."
-              : "Text to find in a note or its labels. Start a word with ! to hide the notes with that label: !bug."
+              : "Text to find in a note or its labels. !bug hides the notes labelled bug. is:open shows only the open ones (or is:doing, is:done), and !is:done hides the done ones."
           }
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => {

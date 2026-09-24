@@ -552,7 +552,7 @@ function prettyModel(id) {
 export default function AgentView({
   id, session, agents, newAgent, onNewAgent, modes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
-  requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, offline, active = true,
+  requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, boxFocus, offline, active = true,
 }) {
   // A session shows from its latest compaction until the reader asks for what
   // came before: by session, where it is shown from then.
@@ -662,6 +662,15 @@ export default function AgentView({
     el.setSelectionRange(el.value.length, el.value.length);
     el.scrollTop = el.scrollHeight;
   }, [draft]);
+  // After the render that shows what was put in, and after a closing palette
+  // has handed the focus back.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!boxFocus || !el) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.scrollTop = el.scrollHeight;
+  }, [boxFocus]);
   // stick follows the end as the conversation grows; otherwise anchor holds the
   // reader's place, and for a moment after something is opened, opened keeps it
   // in view while it fills. top is where the view last was, and back where to
