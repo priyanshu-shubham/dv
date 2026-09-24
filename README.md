@@ -134,6 +134,14 @@ arrive. Without a line the comment is on the whole file; without a message
 it reads one from stdin; `-old` is for a line the change removed. See
 `dv comment -h`.
 
+`dv note "title"` adds a note to the repository's notes, the list beside the
+comments (the header's comments button, then **Notes**) for what is to be
+done later. A note has a status (open, doing, done), a priority and labels,
+and every worktree of the repository shares the list. The first line of the
+message is the title and the rest is Markdown under it; `-p high|medium|low`
+sets the priority and `-l a,b` the labels. From the page a note can be sent
+to a session's message box. See `dv note -h`.
+
 ## What dv keeps, and where
 
 In the repository, in `.dv/` at its root:
@@ -143,12 +151,17 @@ In the repository, in `.dv/` at its root:
 - `prefs.json` — the file filters, unsent messages to Claude and what is added
   to them, half-answered questions
 - `agent.json` — the sessions open in dv and which are Codex's, rewinds not yet
-  sent, and where you changed a session's permission mode
+  sent, where you changed a session's permission mode, and the model and effort
+  picked for each Claude session
 - `server.json` — the address of the dv running here
 
 On first run dv adds `/.dv/` to `.git/info/exclude`, so none of it shows in
 `git status` or gets committed, and your `.gitignore` stays untouched. Outside
 git there is nothing to add it to, so ignore `.dv/` yourself.
+
+The notes are the repository's, not a worktree's, so they live in `.git/dv/`
+(the main checkout's, which its worktrees share) as `notes.json`; outside git,
+in `.dv/`.
 
 In your config folder (`~/.config/dv` on Linux): `prefs.json`, the settings that
 follow you to every repository and device - theme, code colours, sidebar side,

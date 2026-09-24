@@ -72,6 +72,7 @@ type Server struct {
 	repo   *gitx.Repo
 	store  *store.Store
 	viewed *store.Viewed
+	notes  *store.Notes
 	prefs  *store.Prefs // the repository's
 	user   *store.Prefs // shared by every Server in the process
 	index  *symindex.Index
@@ -109,6 +110,10 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	if err != nil {
 		return nil, err
 	}
+	notes, err := store.OpenNotes(repo.Root, repo.CommonDir)
+	if err != nil {
+		return nil, err
+	}
 	sessions, err := store.OpenSessions(repo.Root)
 	if err != nil {
 		return nil, err
@@ -123,7 +128,7 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	ix := symindex.New(repo.Root, repo) // built once a page wants it
 	broker := permit.New(repo.Root)
 	s := &Server{
-		repo: repo, store: st, viewed: vw, prefs: prefs, user: user, index: ix,
+		repo: repo, store: st, viewed: vw, notes: notes, prefs: prefs, user: user, index: ix,
 		permit: broker, agent: agent.New(repo.Root, broker, sessions), saved: sessions, notices: notices,
 		stopNotices: func() {},
 	}
@@ -266,6 +271,11 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("PATCH /api/threads/{id}/comments/{cid}", s.handleEditComment)
 	mux.HandleFunc("DELETE /api/threads/{id}/comments/{cid}", s.handleDeleteComment)
+
+	mux.HandleFunc("GET /api/notes", Guarded(s.handleNotes))
+	mux.HandleFunc("POST /api/notes", Guarded(s.handleAddNote))
+	mux.HandleFunc("PATCH /api/notes/{id}", Guarded(s.handlePatchNote))
+	mux.HandleFunc("DELETE /api/notes/{id}", Guarded(s.handleDeleteNote))
 
 	mux.HandleFunc("GET /api/viewed", s.handleViewed)
 	mux.HandleFunc("POST /api/viewed", s.handleMarkViewed)

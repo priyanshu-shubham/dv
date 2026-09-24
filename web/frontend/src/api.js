@@ -129,6 +129,14 @@ export const api = {
 
   threads: () => req("/api/threads"),
 
+  // notes: { notes, version, path }, the repository's, shared by its worktrees.
+  notes: () => req("/api/notes"),
+  // note: { title, body, status, priority, labels }, and to put one back, { author, createdAt }.
+  addNote: (note) => req("/api/notes", { method: "POST", body: JSON.stringify(note) }),
+  // patch: any of the fields addNote takes but the last two.
+  patchNote: (id, patch) => req(`/api/notes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteNote: (id) => req(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   // key is the comparison's label: a file is viewed in one diff, not all of them.
   viewed: (key) => req(`/api/viewed?${new URLSearchParams({ key })}`),
 

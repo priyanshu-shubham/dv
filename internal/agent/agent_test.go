@@ -908,8 +908,32 @@ func TestANewSessionOutlivesARestartBeforeItsFirstMessage(t *testing.T) {
 	}
 }
 
-// A session not running yet is in the mode its transcript last recorded, and
-// is resumed in it.
+// The effort picked for a session is what it resumes with after dv restarts:
+// Claude Code's transcript keeps no record of it.
+func TestAPickedEffortOutlivesARestart(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "")
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+	saved, _ := store.OpenSessions(root)
+	saved.Set("s", true)
+
+	high := "high"
+	if err := New(root, permit.New(root), saved).Configure("s", nil, nil, &high); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := store.OpenSessions(root)
+	p, err := New(root, permit.New(root), again).procFor("s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.effort != "high" || !slices.Contains(p.args(), "high") {
+		t.Fatalf("resumed at effort %q, with %q", p.effort, p.args())
+	}
+}
+
 // Two sessions written at the same moment keep an order of their own, rather
 // than trading places on every listing: the files come in no order.
 func TestSessionsWrittenTogetherKeepTheirOrder(t *testing.T) {

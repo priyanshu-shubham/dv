@@ -492,6 +492,9 @@ func (m *Manager) Start(id string) error {
 
 func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p := &proc{id: id, cwd: cwd, broker: m.broker, resume: resume, lastUsed: time.Now()}
+	// A resume starts on the user's settings, not what the session last ran with.
+	pick := m.saved.Picked(id)
+	p.model, p.effort = pick.Model, pick.Effort
 	if r, ok := m.saved.Rewound(id); ok && !r.Sent {
 		p.resumeAt = r.At
 	}
@@ -703,7 +706,11 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 		p.effort = *effort
 	}
 	live := p.cmd != nil
+	pick := store.Pick{Model: p.model, Effort: p.effort}
 	p.mu.Unlock()
+	if err := m.saved.SetPicked(id, pick); err != nil {
+		return err
+	}
 	if switched {
 		m.markSwitch(id, *mode)
 	}

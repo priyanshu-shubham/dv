@@ -106,6 +106,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"version":  v,
 		"comments": s.store.Version(),
 		"viewed":   s.viewed.Version(),
+		"notes":    s.notes.Version(),
 		"prefs":    s.prefsVersion(),
 	})
 }

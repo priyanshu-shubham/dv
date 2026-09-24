@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { cx, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tree.js";
 import { AttachButton, ThreadList } from "./Threads.jsx";
+import { Notes, openNotes } from "./Notes.jsx";
 import { SessionList } from "./Agent.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
@@ -363,9 +364,12 @@ export default function Sidebar({
 }
 
 // CommentsPanel is every comment in the review, at the page's right in any
-// mode, opened and closed from the header, which counts them. Its width is
-// dragged from its left edge.
-export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth }) {
+// mode, opened and closed from the header, which counts them; its switch
+// turns it to the repository's notes. Its width is dragged from its left edge.
+export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth }) {
+  const open = threads.filter((t) => !t.resolved).length;
+  const toDo = openNotes(notes.notes);
+  const savedTo = tab === "notes" ? notes.path : commentsPath;
   const rootRef = useRef(null);
   // Ticked comments go to a session, or go, together. Ones since deleted drop out.
   const [ticked, setTicked] = useState(() => new Set());
@@ -413,7 +417,20 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
           onWidth(0);
         }}
       />
-      {threads.length > 0 && onSend && (
+      <div className="sidebar-modes">
+        <div className="seg" role="group" aria-label="Show">
+          <button className={cx(tab === "comments" && "on")} aria-pressed={tab === "comments"} onClick={() => onTab("comments")} title="The comments in this review">
+            Comments
+            {open > 0 && <span className="seg-count">{open}</span>}
+          </button>
+          <button className={cx(tab === "notes" && "on")} aria-pressed={tab === "notes"} onClick={() => onTab("notes")} title="The repository's notes, which all its worktrees share">
+            Notes
+            {toDo > 0 && <span className="seg-count">{toDo}</span>}
+          </button>
+        </div>
+      </div>
+      {tab === "notes" && <Notes {...notes} />}
+      {tab !== "notes" && threads.length > 0 && onSend && (
         <div className="comment-picks">
           <label className="pick-all" title={all ? "Take the ticks off" : "Tick them all"}>
             <input type="checkbox" className="tick" checked={all} onChange={() => setTicked(all ? new Set() : new Set(threads.map((t) => t.id)))} />
@@ -435,26 +452,28 @@ export function CommentsPanel({ threads, commentsPath, onJump, onThreadAction, o
           )}
         </div>
       )}
-      <div className="comment-list">
-        {threads.length === 0 ? (
-          <div className="empty">No comments yet. Drag across line numbers, or hover a line and hit +.</div>
-        ) : (
-          <ThreadList
-            threads={threads}
-            compact
-            onAttach={onAttach}
-            ticked={ticked}
-            onTick={onSend ? tick : undefined}
-            onAction={(action) => {
-              if (action.type === "jump") onJump(action.thread);
-              else onThreadAction(action);
-            }}
-          />
-        )}
-      </div>
+      {tab !== "notes" && (
+        <div className="comment-list">
+          {threads.length === 0 ? (
+            <div className="empty">No comments yet. Drag across line numbers, or hover a line and hit +.</div>
+          ) : (
+            <ThreadList
+              threads={threads}
+              compact
+              onAttach={onAttach}
+              ticked={ticked}
+              onTick={onSend ? tick : undefined}
+              onAction={(action) => {
+                if (action.type === "jump") onJump(action.thread);
+                else onThreadAction(action);
+              }}
+            />
+          )}
+        </div>
+      )}
       <div className="sidebar-foot">
-        <span className="saved-to" title={commentsPath}>
-          saved to {commentsPath}
+        <span className="saved-to" title={savedTo}>
+          saved to {savedTo}
         </span>
       </div>
     </aside>

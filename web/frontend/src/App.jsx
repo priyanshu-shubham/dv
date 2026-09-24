@@ -14,6 +14,7 @@ import AgentView, { attachKey } from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useHubActivity, useNotices } from "./Notices.jsx";
 import { AttachTarget } from "./Threads.jsx";
+import { noteText } from "./Notes.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
 import { mapLine, newLineFor, plainDiff } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
@@ -106,7 +107,11 @@ export default function App() {
   const [agentReveal, setAgentReveal] = useState(null);
   const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false, { folder: true });
   const showComments = phone ? panel === "comments" : commentsOpen;
+  const showPanel = useCallback((on) => (phone ? setPanel(on ? "comments" : null) : setCommentsOpen(on)), [phone, setCommentsOpen]);
   const [commentsWidth, setCommentsWidth] = usePersisted("commentsWidth", 0); // 0: the stylesheet's default
+  const [panelTab, setPanelTab] = usePersisted("panelTab", "comments");
+  const [notes, setNotes] = useState({ notes: [], path: "" });
+  const [newNote, setNewNote] = useState(false);
 
   const hovered = useRef(null); // { path, side, line } under the cursor
   const scrollRef = useRef(null);
@@ -192,6 +197,7 @@ export default function App() {
   // reloads whichever moved.
   const threadsAt = useRef("");
   const viewedAt = useRef("");
+  const notesAt = useRef("");
 
   const loadThreads = useCallback(() => {
     api
@@ -202,6 +208,49 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+
+  // Notes change on screen before the server has them, so a load that a
+  // change overtook is dropped, as the viewed marks' are.
+  const notesWrites = useRef(0);
+  const loadNotes = useCallback(() => {
+    const writes = notesWrites.current;
+    api
+      .notes()
+      .then((r) => {
+        if (writes !== notesWrites.current) return;
+        notesAt.current = r.version;
+        setNotes({ notes: r.notes || [], path: r.path });
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(loadNotes, [loadNotes]);
+  const changeNotes = useCallback(
+    async (change, write) => {
+      notesWrites.current++;
+      if (change) setNotes((s) => ({ ...s, notes: change(s.notes) }));
+      try {
+        return await write();
+      } finally {
+        notesWrites.current++;
+        loadNotes();
+      }
+    },
+    [loadNotes],
+  );
+  const addNote = useCallback((note) => changeNotes(null, () => api.addNote(note)), [changeNotes]);
+  const patchNote = useCallback(
+    (note, patch) => changeNotes((list) => list.map((n) => (n.id === note.id ? { ...n, ...patch } : n)), () => api.patchNote(note.id, patch)),
+    [changeNotes],
+  );
+  // Gone at once, with a way back while the notice lasts.
+  const deleteNote = useCallback(
+    (note) =>
+      changeNotes((list) => list.filter((n) => n.id !== note.id), () => api.deleteNote(note.id)).then(
+        () => say("Note deleted", note.title, [{ label: "Undo", primary: true, run: () => addNote(note).catch((e) => say("Could not put the note back", e.message)) }]),
+        (e) => say("Could not delete the note", e.message),
+      ),
+    [changeNotes, addNote],
+  );
 
   // Read the current set through a ref so callbacks keep one identity for the
   // life of the page; every memoised file section depends on that.
@@ -251,9 +300,13 @@ export default function App() {
         viewedAt.current = v.viewed;
         loadViewed();
       }
+      if (v.notes !== notesAt.current) {
+        notesAt.current = v.notes;
+        loadNotes();
+      }
       followPrefs(v.prefs);
     },
-    [loadThreads, loadViewed],
+    [loadThreads, loadViewed, loadNotes],
   );
 
   // Live updates. versionRef is the repository fingerprint the diff on screen
@@ -1181,13 +1234,15 @@ export default function App() {
       note: "A session in a new folder, deleted when you close it",
       run: () => api.hubNewTask().then((f) => openFolderSession(f.slug, ""), (e) => say("Could not start a task", e.message)),
     },
-    {
-      id: "comments",
-      // Open, it closes them, as the header's button does.
-      name: showComments ? "Close comments" : "Open comments",
-      note: "The comments in the review",
-      run: () => (phone ? setPanel(showComments ? null : "comments") : setCommentsOpen(!showComments)),
-    },
+    // Open, each closes the panel, as the header's button does; else it turns to them.
+    ...[
+      ["comments", "comments", "The comments in the review"],
+      ["notes", "notes", "The repository's notes, shared by its worktrees"],
+    ].map(([tab, what, note]) => {
+      const shown = showComments && panelTab === tab;
+      return { id: tab, name: `${shown ? "Close" : "Open"} ${what}`, note, run: () => (shown ? showPanel(false) : (setPanelTab(tab), showPanel(true))) };
+    }),
+    { id: "new-note", name: "New note", note: "For later, on the repository's list", run: () => (setPanelTab("notes"), setNewNote(true), showPanel(true)) },
     ...(comparing
       ? PRESETS.filter((p) => p.kind !== scope.kind).map((p) => ({
           id: "scope-" + p.kind,
@@ -1392,6 +1447,19 @@ export default function App() {
       if (!readPref("repo", key, "")) setPref("repo", key, "Address these comments.", "");
     },
     [attach, attachTo],
+  );
+  // sendNote puts a note in a session's message box, after what is typed there.
+  const sendNote = useCallback(
+    (note, to = attachTo) => {
+      const key = "draft:" + (to || "new");
+      setPref("repo", key, [readPref("repo", key, ""), noteText(note)].filter((t) => t.trim()).join("\n\n"), "");
+      if (phone) setPanel(null);
+      if (to === "") return openAdded();
+      setStack([]);
+      setAgentId(to);
+      switchMode("agent");
+    },
+    [attachTo, phone, openAdded, setAgentId, switchMode],
   );
   const deleteThreads = useCallback(
     async (list) => {
@@ -1879,6 +1947,17 @@ export default function App() {
         )}
         {showComments && (
           <CommentsPanel
+            tab={panelTab}
+            onTab={setPanelTab}
+            notes={{
+              ...notes,
+              composing: newNote,
+              onComposing: setNewNote,
+              onAdd: addNote,
+              onPatch: patchNote,
+              onDelete: deleteNote,
+              onSend: sendNote,
+            }}
             threads={threads}
             commentsPath={meta?.commentsPath || ""}
             onJump={(thread) => {

@@ -31,6 +31,15 @@ type sessionsDoc struct {
 	// Via names the chat app a session's last message came through, when it
 	// was not dv's page: "Telegram".
 	Via map[string]string `json:"via,omitempty"`
+	// Picks are the model and effort picked for a Claude Code session, which
+	// its transcript does not keep for a resume to start on.
+	Picks map[string]Pick `json:"picks,omitempty"`
+}
+
+// Pick is a session's model and effort, "" for the user's settings'.
+type Pick struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // Switch is a change of permission mode made in dv. Claude Code records a mode
@@ -238,6 +247,34 @@ func (s *Sessions) SetVia(id, via string) error {
 			s.doc.Via = map[string]string{}
 		}
 		s.doc.Via[id] = via
+	}
+	return s.file.save(s.doc)
+}
+
+// Picked is the model and effort a session was last given.
+func (s *Sessions) Picked(id string) Pick {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return s.doc.Picks[id]
+}
+
+func (s *Sessions) SetPicked(id string, p Pick) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	if s.doc.Picks[id] == p {
+		return nil
+	}
+	if p == (Pick{}) {
+		delete(s.doc.Picks, id)
+	} else {
+		if s.doc.Picks == nil {
+			s.doc.Picks = map[string]Pick{}
+		}
+		s.doc.Picks[id] = p
 	}
 	return s.file.save(s.doc)
 }

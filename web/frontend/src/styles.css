@@ -139,6 +139,10 @@
 /* Theme-independent scales. Every control is one of two heights, every bar,
    strip and row one of three, and every size and gap sits on these steps. */
 :root {
+  /* A field being typed in: a shade up from its edge, not the accent, which
+     read as an alarm on every box clicked into. */
+  --field-ring: 0 0 0 1px var(--border-strong);
+
   --font-ui: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
@@ -277,7 +281,7 @@ input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  box-shadow: var(--ring);
+  box-shadow: var(--field-ring);
 }
 
 .spacer {
@@ -2225,6 +2229,524 @@ button.headref:hover {
   font-size: var(--fs-xs);
 }
 
+/* ---------- notes ---------- */
+
+/* The panel's switch is the sidebar's mode control, a count beside each name. */
+.seg-count {
+  margin-left: 5px;
+  color: var(--fg-3);
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.seg > button.on .seg-count {
+  color: var(--fg-2);
+}
+
+.notes-filter .note-label {
+  align-self: center;
+  max-width: 40%;
+  margin-right: 2px;
+}
+
+.note-list .empty code {
+  padding: 1px 4px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  font: var(--fs-xs) var(--font-mono);
+}
+
+.note-list .empty .link {
+  margin-top: 6px;
+}
+
+.note-group + .note-group {
+  margin-top: 6px;
+}
+
+/* A status heads its notes and folds them away, as a folder does its files. */
+.note-group-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: var(--row-h);
+  margin-bottom: 2px;
+  padding: 0 4px;
+  border-radius: var(--r-md);
+  color: var(--fg-3);
+  font: 600 var(--fs-tag) / 1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.note-group-head:hover:not(:disabled) {
+  color: var(--fg-2);
+  background: var(--bg-hover);
+}
+
+.note-group-head:disabled {
+  cursor: default;
+}
+
+.note-group-head .count {
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+/* A note is a card as a comment is, its status to the left of it. */
+.note {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 8px 8px 6px 6px;
+  border-radius: var(--r-lg);
+  background: var(--bg-raised);
+}
+
+.choice-menu {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+}
+
+.note-status,
+.note-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border-radius: var(--r-md);
+}
+
+.note-status:hover,
+.note-priority:hover,
+.note-status[aria-expanded="true"],
+.note-priority[aria-expanded="true"] {
+  background: var(--bg-hover);
+}
+
+.note-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.note-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  color: var(--fg);
+  font: 500 var(--fs-md) / 20px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+/* No priority is set from where one would show, so it waits for the pointer. */
+.note:not(:hover) .note-priority.unset:not([aria-expanded="true"]) {
+  visibility: hidden;
+}
+
+/* Three lines of it in the list; the editor has the rest. */
+.note-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.note-title,
+.note-body {
+  cursor: pointer;
+}
+
+.note-title:hover {
+  color: var(--accent);
+}
+
+/* Done fades its words, as resolved does a comment's. */
+.note.st-done .note-title,
+.note.st-done .note-body {
+  color: var(--fg-3);
+}
+
+.note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: var(--ctl-h-sm);
+  margin-top: 4px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.note-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.note:hover .note-actions,
+.note:has(:focus-visible) .note-actions,
+.note-actions:has([aria-expanded="true"]) {
+  visibility: visible;
+}
+
+.note-actions .attach-btn,
+.note-actions .note-more {
+  height: var(--ctl-h-sm);
+  min-width: var(--ctl-h-sm);
+  font-size: var(--fs-xs);
+}
+
+.note-actions .note-more {
+  padding: 0;
+}
+
+.note-label {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+  color: var(--fg-2);
+  font: 500 var(--fs-xs) / 18px var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.note-label:hover {
+  color: var(--fg);
+}
+
+.note-label.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.note-label > button {
+  display: inline-flex;
+  flex: none;
+  margin-right: -3px;
+  padding: 0;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.note-label > button:hover {
+  opacity: 1;
+}
+
+.note-label.offer {
+  gap: 2px;
+  padding-left: 5px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--fg-3);
+}
+
+.note-label.offer:hover {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--fg);
+}
+
+/* The status, a ring filling as the work does. */
+.status-icon {
+  flex: none;
+  color: var(--fg-3);
+}
+
+.status-icon .ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.status-icon .fill {
+  fill: currentColor;
+}
+
+.status-icon.doing {
+  color: var(--mod);
+}
+
+.status-icon.done {
+  color: var(--add);
+}
+
+.status-icon.done .ring {
+  fill: currentColor;
+}
+
+.status-icon .tick-mark {
+  fill: none;
+  stroke: var(--bg-raised);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.priority-icon {
+  flex: none;
+  color: var(--fg-2);
+}
+
+.priority-icon rect {
+  fill: var(--fg-4);
+}
+
+.priority-icon rect.lit {
+  fill: currentColor;
+}
+
+.priority-icon.high {
+  color: var(--del);
+}
+
+/* The menus a note's marks open, in the page's top layer. */
+.model-list.choice-list {
+  position: fixed;
+  right: auto;
+  z-index: 110;
+  width: auto;
+  min-width: 150px;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.choice .choice-on {
+  margin-left: auto;
+  color: var(--fg-2);
+}
+
+.choice-list button.danger:hover {
+  color: var(--del);
+}
+
+/* A note over the page: the shell's strips around a document's well, read or
+   being written. Written, it holds its height, so the text box fills it. */
+.modal.note-view {
+  width: min(760px, 100%);
+  max-height: 84vh;
+}
+
+.modal.note-view.writing {
+  height: min(84vh, 760px);
+}
+
+.note-view-head {
+  gap: 4px;
+  padding: 0 6px 0 8px;
+  font: var(--fs-sm) var(--font-ui);
+}
+
+/* Status and priority are choices, so they carry a fill at rest. */
+.note-view-head .choice-menu {
+  align-self: center;
+}
+
+.note-view-head .note-pick {
+  gap: 5px;
+  padding: 0 7px 0 6px;
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.note-view-head .note-pick.unset {
+  color: var(--fg-2);
+}
+
+.note-view-head .note-pick > svg:last-child {
+  color: var(--fg-3);
+}
+
+.note-view-head .note-more {
+  width: var(--ctl-h);
+  padding: 0;
+}
+
+.note-view-body {
+  flex: 1;
+  min-height: 0;
+  padding: 26px 36px 36px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.note-view-title {
+  margin: 0;
+  color: var(--fg);
+  font: 600 21px / 1.35 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.note-view-title.done {
+  color: var(--fg-3);
+}
+
+.note-view-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+/* The details, as a Markdown file reads in its card, under a soft rule. */
+.md-preview.note-doc {
+  max-width: none;
+  margin-top: 20px;
+  padding: 20px 0 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.note-doc-empty {
+  margin: 20px 0 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-3);
+}
+
+.note-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.note-form-top {
+  display: grid;
+  gap: 12px;
+  padding: 24px 36px 0;
+}
+
+.note-form .note-title-input {
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 600 21px / 1.35 var(--font-ui);
+}
+
+/* Bare until it is used, its first chip in line with the title. */
+.note-form .note-labels-input {
+  margin-left: -4px;
+  background: none;
+}
+
+.note-form .note-labels-input:hover,
+.note-form .note-labels-input:focus-within {
+  background: var(--bg-input);
+}
+
+.note-form .note-title-input:focus,
+.note-form .note-body-input:focus {
+  box-shadow: none;
+}
+
+.note-form .note-body-input {
+  flex: 1;
+  min-height: 140px;
+  width: 100%;
+  margin-top: 18px;
+  padding: 18px 36px 24px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: none;
+  resize: none;
+  font: var(--fs-md) / 1.7 var(--font-mono);
+}
+
+.note-form .composer-error {
+  padding: 0 36px 10px;
+}
+
+.note-form-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 16px;
+  background: var(--bg-bar);
+}
+
+.note-labels-field {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.note-labels-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--ctl-h-sm);
+  padding: 2px 4px;
+  border-radius: var(--r-md);
+  background: var(--bg-input);
+  cursor: text;
+}
+
+/* Inside a card that has the ring already. */
+.note-labels-input:focus-within {
+  background: var(--bg-active);
+}
+
+.note-labels-input input {
+  flex: 1;
+  min-width: 60px;
+  height: 18px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font-size: var(--fs-xs);
+}
+
+.note-labels-input input:focus {
+  box-shadow: none;
+}
+
+.note-offered {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
 .markdown p {
   margin: 0 0 6px;
 }
@@ -2539,7 +3061,7 @@ a.path-link:hover {
 }
 
 .composer:focus-within {
-  box-shadow: var(--ring);
+  box-shadow: var(--field-ring);
 }
 
 .composer-title {
@@ -2712,7 +3234,7 @@ a.path-link:hover {
 }
 
 .palette-input .glob:focus {
-  box-shadow: var(--ring);
+  box-shadow: var(--field-ring);
 }
 
 .toggles {
@@ -2752,7 +3274,7 @@ a.path-link:hover {
 }
 
 .find-bar input:focus {
-  box-shadow: var(--ring);
+  box-shadow: var(--field-ring);
 }
 
 .find-bar input.bad {
@@ -6253,6 +6775,47 @@ button.ghost.back {
     animation: panel-in 180ms ease;
   }
 
+  /* A note takes the whole screen. */
+  .backdrop:has(> .note-view) {
+    padding: 0;
+  }
+
+  .modal.note-view,
+  .modal.note-view.writing {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .note-view-body {
+    padding: 20px 18px 28px;
+  }
+
+  .note-form-top {
+    padding: 18px 18px 0;
+  }
+
+  .note-form .note-body-input {
+    padding: 14px 18px 20px;
+  }
+
+  .note-form .composer-error {
+    padding: 0 18px 10px;
+  }
+
+  .note-form-foot .hint {
+    display: none;
+  }
+
+  /* Room for a finger, without moving the title off its line. */
+  .note-status,
+  .note-priority {
+    width: 28px;
+    height: 28px;
+    margin: -4px -3px;
+  }
+
   .side-resize {
     display: none;
   }
@@ -6748,7 +7311,9 @@ button.ghost.back {
 /* No pointer to hover with: what shows on pointing shows always. */
 @media (hover: none) {
   .agent-tool-row .view-file,
-  .comment-actions {
+  .comment-actions,
+  .note-actions,
+  .note:not(:hover) .note-priority.unset:not([aria-expanded="true"]) {
     visibility: visible;
   }
 

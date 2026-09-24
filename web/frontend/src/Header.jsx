@@ -246,7 +246,7 @@ export default function Header({
         className={cx("icon", "comments-toggle", commentsOn && "on")}
         aria-pressed={commentsOn}
         onClick={onComments}
-        title={`Comments in the review${comments ? `: ${comments} open` : ""}`}
+        title={`Comments and notes${comments ? `: ${comments} open comment${comments === 1 ? "" : "s"}` : ""}`}
       >
         <IconComment size={14} />
         {comments > 0 && <span className="comments-count">{comments}</span>}
