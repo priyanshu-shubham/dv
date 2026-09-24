@@ -13,6 +13,21 @@ import (
 	"dv/internal/permit"
 )
 
+// A reply sent on, to a chat or a notice, has its citations as paths and none
+// of the follow-ups Codex's app offers.
+func TestAReplyIsSentWithoutCodexDirectives(t *testing.T) {
+	in := "The scores differ :codex-file-citation{path=\"/Users/me/ml/Analysis 3.pdf\" purpose=\"source\"}.\n\n" +
+		":codex-followup[Map the models]{prompt=\"Give me a \\\"simple\\\" map.\"}\n\n" +
+		"::codex-followup[Next]{prompt='Go on'}\n\nDone, see :codex-file-citation{path=a.go}"
+	want := "The scores differ `/Users/me/ml/Analysis 3.pdf`.\n\nDone, see `a.go`"
+	if got := plainReply(in); got != want {
+		t.Fatalf("got %q", got)
+	}
+	if s := "nothing:codex-followup to see"; plainReply(s) != s {
+		t.Fatalf("changed %q", s)
+	}
+}
+
 // codexTurn decodes a turn written the way the app-server sends it.
 func codexTurn(t *testing.T, raw string) codex.Turn {
 	t.Helper()

@@ -525,7 +525,9 @@ func Answers(url, root string) bool {
 // Anything else, a bundle at another version included, is revalidated.
 func cacheHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		chunk := strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/"), "chunk-")
+		// PDF.js's files are in a folder named for its version.
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		chunk := strings.HasPrefix(p, "chunk-") || strings.HasPrefix(p, "pdfjs-")
 		if chunk || assetVersion != "" && r.URL.Query().Get("v") == assetVersion {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {

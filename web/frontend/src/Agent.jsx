@@ -1,6 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
+import { codexDirectives, followupsIn } from "./directives.js";
 import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
@@ -19,7 +20,7 @@ import {
   IconUndo, IconX,
 } from "./icons.jsx";
 
-const md = linkPaths(new MarkdownIt({ html: false, linkify: true }));
+const md = codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true })));
 // A command's output is Markdown, or lines of plain text that must stay lines.
 const mdOutput = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
 const NO_THREADS = [];
@@ -197,6 +198,21 @@ function commandsFor(draft, commands) {
 // are two, as they say different things.
 export const attachKey = (a) => JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId, a.body]);
 
+// endQuotes puts a blank line between a quote and a line written right under
+// it, which Markdown would read as more of the quote. A reply leaves the box
+// without that blank line, so it only goes in when there is something after.
+function endQuotes(text) {
+  const out = [];
+  let fence = "";
+  for (const line of text.split("\n")) {
+    if (!fence && out.at(-1)?.startsWith(">") && line.trim() && !line.startsWith(">")) out.push("");
+    const f = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (f && (!fence || (f[0] === fence[0] && f.length >= fence.length))) fence = fence ? "" : f;
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function composeMessage(text, attached, threads) {
   const parts = [];
   for (const a of attached) {
@@ -221,7 +237,7 @@ function composeMessage(text, attached, threads) {
       parts.push(`<comment path="${attr(t.file)}"${lines} side="${t.side}"${on}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
     }
   }
-  const body = text.trim();
+  const body = endQuotes(text).trim();
   return parts.length ? `${body}\n\n<dv-context>\n${parts.join("\n")}\n</dv-context>` : body;
 }
 
@@ -603,11 +619,18 @@ export default function AgentView({
   const addQuote = useCallback(
     (q) => {
       caretToEnd.current = true;
-      setDraft((d) => `${[d.trimEnd(), q].filter(Boolean).join("\n\n")}\n\n`);
+      setDraft((d) => `${[d.trimEnd(), q].filter(Boolean).join("\n\n")}\n`);
     },
     [setDraft],
   );
   const replyWith = useCallback((text, code) => addQuote(quote(text, code)), [addQuote]);
+  const putDraft = useCallback(
+    (text) => {
+      caretToEnd.current = true;
+      setDraft((d) => [d.trimEnd(), text].filter(Boolean).join("\n\n"));
+    },
+    [setDraft],
+  );
   const askInNew = useCallback(
     (text, code) => {
       quoted.current = quote(text, code);
@@ -702,9 +725,11 @@ export default function AgentView({
   const runs = useMemo(() => runsOf(items, !!live?.busy, running), [items, live?.busy, running]);
   // What Claude left at work - agents, and commands in the background - over
   // the message box, each opening on what it is doing; peek is the call open.
-  const atWork = useAtWork(items, !!live?.busy, running);
+  const atWork = useAtWork(id, items, !!live?.busy, running);
   const [peek, setPeek] = useState(null);
   const peekItem = peek && items.find((it) => it.toolId === peek);
+  const peekAgent = !!peekItem && peekable(peekItem) === "agent";
+  const sub = useSession(peekAgent ? id : "", peekAgent ? peek : "");
   const peekRef = useRef(null);
   peekRef.current = peekItem;
   useEffect(() => setPeek(null), [id]);
@@ -1339,15 +1364,27 @@ export default function AgentView({
       })),
     [models],
   );
-  // The model the session is on: what it reports once running, else what was
-  // asked for, else - resumed - what the transcript was last answered on.
-  const chosen = modelChoices.find((m) => m.id === (asked?.model || ""));
-  const onModel =
-    (live?.using && modelChoices.find((m) => sameModel(m.model, live.using))) ||
-    (!live?.model && live?.lastModel && modelChoices.find((m) => sameModel(m.model, live.lastModel))) ||
-    chosen;
   // Claude's ids read as names; Codex's are named by its own list.
   const nameOf = (model) => (/^claude-/.test(model || "") ? prettyModel(model) : modelChoices.find((m) => sameModel(m.model, model))?.label || model);
+  // Claude Code offers only the latest of each kind. A session put on an older
+  // one with /model lists it too, taking the levels of its kind's latest.
+  const using = live?.using;
+  const offList = useMemo(() => {
+    if (!using || !modelChoices.length || modelChoices.some((m) => m.id === using || sameModel(m.model, using))) return null;
+    const kind = (m) => (m || "").replace(/-\d.*$/, "");
+    const like = modelChoices.find((m) => m.model && kind(m.model) === kind(using));
+    return { id: using, model: using, label: nameOf(using), tag: "this session", efforts: like?.efforts };
+    // nameOf reads only modelChoices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelChoices, using]);
+  const choices = useMemo(() => (offList ? [...modelChoices, offList] : modelChoices), [modelChoices, offList]);
+  // The model the session is on: what it reports once running, else what was
+  // asked for, else - resumed - what the transcript was last answered on.
+  const chosen = choices.find((m) => m.id === (asked?.model || ""));
+  const onModel =
+    (using && choices.find((m) => m.id === using || sameModel(m.model, using))) ||
+    (!live?.model && live?.lastModel && choices.find((m) => sameModel(m.model, live.lastModel))) ||
+    chosen;
   const modelLabel = nameOf(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || nameOf(live.lastModel))) || chosen?.label || asked?.model;
   const effort = live?.effortUsing || asked?.effort || onModel?.effort || "";
 
@@ -1596,11 +1633,11 @@ export default function AgentView({
             <Picker label={agentLabel(agentKind)} title="The agent this session runs" choices={AGENT_CHOICES} value={agentKind} onPick={pickAgent} />
           )}
           {/* Hidden for the moment it takes to ask the agent, rather than naming no model. */}
-          {modelChoices.length > 0 && (
+          {choices.length > 0 && (
             <ModelPicker
               label={modelLabel}
-              models={modelChoices}
-              model={asked?.model || ""}
+              models={choices}
+              model={offList?.id || asked?.model || ""}
               efforts={onModel?.efforts}
               effort={effort}
               pending={live?.pending}
@@ -1697,6 +1734,7 @@ export default function AgentView({
   return (
     <AttachTarget.Provider value={attachTarget}>
     <OpenCall.Provider value={setPeek}>
+    <PutDraft.Provider value={readOnly ? null : putDraft}>
     <div className="agent-pane" hidden={!active} ref={paneRef}>
       <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />
       {id && (
@@ -1704,7 +1742,15 @@ export default function AgentView({
         // is what to do in it.
         <header className="agent-head">
           {peekItem ? (
-            <PeekTitle item={peekItem} root={root} busy={!!live?.busy} running={running} onBack={() => setPeek(null)} />
+            <PeekTitle
+              item={peekItem}
+              root={root}
+              busy={!!live?.busy}
+              running={running}
+              model={peekAgent ? nameOf(sub.live?.using || sub.live?.lastModel) : ""}
+              effort={peekAgent ? sub.live?.effortUsing || sub.live?.lastEffort : ""}
+              onBack={() => setPeek(null)}
+            />
           ) : under && !blank && (
             <span className="agent-under">
               <button className="agent-under-text" onClick={() => toYours(-1)} title="Back to this message of yours ([)">
@@ -1750,12 +1796,13 @@ export default function AgentView({
       ) : (
       <>
       {peekItem &&
-        (peekable(peekItem) === "agent" ? (
+        (peekAgent ? (
           <SubagentView
             key={peek}
             session={id}
             agent={agentKind}
-            call={peek}
+            items={sub.items}
+            live={sub.live}
             working={working(peekItem, !!live?.busy, running)}
             root={root}
             view={view}
@@ -1905,6 +1952,7 @@ export default function AgentView({
         />
       )}
     </div>
+    </PutDraft.Provider>
     </OpenCall.Provider>
     </AttachTarget.Provider>
   );
@@ -1912,6 +1960,8 @@ export default function AgentView({
 
 // OpenCall opens the conversation page on a call, from the call's own line.
 const OpenCall = createContext(null);
+// PutDraft puts text in the message box, where there is one to write in.
+const PutDraft = createContext(null);
 
 // LINGER_MS is how long a call that has finished stays over the message box,
 // so one ending is seen there rather than simply gone.
@@ -1919,18 +1969,25 @@ const LINGER_MS = 10000;
 
 // useAtWork is what the agent left at work - its own agents, and commands in
 // the background - each with `done` once it has ended and is only lingering.
-function useAtWork(items, busy, running) {
+function useAtWork(session, items, busy, running) {
   const at = useMemo(() => items.filter((it) => peekable(it) && working(it, busy, running)), [items, busy, running]);
   const [done, setDone] = useState([]); // [{ item, until }]
   const was = useRef([]);
+  const wasFor = useRef(session);
   useEffect(() => {
+    // Calls gone with a switch to another session are out of sight, not ended.
+    if (wasFor.current !== session) {
+      wasFor.current = session;
+      was.current = at;
+      return setDone([]);
+    }
     const ids = new Set(at.map((c) => c.toolId));
     const ended = was.current.filter((c) => !ids.has(c.toolId));
     was.current = at;
     if (!ended.length) return setDone((had) => (had.some((d) => ids.has(d.item.toolId)) ? had.filter((d) => !ids.has(d.item.toolId)) : had));
     // One at work again - a command read once more - is at work, not done.
     setDone((had) => [...had.filter((d) => !ids.has(d.item.toolId)), ...ended.map((item) => ({ item, until: Date.now() + LINGER_MS }))]);
-  }, [at]);
+  }, [at, session]);
   useEffect(() => {
     if (!done.length) return;
     const drop = () => setDone((had) => (had.some((d) => d.until <= Date.now()) ? had.filter((d) => d.until > Date.now()) : had));
@@ -2098,7 +2155,7 @@ function AtWork({ calls, open, last, root, onOpen }) {
 }
 
 // PeekTitle stands in the header for the call open: what it is, and how it is.
-function PeekTitle({ item, root, busy, running, onBack }) {
+function PeekTitle({ item, root, busy, running, model, effort, onBack }) {
   const agent = peekable(item) === "agent";
   const { what } = toolSummary(item.tool, item.input, root);
   const state = toolState(item, busy, running);
@@ -2111,6 +2168,12 @@ function PeekTitle({ item, root, busy, running, onBack }) {
       <span className="agent-peek-what">{what}</span>
       <span className={cx("agent-tool-state", state)} title={STATES[state]} />
       <span className="dim">{STATES[state]}</span>
+      {model && (
+        <span className="agent-peek-model">
+          {model}
+          {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
+        </span>
+      )}
     </span>
   );
 }
@@ -2139,12 +2202,12 @@ function useAtEnd() {
 
 // SubagentView is the conversation of an agent a call started, followed as it
 // goes. Its own agents are not opened from here.
-function SubagentView({ session, call, working, root, ...rest }) {
-  const { items, live } = useSession(session, call);
+function SubagentView({ session, items, live, working, root, ...rest }) {
   const runs = useMemo(() => runsOf(items, working, "dv"), [items, working]);
   const ref = useAtEnd();
   return (
     <OpenCall.Provider value={null}>
+    <PutDraft.Provider value={null}>
       <div className="agent-scroll" ref={ref}>
         <div className="agent-log">
           {items.map((it) => (
@@ -2171,6 +2234,7 @@ function SubagentView({ session, call, working, root, ...rest }) {
           </div>
         )}
       </div>
+    </PutDraft.Provider>
     </OpenCall.Provider>
   );
 }
@@ -2272,7 +2336,7 @@ const Item = memo(function Item(props) {
     case "shell":
       return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} onOpenFile={props.onOpenFile} />;
     case "text":
-      return <Markdown md={md} text={item.text} className="markdown agent-text" />;
+      return <AgentText text={item.text} />;
     case "thinking":
       return <Thinking text={item.text} />;
     case "note":
@@ -2309,6 +2373,27 @@ const Item = memo(function Item(props) {
   }
   return null;
 });
+
+// AgentText is what the agent said, with the follow-ups it offers as buttons
+// that put one in the message box.
+function AgentText({ text }) {
+  const put = useContext(PutDraft);
+  const followups = useMemo(() => followupsIn(md, text), [text]);
+  return (
+    <>
+      <Markdown md={md} text={text} className="markdown agent-text" />
+      {put && followups.length > 0 && (
+        <div className="agent-followups">
+          {followups.map((f, i) => (
+            <button key={i} title={f.prompt} onClick={() => put(f.prompt)}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
 
 // PeerMessage is what another session sent this one with SendMessage. It is
 // not what you said, so it keeps to the left, with who sent it.

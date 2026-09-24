@@ -1130,13 +1130,15 @@ func TestAnAgentIsFollowedInItsOwnTranscript(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.ReplaceAll(session, `"cwd":"/repo"`, `"cwd":"`+root+`"`)), 0o644)
 
 	side := func(v map[string]any) map[string]any { v["isSidechain"] = true; return v }
+	answer := side(assistant("x3", "x2", "msg_y", text("It is one line.")))
+	answer["effort"] = "high"
 	read := map[string]any{"type": "user", "uuid": "x2", "parentUuid": "x1", "isSidechain": true,
 		"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_read", "content": "package a"}}},
 		"toolUseResult": map[string]any{"type": "text", "file": map[string]any{"filePath": root + "/a.go", "content": "package a", "numLines": 1, "startLine": 1, "totalLines": 1}}}
 	os.WriteFile(filepath.Join(agents, "agent-x.meta.json"), []byte(`{"agentType":"Explore","toolUseId":"toolu_agent"}`), 0o644)
 	os.WriteFile(filepath.Join(agents, "agent-x.jsonl"), []byte(line(t, side(user("x0", "", "Look at a.go")))+
 		line(t, side(assistant("x1", "x0", "msg_x", map[string]any{"type": "tool_use", "id": "toolu_read", "name": "Read", "input": map[string]any{"file_path": root + "/a.go"}})))+
-		line(t, read)+line(t, side(assistant("x3", "x2", "msg_y", text("It is one line."))))), 0o644)
+		line(t, read)+line(t, answer)), 0o644)
 
 	saved, _ := store.OpenSessions(root)
 	m := New(root, permit.New(root), saved)
@@ -1146,6 +1148,9 @@ func TestAnAgentIsFollowedInItsOwnTranscript(t *testing.T) {
 	u := m.AgentUpdate("s1", "toolu_agent", sub)
 	if want := []string{"prompt:Look at a.go", "tool", "text:It is one line."}; !u.Live.Found || !slices.Equal(kinds(u.Items), want) {
 		t.Fatalf("agent items %q, found %v", kinds(u.Items), u.Live.Found)
+	}
+	if u.Live.LastEffort != "high" {
+		t.Fatalf("agent effort %q", u.Live.LastEffort)
 	}
 	if out, err := m.Output("s1", "toolu_read"); err != nil || out.Read == nil {
 		t.Fatalf("the agent's call's output %+v, %v", out, err)

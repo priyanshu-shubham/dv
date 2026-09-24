@@ -9,6 +9,7 @@ import { usePathsVersion } from "./links.js";
 import { AttachButton, Composer, ThreadList } from "./Threads.jsx";
 import { cx, searchSeed } from "./util.js";
 import { IconEye } from "./icons.jsx";
+import { PdfView } from "./Pdf.jsx";
 
 const SVG = "image/svg+xml";
 
@@ -192,18 +193,13 @@ export function MediaCompare({ type, oldSrc, newSrc }) {
   );
 }
 
-// Media draws an image, or plays a video or sound, with its size underneath. A
-// PDF opens in the browser's own viewer, which a phone's browser does not
-// have, so there is always the way to it in a tab of its own.
+// Media draws an image, a PDF, or plays a video or sound, with its size underneath.
 export function Media({ type, src, label }) {
   if (type === "application/pdf")
     return (
       <figure className="media media-pdf">
         {label && <figcaption className="media-label">{label}</figcaption>}
-        <iframe src={src} title="PDF" />
-        <a className="media-info" href={src} target="_blank" rel="noopener noreferrer">
-          Open in a new tab
-        </a>
+        <PdfView src={src} />
       </figure>
     );
   return <Playable type={type} src={src} label={label} />;

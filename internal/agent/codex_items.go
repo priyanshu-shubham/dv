@@ -437,6 +437,34 @@ var agentVerbs = map[string]string{"spawnAgent": "Started an agent", "sendInput"
 
 func agentVerb(tool string) string { return cmp.Or(agentVerbs[tool], tool) }
 
+// Directives Codex writes into a reply for its own app to draw; the page draws
+// them too (directives.js).
+var (
+	directiveRe = regexp.MustCompile(`:{1,3}codex-(file-citation|followup)(?:\[[^\]\n]*\])?\{((?:\s*[\w-]+\s*=\s*(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[^\s}"']+))*)\s*\}`)
+	pathAttrRe  = regexp.MustCompile(`(?:^|\s)path\s*=\s*(?:"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'|([^\s}"']+))`)
+	blankRunRe  = regexp.MustCompile(`\n[ \t]*\n(?:[ \t]*\n)+`)
+)
+
+// plainReply is a reply as sent where directives are not drawn: a citation as
+// its path, and without the follow-ups, which only Codex's app offers.
+func plainReply(s string) string {
+	if !strings.Contains(s, "codex-") {
+		return s
+	}
+	s = directiveRe.ReplaceAllStringFunc(s, func(d string) string {
+		m := directiveRe.FindStringSubmatch(d)
+		if m[1] == "followup" {
+			return ""
+		}
+		p := pathAttrRe.FindStringSubmatch(m[2])
+		if p == nil {
+			return d
+		}
+		return "`" + p[1] + p[2] + p[3] + "`"
+	})
+	return strings.TrimSpace(blankRunRe.ReplaceAllString(s, "\n\n"))
+}
+
 func agentStates(it codex.Item) string {
 	var parts []string
 	for _, st := range it.States {

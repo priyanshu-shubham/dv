@@ -1176,6 +1176,7 @@ type Live struct {
 	// The model the transcript was last answered on, which a resumed session
 	// goes on with unless another is asked for.
 	LastModel   string   `json:"lastModel,omitempty"`
+	LastEffort  string   `json:"lastEffort,omitempty"`
 	Mode        string   `json:"mode,omitempty"`
 	Effort      string   `json:"effort,omitempty"` // asked for
 	EffortUsing string   `json:"effortUsing,omitempty"`
@@ -1460,6 +1461,7 @@ func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
 		u.Reset, u.Items = s.diff(f.t.Items(""))
 	}
 	_, u.Live.LastModel = f.t.Context("")
+	u.Live.LastEffort = f.t.Effort("")
 	return u
 }
 

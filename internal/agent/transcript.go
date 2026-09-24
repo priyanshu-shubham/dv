@@ -133,9 +133,11 @@ type entry struct {
 	assistant    bool
 	msg          string // the API message an assistant entry is one block of
 	items        []Item
-	// On an assistant entry, the context its request filled, and the model.
+	// On an assistant entry, the context its request filled, and the model
+	// and effort it was asked of.
 	tokens int
 	model  string
+	effort string
 	mode   string // the permission mode last recorded when it was written
 }
 
@@ -277,6 +279,17 @@ func (t *Transcript) Context(leaf string) (int, string) {
 		}
 	}
 	return used, ""
+}
+
+// Effort is what the last reply in the conversation ending at leaf was asked
+// to think at, where Claude Code recorded it.
+func (t *Transcript) Effort(leaf string) string {
+	for _, e := range t.chain(leaf) {
+		if e.effort != "" {
+			return e.effort
+		}
+	}
+	return ""
 }
 
 // chain is the conversation ending at leaf, or at the last entry when leaf is
@@ -463,6 +476,7 @@ type rawEntry struct {
 	Compact   bool            `json:"isCompactSummary"`
 	APIError  bool            `json:"isApiErrorMessage"`
 	Timestamp string          `json:"timestamp"`
+	Effort    string          `json:"effort"` // an assistant line's
 	Content   json.RawMessage `json:"content"` // a system line's
 	Origin    struct {
 		Kind string `json:"kind"`
@@ -537,7 +551,7 @@ func (t *Transcript) parse(line []byte) *entry {
 	case "assistant":
 		e.assistant, e.msg = true, r.Message.ID
 		u := r.Message.Usage
-		e.tokens, e.model = u.Input+u.CacheCreate+u.CacheRead+u.Output, r.Message.Model
+		e.tokens, e.model, e.effort = u.Input+u.CacheCreate+u.CacheRead+u.Output, r.Message.Model, r.Effort
 		var blocks []block
 		json.Unmarshal(r.Message.Content, &blocks)
 		for i, b := range blocks {

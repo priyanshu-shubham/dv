@@ -359,7 +359,7 @@ func (t *codexThread) update(s *Sub) Update {
 
 func (t *codexThread) liveLocked(running string) Live {
 	l := Live{
-		Agent: "codex", Found: len(t.turns) > 0, Running: running, LastModel: t.meta.Model,
+		Agent: "codex", Found: len(t.turns) > 0, Running: running, LastModel: t.meta.Model, LastEffort: deref(t.meta.Effort),
 		Context: t.context, Status: t.status, Error: t.err, Pending: t.pending,
 	}
 	if t.asked.model != nil {
@@ -428,7 +428,7 @@ func (t *codexThread) reply() string {
 		for _, it := range slices.Backward(turn.Items) {
 			switch it.Type {
 			case "agentMessage":
-				if s := strings.TrimSpace(it.Text); s != "" {
+				if s := plainReply(strings.TrimSpace(it.Text)); s != "" {
 					return s
 				}
 			case "userMessage":
@@ -446,7 +446,7 @@ func (t *codexThread) last() (text, by string) {
 		for _, it := range slices.Backward(turn.Items) {
 			switch it.Type {
 			case "agentMessage":
-				if s := strings.Join(strings.Fields(it.Text), " "); s != "" {
+				if s := strings.Join(strings.Fields(plainReply(it.Text)), " "); s != "" {
 					return cut(s, lastWords), "agent"
 				}
 			case "userMessage":
