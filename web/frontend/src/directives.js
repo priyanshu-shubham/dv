@@ -36,12 +36,17 @@ export function codexDirectives(md) {
     state.pos += d.length;
     return true;
   });
-  // A follow-up on a line of its own leaves an empty paragraph.
+  // A follow-up on a line of its own leaves an empty paragraph, and in a list
+  // of them, empty items in a list that may be left with none.
   md.core.ruler.after("inline", "codex_empty", (state) => {
     const t = state.tokens;
+    const blank = (tok) => tok.type === "inline" && tok.children.every((c) => c.type === "softbreak" || (c.type === "text" && !c.content.trim()));
     for (let i = t.length - 3; i >= 0; i--) {
-      if (t[i].type === "paragraph_open" && t[i + 1].type === "inline" && t[i + 2].type === "paragraph_close" && t[i + 1].children.every((c) => c.type === "softbreak" || (c.type === "text" && !c.content.trim()))) {
-        t.splice(i, 3);
+      if (t[i].type === "paragraph_open" && blank(t[i + 1]) && t[i + 2].type === "paragraph_close") t.splice(i, 3);
+    }
+    for (const [open, close] of [["list_item_open", "list_item_close"], ["bullet_list_open", "bullet_list_close"], ["ordered_list_open", "ordered_list_close"]]) {
+      for (let i = t.length - 2; i >= 0; i--) {
+        if (t[i].type === open && t[i + 1].type === close) t.splice(i, 2);
       }
     }
   });

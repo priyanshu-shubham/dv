@@ -35,6 +35,10 @@ type Manager struct {
 	broker *permit.Broker
 	saved  *store.Sessions // which are open, and rewinds still to be made real
 	codex  *codexSide
+	// Suggests says whether Claude sessions guess the next message after a
+	// turn, a setting a session takes up the next time it starts. Set once,
+	// before the first session starts.
+	Suggests func() bool
 
 	mu      sync.Mutex
 	procs   map[string]*proc
@@ -501,6 +505,7 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p.changed = func() { m.signal(id, false) }
 	p.wrote = func() { m.signal(id, true) }
 	p.named = func() string { return agentName(transcriptFiles(m.root)[id]) }
+	p.suggests = func() bool { return m.Suggests != nil && m.Suggests() }
 	p.fellBack = func(at string, sw store.ModelSwitch) { m.markModel(id, at, sw) }
 	p.ended = func() {
 		// A turn spends from the plan; the next look should show it.
@@ -1192,6 +1197,8 @@ type Live struct {
 	// Pending is a model, mode or effort picked during a turn, which Codex
 	// takes from the next one.
 	Pending bool `json:"pending,omitempty"`
+	// Suggestion is the next message Claude Code guessed after the last turn.
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // Update is what a page following a session is sent: the items that are new
@@ -1558,7 +1565,7 @@ func (m *Manager) update(id string, s *Sub) Update {
 			}
 			u.Live.Context = &c
 		}
-		u.Live.Status, u.Live.Error, u.Live.Cost = p.status, p.err, p.cost
+		u.Live.Status, u.Live.Error, u.Live.Cost, u.Live.Suggestion = p.status, p.err, p.cost, p.suggestion
 		if p.busy && !p.since.IsZero() {
 			u.Live.Since = p.since.UTC().Format(time.RFC3339Nano)
 		}

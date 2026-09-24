@@ -1461,6 +1461,26 @@ export default function App() {
     },
     [attachTo, phone, openAdded, setAgentId, switchMode],
   );
+  // Discarding is offered where the diff is your uncommitted work, the working
+  // tree against the last commit: elsewhere it would undo something else.
+  const uncommitted = diff?.scope?.kind === "working" || diff?.scope?.picked === "working";
+  const discard = useCallback(
+    (entry) => {
+      const { path, oldPath, status } = entry;
+      const ask =
+        entry.untracked || status === "A"
+          ? `Delete ${path}? It's new since the last commit, so it can't be brought back.`
+          : status === "D"
+            ? `Bring back ${path} as the last commit has it?`
+            : `Discard your changes to ${path}${oldPath ? ` and move it back to ${oldPath}` : ""}? They can't be brought back.`;
+      if (!confirm(ask)) return;
+      api.discard(oldPath ? [oldPath, path] : [path]).then(
+        () => loadDiff({ keepActive: true }),
+        (e) => say(`Could not discard ${path}`, e.message),
+      );
+    },
+    [loadDiff],
+  );
   const deleteThreads = useCallback(
     async (list) => {
       const what = list.length === 1 ? "this comment thread" : `these ${list.length} comment threads`;
@@ -1845,6 +1865,7 @@ export default function App() {
               onAttach={attach}
               onSearch={openSearch}
               onView={viewFile}
+              onDiscard={uncommitted ? discard : null}
               scope={scope}
               onOpenFile={goTo}
               reveal={reveal?.path === entry.path ? reveal.line : 0}

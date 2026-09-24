@@ -88,6 +88,8 @@ export const api = {
   stopAction: (id) => req(`/api/actions/${encodeURIComponent(id)}/stop`, { method: "POST", body: "{}" }),
   // pr: { pr }, the checked-out branch's pull request or null.
   pr: () => req("/api/pr"),
+  // discard puts files back as the last commit has them.
+  discard: (paths) => req("/api/discard", { method: "POST", body: JSON.stringify({ paths }) }),
 
   diffFile: (scope, path) => {
     const p = scopeQuery(scope);

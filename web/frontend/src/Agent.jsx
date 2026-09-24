@@ -24,6 +24,7 @@ const md = codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true
 // A command's output is Markdown, or lines of plain text that must stay lines.
 const mdOutput = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
 const NO_THREADS = [];
+const NO_SETTINGS = {};
 const NO_IMAGES = [];
 const NO_QUEUED = [];
 const NO_COMMANDS = [];
@@ -624,6 +625,16 @@ export default function AgentView({
     [setDraft],
   );
   const replyWith = useCallback((text, code) => addQuote(quote(text, code)), [addQuote]);
+  const [userSettings] = usePref("user", "settings", NO_SETTINGS);
+  // What you might say next, under the latest reply: Codex's follow-ups in it,
+  // and Claude Code's guess after it. Once you have said something since,
+  // they are out of date.
+  const offered = useMemo(() => {
+    if (userSettings.promptSuggestions === false) return [];
+    const last = items.findLast((it) => it.kind === "text" || it.kind === "prompt" || it.kind === "command" || it.kind === "shell");
+    const own = last?.kind === "text" ? followupsIn(md, last.text) : [];
+    return live?.suggestion ? [...own, { label: live.suggestion, prompt: live.suggestion }] : own;
+  }, [items, live?.suggestion, userSettings.promptSuggestions]);
   const putDraft = useCallback(
     (text) => {
       caretToEnd.current = true;
@@ -1734,7 +1745,6 @@ export default function AgentView({
   return (
     <AttachTarget.Provider value={attachTarget}>
     <OpenCall.Provider value={setPeek}>
-    <PutDraft.Provider value={readOnly ? null : putDraft}>
     <div className="agent-pane" hidden={!active} ref={paneRef}>
       <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />
       {id && (
@@ -1867,6 +1877,16 @@ export default function AgentView({
           {/* A terminal's turn is only known to have started by its last message. */}
           {busy && !ask && <Activity live={live} items={items} root={root} since={live?.shell?.since || live?.since || items.findLast((it) => it.turn)?.at} />}
           {incoming.filter((w) => w.queued).map(bubble)}
+          {/* As the terminal's guess, they are there while the box is empty. */}
+          {offered.length > 0 && !busy && !ask && !readOnly && !draft.trim() && (
+            <div className="agent-followups">
+              {offered.map((f, i) => (
+                <button key={i} title={`Put in the message box: ${f.prompt}`} onClick={() => putDraft(f.prompt)}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
           {ask && (
             <div className="agent-ask prompt">
               <div className="agent-ask-head prompt-head">
@@ -1952,7 +1972,6 @@ export default function AgentView({
         />
       )}
     </div>
-    </PutDraft.Provider>
     </OpenCall.Provider>
     </AttachTarget.Provider>
   );
@@ -1960,8 +1979,6 @@ export default function AgentView({
 
 // OpenCall opens the conversation page on a call, from the call's own line.
 const OpenCall = createContext(null);
-// PutDraft puts text in the message box, where there is one to write in.
-const PutDraft = createContext(null);
 
 // LINGER_MS is how long a call that has finished stays over the message box,
 // so one ending is seen there rather than simply gone.
@@ -2207,7 +2224,6 @@ function SubagentView({ session, items, live, working, root, ...rest }) {
   const ref = useAtEnd();
   return (
     <OpenCall.Provider value={null}>
-    <PutDraft.Provider value={null}>
       <div className="agent-scroll" ref={ref}>
         <div className="agent-log">
           {items.map((it) => (
@@ -2234,7 +2250,6 @@ function SubagentView({ session, items, live, working, root, ...rest }) {
           </div>
         )}
       </div>
-    </PutDraft.Provider>
     </OpenCall.Provider>
   );
 }
@@ -2336,7 +2351,7 @@ const Item = memo(function Item(props) {
     case "shell":
       return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} onOpenFile={props.onOpenFile} />;
     case "text":
-      return <AgentText text={item.text} />;
+      return <Markdown md={md} text={item.text} className="markdown agent-text" />;
     case "thinking":
       return <Thinking text={item.text} />;
     case "note":
@@ -2374,26 +2389,6 @@ const Item = memo(function Item(props) {
   return null;
 });
 
-// AgentText is what the agent said, with the follow-ups it offers as buttons
-// that put one in the message box.
-function AgentText({ text }) {
-  const put = useContext(PutDraft);
-  const followups = useMemo(() => followupsIn(md, text), [text]);
-  return (
-    <>
-      <Markdown md={md} text={text} className="markdown agent-text" />
-      {put && followups.length > 0 && (
-        <div className="agent-followups">
-          {followups.map((f, i) => (
-            <button key={i} title={f.prompt} onClick={() => put(f.prompt)}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
 
 // PeerMessage is what another session sent this one with SendMessage. It is
 // not what you said, so it keeps to the left, with who sent it.

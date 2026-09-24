@@ -459,6 +459,30 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"head": s.repo.Head()})
 }
 
+// handleDiscard puts files back as the last commit has them: { paths }.
+func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(body.Paths) == 0 {
+		writeErr(w, http.StatusBadRequest, errors.New("no files to discard"))
+		return
+	}
+	if !s.repo.IsGit() {
+		writeErr(w, http.StatusBadRequest, errors.New("not a git repository"))
+		return
+	}
+	if err := s.repo.Discard(body.Paths...); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
 // handlePR is the checked-out branch's pull request: { pr }, null for none.
 func (s *Server) handlePR(w http.ResponseWriter, r *http.Request) {
 	var pr *gitx.PR

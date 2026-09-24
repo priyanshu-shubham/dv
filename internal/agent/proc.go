@@ -42,6 +42,9 @@ type proc struct {
 	sent    func()        // a message went to it
 	ended   func()        // a turn is over
 	named   func() string // the name its transcript last gave it, for a resume
+	// suggests says whether to have Claude Code guess the next message after
+	// each turn; read at each start.
+	suggests func() bool
 	// fellBack is told of a model Claude Code moved off, after the message it
 	// refused, if one did.
 	fellBack func(at string, sw store.ModelSwitch)
@@ -86,6 +89,7 @@ type proc struct {
 	since       time.Time // when the turn going on began
 	nextReq     int
 	planCall    string // an EnterPlanMode call not yet answered
+	suggestion  string // the next message Claude Code guessed, until one is sent
 	apiErr      string // the API error Claude Code last said, which its transcript holds
 
 	wmu sync.Mutex // one write to stdin at a time
@@ -125,6 +129,9 @@ func (p *proc) args() []string {
 	}
 	if p.effort != "" {
 		args = append(args, "--effort", p.effort)
+	}
+	if p.suggests != nil && p.suggests() {
+		args = append(args, "--prompt-suggestions")
 	}
 	// The name other sessions send to. A headless resume does not take back the
 	// one the transcript keeps, as the terminal does, so it is passed again.
@@ -296,7 +303,7 @@ func (p *proc) send(id, text string, images []Image) (string, error) {
 	}
 	// The rewind is made by this message being written after the message it
 	// resumed at; a later start must continue from here instead.
-	p.resumeAt = ""
+	p.resumeAt, p.suggestion = "", ""
 	if p.busy {
 		// It waits for the step Claude is on, unseen in the transcript till then.
 		p.queued = append(p.queued, Queued{id, text, len(images)})
@@ -398,6 +405,7 @@ type message struct {
 	Result    string          `json:"result"`
 	Errors    []string        `json:"errors"`
 	Cost      float64         `json:"total_cost_usd"`
+	Suggest   string          `json:"suggestion"` // a prompt_suggestion's
 	Command   string          `json:"command_uuid"`
 	RequestID string          `json:"request_id"`
 	Request   json.RawMessage `json:"request"`
@@ -476,7 +484,7 @@ func (p *proc) handle(line []byte) {
 		case "session_state_changed":
 			// A turn can start with no message, as when a background task ends.
 			if m.State != "idle" && !p.busy {
-				p.since = time.Now()
+				p.since, p.suggestion = time.Now(), ""
 			}
 			p.states, p.busy = true, m.State != "idle"
 			if !p.busy {
@@ -503,6 +511,12 @@ func (p *proc) handle(line []byte) {
 			return // a subagent's, which the page does not follow
 		}
 		p.stream(&m)
+
+	case "prompt_suggestion":
+		p.mu.Lock()
+		p.suggestion = strings.TrimSpace(m.Suggest)
+		p.mu.Unlock()
+		p.changed()
 
 	case "assistant", "user":
 		if m.APIError {

@@ -166,7 +166,8 @@ type Transcript struct {
 	msgs map[string][]*entry
 	// Claude Code records the permission mode on each prompt and, now and
 	// then, on a line of its own, a little after it changes.
-	mode string
+	mode     string
+	headless bool // the session was last run headless, as dv runs it
 	// An agent's own transcript is all sidechain, which in a session's is
 	// the agents' part, left out.
 	sidechain bool
@@ -210,8 +211,18 @@ func tail(data []byte) (int, string) {
 		for n := 0; n < tailBack && start > 0; n++ {
 			start = bytes.LastIndexByte(data[:start-1], '\n') + 1
 		}
+		// As a prompt last recorded it: a line of its own can be stale (parse).
 		mode := ""
-		if j := bytes.LastIndex(data[:start], []byte(`"permissionMode":"`)); j >= 0 {
+		for at := start; mode == ""; {
+			j := bytes.LastIndex(data[:at], []byte(`"permissionMode":"`))
+			if j < 0 {
+				break
+			}
+			at = j
+			line := data[bytes.LastIndexByte(data[:j], '\n')+1 : j]
+			if bytes.Contains(line, []byte(`"type":"permission-mode"`)) {
+				continue
+			}
 			rest := data[j+len(`"permissionMode":"`):]
 			if k := bytes.IndexByte(rest, '"'); k > 0 {
 				mode = string(rest[:k])
@@ -476,7 +487,8 @@ type rawEntry struct {
 	Compact   bool            `json:"isCompactSummary"`
 	APIError  bool            `json:"isApiErrorMessage"`
 	Timestamp string          `json:"timestamp"`
-	Effort    string          `json:"effort"` // an assistant line's
+	Entry     string          `json:"entrypoint"` // cli in a terminal, sdk-cli headless
+	Effort    string          `json:"effort"`     // an assistant line's
 	Content   json.RawMessage `json:"content"` // a system line's
 	Origin    struct {
 		Kind string `json:"kind"`
@@ -533,7 +545,16 @@ func (t *Transcript) parse(line []byte) *entry {
 	if json.Unmarshal(line, &r) != nil || r.Sidechain != t.sidechain {
 		return nil
 	}
-	t.mode = cmp.Or(r.PermissionMode, t.mode)
+	if r.Entry != "" {
+		t.headless = strings.HasPrefix(r.Entry, "sdk")
+	}
+	// Claude Code writes the session's details again now and then, its
+	// permission mode among them. Only its terminal keeps that mode up to date:
+	// run headless, as dv runs it, it is still the one the session was resumed
+	// with, while each prompt records the mode really in force.
+	if r.PermissionMode != "" && !(r.Type == "permission-mode" && t.headless) {
+		t.mode = r.PermissionMode
+	}
 	if r.UUID == "" {
 		return nil
 	}

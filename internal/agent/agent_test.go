@@ -1163,6 +1163,29 @@ func TestAnAgentIsFollowedInItsOwnTranscript(t *testing.T) {
 	}
 }
 
+// Claude Code is asked for a guess at the next message only while the setting
+// is on, and the guess lasts until the next turn starts.
+func TestASuggestionLastsUntilTheNextTurn(t *testing.T) {
+	noop := func() {}
+	on := false
+	p := &proc{changed: noop, wrote: noop, ended: noop, suggests: func() bool { return on }}
+	if slices.Contains(p.args(), "--prompt-suggestions") {
+		t.Fatal("asked for suggestions with the setting off")
+	}
+	on = true
+	if !slices.Contains(p.args(), "--prompt-suggestions") {
+		t.Fatal("not asked for suggestions with the setting on")
+	}
+	p.handle([]byte(`{"type":"prompt_suggestion","suggestion":" Run the tests "}`))
+	if p.suggestion != "Run the tests" {
+		t.Fatalf("suggestion %q", p.suggestion)
+	}
+	p.handle([]byte(`{"type":"system","subtype":"session_state_changed","state":"running"}`))
+	if p.suggestion != "" {
+		t.Fatalf("suggestion %q kept into the next turn", p.suggestion)
+	}
+}
+
 // A turn's result can arrive after the next message went, so once Claude Code
 // reports its state, only idle ends being busy.
 func TestBusyUntilClaudeCodeSaysIdle(t *testing.T) {
@@ -1265,6 +1288,33 @@ func TestAModeChangeIsMarkedWhereItShows(t *testing.T) {
 	}
 	if items[2].From != "default" || items[5].From != "plan" {
 		t.Fatalf("changed from %q, then %q", items[2].From, items[5].From)
+	}
+}
+
+// Run headless, Claude Code writes the mode a session was resumed with again
+// now and then, whatever mode it is in; only its prompts are believed then,
+// until it runs in a terminal again.
+func TestAHeadlessSessionsStaleModeIsNotAChange(t *testing.T) {
+	prompt := func(uuid, parent, entry string) map[string]any {
+		u := user(uuid, parent, "go on")
+		u["permissionMode"], u["entrypoint"] = "auto", entry
+		return u
+	}
+	stale := line(t, map[string]any{"type": "permission-mode", "permissionMode": "default"})
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, prompt("u1", "", "sdk-cli")) + line(t, assistant("a1", "u1", "msg_1", text("Looking."))) + stale +
+		line(t, assistant("a2", "a1", "msg_2", text("Looked."))) + line(t, prompt("u2", "a2", "sdk-cli"))))
+	if got := kinds(tr.Items("")); slices.Contains(got, "mode:default") || slices.Contains(got, "mode:auto") {
+		t.Fatalf("stale mode drawn as a change: %q", got)
+	}
+	if got := tr.Mode("", nil); got != "auto" {
+		t.Fatalf("mode %q", got)
+	}
+	// Back in a terminal, a line of its own says a change made there.
+	tr.Feed([]byte(line(t, prompt("u3", "u2", "cli")) + line(t, map[string]any{"type": "permission-mode", "permissionMode": "plan"}) +
+		line(t, assistant("a3", "u3", "msg_3", text("Planning.")))))
+	if got := kinds(tr.Items("")); !slices.Contains(got, "mode:plan") {
+		t.Fatalf("a terminal's change not drawn: %q", got)
 	}
 }
 

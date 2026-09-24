@@ -362,6 +362,11 @@ button.ghost:hover,
   background: var(--bg-hover);
 }
 
+/* It can't be taken back, so it says so as the pointer reaches it. */
+.view-file.discard:hover {
+  color: var(--del);
+}
+
 /* Chips: choices offered rather than actions, so they carry a fill at rest. */
 .scope-chips > button,
 .file-note.skipped button {
@@ -4724,8 +4729,12 @@ button.ghost.agent-context {
 }
 
 .agent-followups > button {
+  max-width: 100%;
   height: 26px;
   padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   color: var(--fg-2);

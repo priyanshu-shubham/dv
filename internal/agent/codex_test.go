@@ -26,6 +26,10 @@ func TestAReplyIsSentWithoutCodexDirectives(t *testing.T) {
 	if s := "nothing:codex-followup to see"; plainReply(s) != s {
 		t.Fatalf("changed %q", s)
 	}
+	listed := "Next steps:\n\n- :codex-followup[Map]{prompt=\"Map them.\"}\n- :codex-followup[Plan]{prompt=\"Plan it.\"}\n\n- Kept"
+	if got := plainReply(listed); got != "Next steps:\n\n- Kept" {
+		t.Fatalf("listed follow-ups left %q", got)
+	}
 }
 
 // codexTurn decodes a turn written the way the app-server sends it.

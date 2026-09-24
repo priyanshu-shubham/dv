@@ -443,6 +443,7 @@ var (
 	directiveRe = regexp.MustCompile(`:{1,3}codex-(file-citation|followup)(?:\[[^\]\n]*\])?\{((?:\s*[\w-]+\s*=\s*(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[^\s}"']+))*)\s*\}`)
 	pathAttrRe  = regexp.MustCompile(`(?:^|\s)path\s*=\s*(?:"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'|([^\s}"']+))`)
 	blankRunRe  = regexp.MustCompile(`\n[ \t]*\n(?:[ \t]*\n)+`)
+	bareItemRe  = regexp.MustCompile(`(?m)^[ \t]*(?:[-*+]|\d+[.)])[ \t]*$`)
 )
 
 // plainReply is a reply as sent where directives are not drawn: a citation as
@@ -462,6 +463,8 @@ func plainReply(s string) string {
 		}
 		return "`" + p[1] + p[2] + p[3] + "`"
 	})
+	// Follow-ups written as a list leave its markers behind.
+	s = bareItemRe.ReplaceAllString(s, "")
 	return strings.TrimSpace(blankRunRe.ReplaceAllString(s, "\n\n"))
 }
 

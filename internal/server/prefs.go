@@ -26,6 +26,21 @@ func NotifyAfter(user *store.Prefs) func() time.Duration {
 	}
 }
 
+// PromptSuggestions reads whether Claude sessions guess the next message after
+// each turn: the setting promptSuggestions, on unless turned off.
+func PromptSuggestions(user *store.Prefs) func() bool {
+	return func() bool {
+		if user == nil {
+			return false
+		}
+		var s struct {
+			On *bool `json:"promptSuggestions"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.On == nil || *s.On
+	}
+}
+
 // ChatDefaults reads where a session begun from a chat app starts when its
 // message does not say: the settings chatFolder and chatWorktree.
 func ChatDefaults(user *store.Prefs) func() notify.Defaults {

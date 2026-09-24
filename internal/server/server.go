@@ -132,6 +132,7 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 		permit: broker, agent: agent.New(repo.Root, broker, sessions), saved: sessions, notices: notices,
 		stopNotices: func() {},
 	}
+	s.agent.Suggests = PromptSuggestions(user)
 	if notices != nil {
 		notices.Serve(talk{s})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -287,6 +288,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("GET /api/actions/running", Guarded(s.handleCommands))
 	mux.HandleFunc("POST /api/actions/{id}/stop", Guarded(s.handleStopCommand))
 	mux.HandleFunc("GET /api/pr", Guarded(s.handlePR))
+	mux.HandleFunc("POST /api/discard", Guarded(s.handleDiscard))
 
 	mux.HandleFunc("GET /api/prefs", Guarded(s.handlePrefs))
 	mux.HandleFunc("PATCH /api/prefs", Guarded(s.handleSetPref))

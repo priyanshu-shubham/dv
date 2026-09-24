@@ -897,6 +897,13 @@ export function SettingsOverlay({
               choices={OFF_ON}
             />
             <Setting
+              label="Suggest a next message"
+              note="Shows what you might say next under the agent's reply, to put in the message box: Codex's own follow-ups, and a guess Claude Code makes after each turn with a small request of its own. A Claude session takes a change up the next time it starts."
+              value={settings.promptSuggestions !== false}
+              onPick={(on) => onChange({ promptSuggestions: on ? undefined : false })}
+              choices={OFF_ON}
+            />
+            <Setting
               label="Sessions opened by adding start temporary"
               note="A new session opened from Add, or from New session over selected text, starts temporary: once closed, it leaves the session list."
               value={!!settings.addedTemporary}

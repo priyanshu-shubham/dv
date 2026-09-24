@@ -7,7 +7,7 @@ import { charWidth, cx, isMac, LRM, PHONE, searchSeed, splitPath, statusLabel, s
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
 import { asMedia, MarkdownDocument, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "./icons.jsx";
+import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile, IconUndo } from "./icons.jsx";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
 // once the section has been scrolled near, so a 500-file diff still opens
@@ -17,7 +17,7 @@ import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile } from "
 function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
-  composing, setComposing, onAttach, onSearch, onView, reveal, generatedHidden, onShowGenerated,
+  composing, setComposing, onAttach, onSearch, onView, onDiscard, reveal, generatedHidden, onShowGenerated,
   onBody, found, foundAt, foundHead, scope, onOpenFile,
 }) {
   const [expanded, setExpanded] = useState({});
@@ -127,6 +127,12 @@ function FileDiff({
           <span className="btn-label">File</span>
         </button>
         <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} what="this file" />
+        {onDiscard && (
+          <button className="view-file discard" onClick={() => onDiscard(entry)} title="Put the file back as the last commit has it">
+            <IconUndo size={12} />
+            <span className="btn-label">Discard</span>
+          </button>
+        )}
         <button
           className={cx("btn", "outline", "viewed", viewed && "on")}
           aria-pressed={viewed}
