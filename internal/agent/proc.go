@@ -45,6 +45,9 @@ type proc struct {
 	// suggests says whether to have Claude Code guess the next message after
 	// each turn; read at each start.
 	suggests func() bool
+	// picked keeps a model chosen with /model, which Claude Code keeps "for
+	// this session only": this process, not the next.
+	picked func(model, effort string)
 	// fellBack is told of a model Claude Code moved off, after the message it
 	// refused, if one did.
 	fellBack func(at string, sw store.ModelSwitch)
@@ -90,6 +93,9 @@ type proc struct {
 	nextReq     int
 	planCall    string // an EnterPlanMode call not yet answered
 	suggestion  string // the next message Claude Code guessed, until one is sent
+	// Turn ends still to keep the model in force at, after a /model: two,
+	// as one sent while Claude works may only be taken up at the second.
+	modelCmd int
 	apiErr      string // the API error Claude Code last said, which its transcript holds
 
 	wmu sync.Mutex // one write to stdin at a time
@@ -194,12 +200,27 @@ func (p *proc) startLocked() error {
 }
 
 func (p *proc) turnOver() {
-	p.refresh()
+	model, effort := p.refresh()
+	p.mu.Lock()
+	keep := p.modelCmd > 0 && model != ""
+	if keep {
+		p.modelCmd--
+		if effort != "" {
+			effort = p.effort // a model without effort levels would not start with one
+		}
+	}
+	p.mu.Unlock()
+	// The model in force after a /model is the one it set or, where it named
+	// none there is, the one it left: either way, one that starts.
+	if keep && p.picked != nil {
+		p.picked(model, effort)
+	}
 	p.ended()
 }
 
-// refresh asks Claude Code how full the context is and what effort it runs at.
-func (p *proc) refresh() {
+// refresh asks Claude Code how full the context is and what effort it runs at,
+// and reports the model and effort in force.
+func (p *proc) refresh() (model, effort string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	used, err := p.request(ctx, map[string]any{"subtype": "get_context_usage", "detail": "summary"})
@@ -214,6 +235,7 @@ func (p *proc) refresh() {
 	}
 	p.mu.Unlock()
 	p.changed()
+	return s.Applied.Model, s.Applied.Effort
 }
 
 func (p *proc) wait(cmd *exec.Cmd, read, exited chan struct{}, stderr *tailBuffer) {
@@ -304,6 +326,9 @@ func (p *proc) send(id, text string, images []Image) (string, error) {
 	// The rewind is made by this message being written after the message it
 	// resumed at; a later start must continue from here instead.
 	p.resumeAt, p.suggestion = "", ""
+	if f := strings.Fields(text); len(f) == 2 && f[0] == "/model" {
+		p.modelCmd = 2
+	}
 	if p.busy {
 		// It waits for the step Claude is on, unseen in the transcript till then.
 		p.queued = append(p.queued, Queued{id, text, len(images)})

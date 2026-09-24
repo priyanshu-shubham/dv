@@ -506,6 +506,12 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p.wrote = func() { m.signal(id, true) }
 	p.named = func() string { return agentName(transcriptFiles(m.root)[id]) }
 	p.suggests = func() bool { return m.Suggests != nil && m.Suggests() }
+	p.picked = func(model, effort string) {
+		p.mu.Lock()
+		p.model, p.effort = model, effort
+		p.mu.Unlock()
+		m.saved.SetPicked(id, store.Pick{Model: model, Effort: effort})
+	}
 	p.fellBack = func(at string, sw store.ModelSwitch) { m.markModel(id, at, sw) }
 	p.ended = func() {
 		// A turn spends from the plan; the next look should show it.
