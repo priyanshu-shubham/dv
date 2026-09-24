@@ -34,10 +34,20 @@ export const openNotes = (notes) => notes.filter((n) => n.status !== "done").len
 export const noteText = (note) => [note.title, note.body].filter(Boolean).join("\n\n");
 
 // Notes is the repository's list, grouped by status, in the right-hand panel
-// beside the comments. composing is whether the new note's form is open.
-export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete, onSend }) {
-  const [filter, setFilter] = useState("");
-  const [label, setLabel] = useState("");
+// beside the comments. composing is whether the new note's form is open;
+// paused, whether the filter is set aside to show every note, as the diff's is.
+export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete, onSend, paused, onPaused }) {
+  const [filter, keepFilter] = usePersisted("notesFilter", "", { folder: true });
+  const [label, keepLabel] = usePersisted("notesLabel", "", { folder: true });
+  // Changing a paused filter is wanting it again.
+  const setFilter = (v) => {
+    onPaused(false);
+    keepFilter(v);
+  };
+  const setLabel = (v) => {
+    onPaused(false);
+    keepLabel(v);
+  };
   // The note open over the page, { id, edit }; gone from the list, it closes.
   const [opened, setOpened] = useState(null);
   const shown = opened && notes.find((n) => n.id === opened.id);
@@ -47,33 +57,40 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
   // A label filtered on that no note has any more goes with it.
   const shownLabel = known.includes(label) ? label : "";
 
-  const groups = useMemo(() => {
+  // hidden is what the filter leaves out, paused or not.
+  const { groups, hidden } = useMemo(() => {
     // "!label" hides the notes with that label; the rest of the text is searched for.
     const words = filter.toLowerCase().split(/\s+/);
-    const hidden = new Set(words.filter((w) => w.length > 1 && w.startsWith("!")).map((w) => w.slice(1)));
+    const without = new Set(words.filter((w) => w.length > 1 && w.startsWith("!")).map((w) => w.slice(1)));
     const q = words.filter((w) => !w.startsWith("!")).join(" ").trim();
     const keep = (n) =>
       (!shownLabel || n.labels?.includes(shownLabel)) &&
-      !n.labels?.some((l) => hidden.has(l.toLowerCase())) &&
+      !n.labels?.some((l) => without.has(l.toLowerCase())) &&
       (!q || [n.title, n.body, n.author, ...(n.labels || [])].some((s) => s?.toLowerCase().includes(q)));
     const byStatus = Object.fromEntries(STATUSES.map((s) => [s.id, []]));
-    for (const n of notes) if (keep(n)) byStatus[n.status]?.push(n);
+    let hidden = 0;
+    for (const n of notes) {
+      const kept = keep(n);
+      if (!kept) hidden++;
+      if (kept || paused) byStatus[n.status]?.push(n);
+    }
     // What is to be done by priority, then newest; what is done, latest done first.
     const toDo = (a, b) => PRIORITY[a.priority || ""].rank - PRIORITY[b.priority || ""].rank || b.createdAt.localeCompare(a.createdAt);
     byStatus.doing.sort(toDo);
     byStatus.open.sort(toDo);
     byStatus.done.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return STATUSES.map((s) => ({ ...s, notes: byStatus[s.id] })).filter((g) => g.notes.length > 0);
-  }, [notes, filter, shownLabel]);
+    return { groups: STATUSES.map((s) => ({ ...s, notes: byStatus[s.id] })).filter((g) => g.notes.length > 0), hidden };
+  }, [notes, filter, shownLabel, paused]);
 
   const fold = (id) => setFolded((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
-  const filtering = !!(filter.trim() || shownLabel);
+  const filtering = !paused && !!(filter.trim() || shownLabel);
+  const activeLabel = paused ? "" : shownLabel;
 
   return (
     <>
-      <div className="sidebar-filter notes-filter">
+      <div className={cx("sidebar-filter notes-filter", paused && hidden > 0 && "paused")}>
         {shownLabel && (
-          <span className="note-label on" title="Only the notes with this label">
+          <span className="note-label on" title={paused ? "Paused: type or pick a label to filter again" : "Only the notes with this label"}>
             {shownLabel}
             <button onClick={() => setLabel("")} title="Show every label">
               <IconX size={9} />
@@ -83,7 +100,11 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
         <input
           value={filter}
           placeholder="Filter notes"
-          title="Text to find in a note or its labels. Start a word with ! to hide the notes with that label: !bug."
+          title={
+            paused
+              ? "Filter paused, showing every note. Change it, or Resume, to filter again."
+              : "Text to find in a note or its labels. Start a word with ! to hide the notes with that label: !bug."
+          }
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape" && filter) setFilter("");
@@ -97,7 +118,7 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
       {composing && (
         <NoteOverlay
           // Filtered on a label, a new note starts with it.
-          labels={shownLabel ? [shownLabel] : []}
+          labels={activeLabel ? [activeLabel] : []}
           known={known}
           onSave={onAdd}
           onClose={() => onComposing(false)}
@@ -127,6 +148,15 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
           onClose={() => setOpened(null)}
         />
       )}
+      {/* The filter outlives a reload, so what it hides is said, lest the notes seem lost. */}
+      {hidden > 0 && (
+        <div className={cx("filter-note", paused && "paused")}>
+          <span>{paused ? `Filter paused: ${hidden} would be hidden` : `${hidden} hidden by the filter`}</span>
+          <button className="link" onClick={() => onPaused(!paused)}>
+            {paused ? "Resume" : "Show all"}
+          </button>
+        </div>
+      )}
       <div className="comment-list note-list">
         {notes.length === 0 && (
           <div className="empty">
@@ -154,8 +184,8 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
                   <NoteCard
                     key={n.id}
                     note={n}
-                    label={shownLabel}
-                    onLabel={(l) => setLabel((was) => (was === l ? "" : l))}
+                    label={activeLabel}
+                    onLabel={(l) => setLabel((was) => (was === l && !paused ? "" : l))}
                     onPatch={quickPatch}
                     onOpen={(edit) => setOpened({ id: n.id, edit })}
                     onDelete={onDelete}

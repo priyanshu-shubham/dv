@@ -2264,6 +2264,16 @@ button.headref:hover {
   margin-right: 2px;
 }
 
+/* A paused filter stays in view, faded, until it is resumed or changed. */
+.notes-filter.paused input {
+  color: var(--fg-3);
+}
+
+.notes-filter.paused .note-label.on {
+  background: var(--bg-active);
+  color: var(--fg-3);
+}
+
 .note-list .empty code {
   padding: 1px 4px;
   border-radius: var(--r-sm);

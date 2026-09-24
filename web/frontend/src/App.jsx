@@ -60,6 +60,7 @@ export default function App() {
   // Show all pauses the filters rather than clearing them, so they come back
   // as they were. Editing one, or a new page, turns them back on.
   const [filtersPaused, setFiltersPaused] = useState(false);
+  const [notesPaused, setNotesPaused] = useState(false);
   const [sideWidth, setSideWidth] = usePersisted("sidebarWidth", 0); // 0: the stylesheet's default
 
   // Per-file view state. "I've read this" is a claim about one comparison, so
@@ -1978,6 +1979,8 @@ export default function App() {
               onPatch: patchNote,
               onDelete: deleteNote,
               onSend: sendNote,
+              paused: notesPaused,
+              onPaused: setNotesPaused,
             }}
             threads={threads}
             commentsPath={meta?.commentsPath || ""}
