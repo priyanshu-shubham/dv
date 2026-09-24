@@ -1,10 +1,10 @@
 package gitx
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,16 +52,86 @@ func (r *Repo) OpenAt(path string, s *Scope, old bool) (io.ReadSeekCloser, time.
 		}
 		return f, fi.ModTime(), nil
 	}
-	b, ok, err := r.read(sd, path)
+	f, err := r.cachedBlob(sd.spec(path))
 	if err != nil {
-		return nil, time.Time{}, err
-	}
-	if !ok {
 		return nil, time.Time{}, fmt.Errorf("no such file at %s: %s", sd.name(), path)
 	}
-	return nopCloser{bytes.NewReader(b)}, time.Time{}, nil
+	return f, time.Time{}, nil
 }
 
-type nopCloser struct{ *bytes.Reader }
+// MediaCache is where versions from git are kept to be served; a variable
+// for tests.
+var MediaCache = func() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "dv", "media"), nil
+}
 
-func (nopCloser) Close() error { return nil }
+// mediaKeep is how long a version kept in the cache outlives its last use:
+// long enough for a video's ranges and a reload, as each use renews it.
+const mediaKeep = time.Hour
+
+// cachedBlob opens the blob spec names from the cache, copying it there
+// first. A video asks for itself a range at a time; each is served from the
+// one copy, where reading the blob from git anew would read all of it each
+// time, into memory.
+func (r *Repo) cachedBlob(spec string) (*os.File, error) {
+	if spec == "" {
+		return nil, os.ErrNotExist
+	}
+	out, err := r.run("rev-parse", "--verify", "--quiet", spec)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := MediaCache()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, strings.TrimSpace(out))
+	if f, err := os.Open(path); err == nil {
+		now := time.Now()
+		os.Chtimes(path, now, now) // in use, so not cleared away
+		return f, nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	ClearMediaCache()
+	tmp, err := os.CreateTemp(dir, ".copy-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name()) // nothing left behind once renamed
+	cmd := exec.Command("git", "cat-file", "blob", spec)
+	cmd.Dir = r.Root
+	cmd.Stdout = tmp
+	err = cmd.Run()
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return nil, err
+	}
+	return os.Open(path)
+}
+
+// ClearMediaCache removes the versions not used for a while, and copies a dv
+// stopped in the middle of. It runs as each copy is made and as dv starts,
+// which catches what was left when none is made again.
+func ClearMediaCache() {
+	dir, err := MediaCache()
+	if err != nil {
+		return
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > mediaKeep {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}

@@ -3,12 +3,13 @@ package symindex
 import (
 	"bufio"
 	"bytes"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"dv/internal/gitx"
 )
 
 // Candidate is one ranked answer to "where is this defined?".
@@ -148,8 +149,8 @@ type decl struct {
 // of the given lines actually declare name.
 func (ix *Index) declsIn(file, name string, lines []int, sh declShapes) []decl {
 	l := langFor(file)
-	b, err := os.ReadFile(filepath.Join(ix.root, file))
-	if err != nil || len(b) > maxIndexedBytes || isBinary(b) {
+	b, err := gitx.ReadTextFile(filepath.Join(ix.root, file), maxIndexedBytes)
+	if err != nil {
 		return nil
 	}
 	want := make(map[int]bool, len(lines))

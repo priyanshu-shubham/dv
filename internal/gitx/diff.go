@@ -2,6 +2,7 @@ package gitx
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -324,12 +325,14 @@ func (r *Repo) Files(s *Scope) ([]FileEntry, error) {
 					continue
 				}
 				e := &FileEntry{Path: p, Status: "A", Untracked: true}
-				if b, ok, _ := r.worktreeFile(p); ok {
-					if isBinary(b) {
-						e.Binary = true
-					} else {
-						e.Additions = len(splitLines(b))
-					}
+				// Listed on every change, so one too large to show is not read
+				// to count its lines.
+				b, err := ReadTextFile(filepath.Join(r.Root, p), maxFileBytes)
+				switch {
+				case errors.Is(err, ErrBinary):
+					e.Binary = true
+				case err == nil:
+					e.Additions = len(splitLines(b))
 				}
 				entries = append(entries, e)
 			}
@@ -461,20 +464,39 @@ func (r *Repo) Diff(s *Scope, entry FileEntry) (*FileDiff, error) {
 		oldPath = entry.OldPath
 	}
 
+	// Binary on either side makes the file binary, which outranks too large.
 	var oldRaw, newRaw []byte
-	if entry.Status != "A" {
-		b, _, err := r.read(s.old, oldPath)
-		if err != nil {
+	binary, tooLarge := false, false
+	take := func(sd side, path string) ([]byte, error) {
+		if binary {
+			return nil, nil
+		}
+		b, _, err := r.readText(sd, path, maxFileBytes)
+		switch {
+		case errors.Is(err, ErrBinary):
+			binary = true
+		case errors.Is(err, ErrTooLarge):
+			tooLarge = true
+		case err != nil:
 			return nil, err
 		}
-		oldRaw = b
+		return b, nil
+	}
+	var err error
+	if entry.Status != "A" {
+		if oldRaw, err = take(s.old, oldPath); err != nil {
+			return nil, err
+		}
 	}
 	if entry.Status != "D" {
-		b, _, err := r.read(s.new, entry.Path)
-		if err != nil {
+		if newRaw, err = take(s.new, entry.Path); err != nil {
 			return nil, err
 		}
-		newRaw = b
+	}
+	if binary || tooLarge {
+		fd := &FileDiff{FileEntry: entry, Lang: LangFor(entry.Path), OldLines: []string{}, NewLines: []string{}}
+		fd.Binary, fd.TooLarge = binary, !binary
+		return fd, nil
 	}
 	return DiffContent(entry, oldRaw, newRaw), nil
 }
@@ -513,20 +535,6 @@ func DiffContent(entry FileEntry, oldRaw, newRaw []byte) *FileDiff {
 	return fd
 }
 
-// read loads path from one side of a comparison, and whether it is there.
-func (r *Repo) read(sd side, path string) ([]byte, bool, error) {
-	switch {
-	case sd.worktree:
-		return r.worktreeFile(path)
-	case sd.empty:
-		return nil, false, nil
-	case sd.index:
-		b, err := r.runBytes("show", sd.spec(path))
-		return b, err == nil, nil
-	}
-	return r.blob(sd.rev, path)
-}
-
 // name labels a side for the viewer. The working tree goes unlabelled: it is
 // what a file is taken to mean.
 func (sd side) name() string {
@@ -547,22 +555,15 @@ func (sd side) name() string {
 // has the diff's line numbers. at names the side read, if not the working tree.
 func (r *Repo) FileAt(path string, s *Scope, old bool) (lines []string, at string, err error) {
 	sd := s.pick(old)
-	raw, ok, err := r.read(sd, path)
-	if err != nil {
-		return nil, "", err
-	}
+	raw, ok, err := r.readText(sd, path, maxFileBytes)
 	at = sd.name()
-	if !ok {
-		if at != "" {
-			return nil, "", fmt.Errorf("no such file at %s: %s", at, path)
-		}
+	switch {
+	case !ok && err == nil && at != "":
+		return nil, "", fmt.Errorf("no such file at %s: %s", at, path)
+	case !ok && err == nil:
 		return nil, "", fmt.Errorf("no such file: %s", path)
-	}
-	if isBinary(raw) {
-		return nil, "", fmt.Errorf("binary file")
-	}
-	if len(raw) > maxFileBytes {
-		return nil, "", fmt.Errorf("file too large")
+	case err != nil:
+		return nil, "", err
 	}
 	return splitLines(raw), at, nil
 }

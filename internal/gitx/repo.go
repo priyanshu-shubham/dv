@@ -79,22 +79,6 @@ func (r *Repo) Name() string { return filepath.Base(r.Root) }
 // run executes a git command in the repository root.
 func (r *Repo) run(args ...string) (string, error) { return gitOutput(r.Root, args...) }
 
-// runBytes is run for commands whose output is file content and must not be
-// trimmed or forced through string conversion assumptions.
-func (r *Repo) runBytes(args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = r.Root
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.String())
-	}
-	return stdout.Bytes(), nil
-}
-
 // runInput is run for the plumbing commands that take their arguments on
 // stdin, which is how a long path list is passed without risking the command
 // line length limit.
@@ -272,36 +256,6 @@ func (r *Repo) RecentCommits(n int) []Commit {
 		}
 	}
 	return cs
-}
-
-// blob reads a path at a revision. A missing path is not an error: a file that
-// does not exist on one side of the diff simply has no content there.
-func (r *Repo) blob(rev, path string) ([]byte, bool, error) {
-	if rev == "" {
-		return nil, false, nil
-	}
-	b, err := r.runBytes("show", rev+":"+path)
-	if err != nil {
-		// Distinguish "path absent at this rev" from a real git failure by
-		// asking whether the object exists at all.
-		if _, e2 := r.run("cat-file", "-e", rev+":"+path); e2 != nil {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	return b, true, nil
-}
-
-// worktreeFile reads a path from the working tree.
-func (r *Repo) worktreeFile(path string) ([]byte, bool, error) {
-	b, err := os.ReadFile(filepath.Join(r.Root, path))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	return b, true, nil
 }
 
 // TrackedFiles lists every file git knows about plus untracked-but-not-ignored

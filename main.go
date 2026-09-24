@@ -191,6 +191,7 @@ func run() error {
 	}
 	if !trial {
 		go srv.StartKept()
+		go gitx.ClearMediaCache()
 	}
 	apps, stop := sendOn(notices, url)
 	defer stop()
@@ -323,6 +324,7 @@ func runHub(args []string) error {
 		fmt.Println(update.TrialMark + ln.Addr().String())
 	} else {
 		go h.StartKept()
+		go gitx.ClearMediaCache()
 	}
 	apps, stop := sendOn(notices, url)
 	defer stop()

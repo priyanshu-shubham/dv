@@ -9,13 +9,14 @@ package symindex
 import (
 	"bufio"
 	"bytes"
-	"os"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"dv/internal/gitx"
 )
 
 // Symbol is one definition site.
@@ -194,8 +195,8 @@ func (ix *Index) scan() ([]Symbol, int, error) {
 				if l == nil {
 					continue
 				}
-				b, err := os.ReadFile(filepath.Join(ix.root, j.path))
-				if err != nil || len(b) > maxIndexedBytes || isBinary(b) {
+				b, err := gitx.ReadTextFile(filepath.Join(ix.root, j.path), maxIndexedBytes)
+				if err != nil {
 					continue
 				}
 				n++
@@ -275,14 +276,6 @@ func skipPath(p string) bool {
 	base := filepath.Base(p)
 	return strings.HasSuffix(base, ".min.js") || strings.HasSuffix(base, ".min.css") ||
 		strings.HasSuffix(base, ".lock") || base == "package-lock.json"
-}
-
-func isBinary(b []byte) bool {
-	n := len(b)
-	if n > 8000 {
-		n = 8000
-	}
-	return bytes.IndexByte(b[:n], 0) >= 0
 }
 
 // Hit is a scored symbol plus the pattern positions that matched, so the client

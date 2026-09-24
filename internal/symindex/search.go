@@ -5,12 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"dv/internal/gitx"
 )
 
 // Match is one line containing a hit. Spans are [start, end) byte offsets of
@@ -166,8 +167,8 @@ func (ix *Index) searchBuiltin(opts SearchOpts) (*SearchResult, error) {
 		if globRe != nil && !globRe.MatchString(p) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(ix.root, p))
-		if err != nil || len(b) > maxIndexedBytes || isBinary(b) {
+		b, err := gitx.ReadTextFile(filepath.Join(ix.root, p), maxIndexedBytes)
+		if err != nil {
 			continue
 		}
 		line := 0
