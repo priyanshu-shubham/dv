@@ -1992,6 +1992,7 @@ export default function App() {
             // Over the sidebar on the right, the two are one column, one width.
             widthVar={sideRight ? "--side-w" : "--comments-w"}
             onWidth={sideRight ? setSideWidth : setCommentsWidth}
+            onClose={() => showPanel(false)}
           />
         )}
       </div>

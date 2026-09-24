@@ -715,6 +715,16 @@ button.headref:hover {
   padding: 8px 8px 2px;
 }
 
+.comments-panel .sidebar-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.comments-panel .sidebar-modes .seg {
+  flex: 1;
+}
+
 .sidebar-modes .seg {
   display: flex;
   gap: 2px;

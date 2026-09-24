@@ -1,12 +1,12 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { cx, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
+import { cx, isTyping, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tree.js";
 import { AttachButton, ThreadList } from "./Threads.jsx";
 import { Notes, openNotes } from "./Notes.jsx";
 import { SessionList } from "./Agent.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
-  IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFilter,
+  IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFilter, IconX,
 } from "./icons.jsx";
 
 const MIN_WIDTH = 180;
@@ -366,7 +366,7 @@ export default function Sidebar({
 // CommentsPanel is every comment in the review, at the page's right in any
 // mode, opened and closed from the header, which counts them; its switch
 // turns it to the repository's notes. Its width is dragged from its left edge.
-export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth }) {
+export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth, onClose }) {
   const open = threads.filter((t) => !t.resolved).length;
   const toDo = openNotes(notes.notes);
   const savedTo = tab === "notes" ? notes.path : commentsPath;
@@ -404,7 +404,9 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
     if (d.to) onWidth(d.to);
   };
   return (
-    <aside className="comments-panel" ref={rootRef}>
+    // Esc from within closes it, but not from a comment or note being written,
+    // where it cancels that.
+    <aside className="comments-panel" ref={rootRef} onKeyDown={(e) => e.key === "Escape" && !isTyping(e.target) && onClose()}>
       <div
         className="side-resize comments-resize"
         title="Drag to resize, double-click to reset"
@@ -428,6 +430,9 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
             {toDo > 0 && <span className="seg-count">{toDo}</span>}
           </button>
         </div>
+        <button className="ghost" onClick={onClose} title="Close (Esc)">
+          <IconX size={13} />
+        </button>
       </div>
       {tab === "notes" && <Notes {...notes} />}
       {tab !== "notes" && threads.length > 0 && onSend && (
