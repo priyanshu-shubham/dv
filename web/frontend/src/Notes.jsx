@@ -48,9 +48,13 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
   const shownLabel = known.includes(label) ? label : "";
 
   const groups = useMemo(() => {
-    const q = filter.trim().toLowerCase();
+    // "!label" hides the notes with that label; the rest of the text is searched for.
+    const words = filter.toLowerCase().split(/\s+/);
+    const hidden = new Set(words.filter((w) => w.length > 1 && w.startsWith("!")).map((w) => w.slice(1)));
+    const q = words.filter((w) => !w.startsWith("!")).join(" ").trim();
     const keep = (n) =>
       (!shownLabel || n.labels?.includes(shownLabel)) &&
+      !n.labels?.some((l) => hidden.has(l.toLowerCase())) &&
       (!q || [n.title, n.body, n.author, ...(n.labels || [])].some((s) => s?.toLowerCase().includes(q)));
     const byStatus = Object.fromEntries(STATUSES.map((s) => [s.id, []]));
     for (const n of notes) if (keep(n)) byStatus[n.status]?.push(n);
@@ -79,6 +83,7 @@ export function Notes({ notes, composing, onComposing, onAdd, onPatch, onDelete,
         <input
           value={filter}
           placeholder="Filter notes"
+          title="Text to find in a note or its labels. Start a word with ! to hide the notes with that label: !bug."
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape" && filter) setFilter("");
