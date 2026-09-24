@@ -4979,6 +4979,54 @@ button.ghost.agent-context {
   line-height: 1.5;
 }
 
+/* The margin is the wrapper's, so first- and last-child rules still reach it. */
+.code-block {
+  position: relative;
+  margin: 1em 0;
+}
+
+.code-block > pre {
+  margin: 0;
+}
+
+.code-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  visibility: hidden;
+}
+
+.code-copy,
+.code-copy:hover {
+  background: var(--bg-raised);
+}
+
+.code-block:hover .code-copy,
+.code-copy:focus-visible,
+.code-copy.copied {
+  visibility: visible;
+}
+
+.code-copy .done-icon,
+.code-copy.copied .copy-icon {
+  display: none;
+}
+
+.code-copy.copied,
+.code-copy.copied:hover {
+  color: var(--accent);
+}
+
+.code-copy.copied .done-icon {
+  display: block;
+}
+
+@media (hover: none) {
+  .code-copy {
+    visibility: visible;
+  }
+}
+
 .agent-text table {
   display: block;
   width: max-content;

@@ -3,6 +3,8 @@
 // not - opens the file at it. Only a path to a file the repository has is
 // linked, so a word that merely looks like one stays a word.
 import { createElement, useSyncExternalStore } from "react";
+import { useGrammarsVersion } from "./highlight.js";
+import { copyText } from "./util.js";
 
 let known = { files: new Set(), byBase: new Map(), roots: [], version: 0, cache: new Map() };
 const listeners = new Set();
@@ -149,10 +151,24 @@ export function linkPaths(md) {
   return md;
 }
 
-// Markdown draws text with md, drawn again as the paths it could link change.
+// Markdown draws text with md, drawn again as the paths it could link change
+// and as grammars for its code blocks load.
 export function Markdown({ md, text, className }) {
   usePathsVersion();
-  return createElement("div", { className, dangerouslySetInnerHTML: { __html: md.render(text || "") } });
+  useGrammarsVersion();
+  return createElement("div", { className, onClick: copyCode, dangerouslySetInnerHTML: { __html: md.render(text || "") } });
+}
+
+// copyCode answers the copy button codeBlocks puts on a code block. The mark
+// is on the element, as the HTML is not React's.
+function copyCode(e) {
+  const button = e.target.closest?.(".code-copy");
+  if (!button) return;
+  const code = button.parentElement.querySelector("pre").textContent.replace(/\n$/, "");
+  copyText(code).then(() => {
+    button.classList.add("copied");
+    setTimeout(() => button.classList.remove("copied"), 1500);
+  }, () => {});
 }
 
 // linkText is plain text with its paths as links, for a <pre> of output.

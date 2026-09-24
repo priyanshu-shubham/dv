@@ -1,4 +1,4 @@
-// Syntax highlighting for the diff and file views.
+// Syntax highlighting for the diff and file views, and code blocks in what agents say.
 //
 // highlight.js works on whole documents, but the viewer renders one row per
 // line. Highlighting each line in isolation breaks anything spanning lines
@@ -6,6 +6,7 @@
 // then split the resulting HTML, reopening any spans that were still open at
 // the line break. The result is cached per file side.
 
+import { useSyncExternalStore } from "react";
 import hljs from "highlight.js/lib/common";
 
 // Languages worth having beyond highlight.js's "common" bundle, registered
@@ -93,6 +94,43 @@ export function highlightLines(key, lines, lang) {
   cache.set(key, { lines, ready, html });
   if (cache.size > 40) cache.delete(cache.keys().next().value);
   return html;
+}
+
+// A grammar that arrives after a code block was drawn plain has the block drawn again.
+let grammars = 0;
+const grammarListeners = new Set();
+const grammarLoaded = () => {
+  grammars++;
+  grammarListeners.forEach((f) => f());
+};
+export const useGrammarsVersion = () =>
+  useSyncExternalStore(
+    (f) => (grammarListeners.add(f), () => grammarListeners.delete(f)),
+    () => grammars,
+  );
+
+const COPY_ICONS =
+  '<svg class="copy-icon"viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1"/></svg>' +
+  '<svg class="done-icon"viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg>';
+
+// codeBlocks has md colour its fenced code as the file views do, and give each
+// block a copy button, which Markdown's click handler answers.
+export function codeBlocks(md) {
+  md.set({
+    highlight: (code, lang) => {
+      if (!lang || !ensureLanguage(lang, grammarLoaded) || !hljs.getLanguage(lang)) return "";
+      try {
+        const r = hljs.highlight(code, { language: lang, ignoreIllegals: true });
+        return NO_CALLS.has(r.language) ? r.value : markCalls(r.value);
+      } catch {
+        return "";
+      }
+    },
+  });
+  const fence = md.renderer.rules.fence;
+  md.renderer.rules.fence = (...args) =>
+    `<div class="code-block">${fence(...args)}<button class="ghost code-copy" title="Copy the code">${COPY_ICONS}</button></div>`;
+  return md;
 }
 
 // Grammars whose text is prose or data, where "word(" is not a call.

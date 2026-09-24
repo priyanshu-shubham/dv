@@ -7,7 +7,7 @@ import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { grow } from "./hunks.js";
-import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
+import { codeBlocks, ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
@@ -20,9 +20,9 @@ import {
   IconUndo, IconX,
 } from "./icons.jsx";
 
-const md = codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true })));
+const md = codeBlocks(codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true }))));
 // A command's output is Markdown, or lines of plain text that must stay lines.
-const mdOutput = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
+const mdOutput = codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true })));
 const NO_THREADS = [];
 const NO_SETTINGS = {};
 const NO_IMAGES = [];
