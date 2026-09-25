@@ -776,6 +776,7 @@ export function SettingsOverlay({
   working = 0,
   update,
   actions,
+  ask,
   tab: opening = "appearance",
 }) {
   const [tab, setTab] = useState(opening);
@@ -784,6 +785,7 @@ export function SettingsOverlay({
     ["diff", "Diff"],
     ["notifications", "Notifications"],
     ["agent", "Agent"],
+    ...(ask ? [["ask", "Ask"]] : []),
     ...(actions ? [["actions", "Actions"]] : []),
     ["server", "Server"],
   ];
@@ -912,6 +914,7 @@ export function SettingsOverlay({
             />
           </>
         )}
+        {tab === "ask" && ask}
         {tab === "actions" && actions}
         {tab === "server" && (
           <>

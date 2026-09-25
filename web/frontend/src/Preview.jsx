@@ -134,6 +134,11 @@ export function MarkdownDocument({
                         onAttach(body ? { kind: "note", ...lines, body } : { kind: "lines", ...lines }, to);
                         setComposing(null);
                       }}
+                      // What is written is the question.
+                      ask={() => {
+                        setComposing(null);
+                        return { a: { kind: "lines", file: path, side, start: at.start, end: at.end, quote: at.quote }, question: body };
+                      }}
                       what={body ? "this note" : "these lines"}
                     />
                   ))

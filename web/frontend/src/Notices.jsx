@@ -186,11 +186,11 @@ function usePresence() {
 // useNotices shows dv's notices in the page: a toast for each, but for a
 // request in the session on screen, which asks there itself; and a desktop
 // notification for one dv marks loud, if the page is not in front of the
-// reader. looking is the session on screen in the Agent view; review opens a
-// request of this page's folder in its window, open goes to one of its
-// sessions, and go to a session in another of the hub's folders. It returns
-// the notices open.
-export function useNotices({ looking, desktop, review, open, go }) {
+// reader. looking is the session on screen in the Agent view, asking the Ask
+// panel's when it shows; review opens a request of this page's folder in its
+// window, open goes to one of its sessions, and go to a session in another of
+// the hub's folders. It returns the notices open.
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
@@ -224,7 +224,7 @@ export function useNotices({ looking, desktop, review, open, go }) {
         if (n.session) own ? now.current.open(n.session) : now.current.go(n.folder, n.session);
         else if (!own) location.href = `/${n.folder}/`;
       };
-      const onScreen = own && !!n.session && n.session === looking;
+      const onScreen = own && !!n.session && (n.session === looking || n.session === askOpen);
 
       if (n.loud && !told.current.has(n.id)) {
         const shown = inFront() ? null : notify(n.id, asking ? n.title : `${n.title}: ${where}`, asking ? `in ${where}` : oneLine(n.body), goThere);
@@ -282,7 +282,7 @@ export function useNotices({ looking, desktop, review, open, go }) {
         return null;
       }
     }
-  }, [notices, looking]);
+  }, [notices, looking, askOpen]);
 
   return notices;
 }

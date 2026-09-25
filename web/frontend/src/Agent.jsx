@@ -15,8 +15,10 @@ import { Picker, useRoom } from "./Picker.jsx";
 import { AttachTarget } from "./Threads.jsx";
 import { agentName, cx, duration, isTyping, LRM, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
+import { slug } from "./boot.js";
 import {
-  AgentIcon, IconArrowUp, IconBack, IconBolt, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconNewSession, IconPin, IconPlus, IconReply, IconStop, IconTemporary,
+  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconForward, IconNewSession, IconPin, IconPlus, IconReply, IconStop,
+  IconTemporary,
   IconUndo, IconX,
 } from "./icons.jsx";
 
@@ -553,6 +555,7 @@ export default function AgentView({
   id, session, agents, newAgent, onNewAgent, modes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
   requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, boxFocus, offline, active = true,
+  docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent,
 }) {
   // A session shows from its latest compaction until the reader asks for what
   // came before: by session, where it is shown from then.
@@ -568,10 +571,11 @@ export default function AgentView({
   const { available, models = NO_MODELS, mode: defaultMode } = agents[agentKind] || agents[""];
   // Hidden rather than gone in the other modes, so coming back draws nothing
   // again; its keys and its grabs for focus wait until then.
+  // Docked in the Ask panel, it is shown beside another view whose keys they are.
   const activeRef = useRef(active);
-  activeRef.current = active;
+  activeRef.current = active && !docked;
   const lost = offline || dropped;
-  const [draft, setDraft] = usePref("repo", "draft:" + (id || "new"), "");
+  const [draft, setDraft] = usePref("repo", "draft:" + (id || (docked ? "ask" : "new")), "");
   // The slash commands the agent takes, asked for on coming to the view and
   // again on starting to type one, which is when a new skill would be wanted.
   const [commandsBy, setCommandsBy] = useState({});
@@ -712,11 +716,46 @@ export default function AgentView({
     const place = places.current.get(id);
     follow.current = { stick: true, anchor: null, opened: null, top: 0, back: place && { ...place } };
     setAway(false);
-    if (!readOnly && activeRef.current) inputRef.current?.focus({ preventScroll: true });
+    if (!readOnly && activeRef.current) focusBox();
   }, [id]);
   useEffect(() => {
-    if (active && !readOnly) inputRef.current?.focus({ preventScroll: true });
+    if (active && !readOnly) focusBox();
   }, [active]);
+  // A page just opened would put the caret before the draft: it goes back where
+  // it was when the page was left - a reload, or another of the hub's folders -
+  // else after it all.
+  const caretKey = CARET_KEY + (docked ? ":ask" : "");
+  const caretPut = useRef(false);
+  const focusBox = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (caretPut.current) return;
+    caretPut.current = true;
+    let was = null;
+    try {
+      was = JSON.parse(sessionStorage.getItem(caretKey));
+    } catch {}
+    const n = el.value.length;
+    const [from, to] = was?.id === (id || "") ? was.at : [n, n];
+    el.setSelectionRange(Math.min(from, n), Math.min(to, n));
+  };
+  useEffect(() => {
+    const save = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      try {
+        sessionStorage.setItem(caretKey, JSON.stringify({ id: shownId.current || "", at: [el.selectionStart, el.selectionEnd] }));
+      } catch {}
+    };
+    const onHide = () => document.visibilityState === "hidden" && save();
+    window.addEventListener("pagehide", save);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", save);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [caretKey]);
 
   const said = useMemo(() => {
     const n = new Map();
@@ -739,7 +778,8 @@ export default function AgentView({
     return out;
   }, [queued, pending]);
   // Nothing said yet: the page's blank session, or one made and not written to.
-  const blank = !items.length && !incoming.length && (!id || (live && !live.found));
+  // Docked, a question is the way in, so there is no page for starting one.
+  const blank = !docked && !items.length && !incoming.length && (!id || (live && !live.found));
   // Up goes back through what was said here, as in the terminal.
   const history = useMemo(() => prompts.map(saidAs).filter((t) => t.trim()), [prompts]);
   const runs = useMemo(() => runsOf(items, !!live?.busy, running), [items, live?.busy, running]);
@@ -971,23 +1011,26 @@ export default function AgentView({
 
   // The message shows at once, and from the blank session is carried into the
   // one made for it.
-  const send = async () => {
+  // words are sent in place of the box's, and go back in it if it fails: a
+  // prompt picked, or a question asked from the code.
+  const send = async (words) => {
+    const typed = typeof words === "string" ? words : draft;
     if (lost) return; // the note over the box says why; the draft stays
     if (uploadsHere.length) return setError("Wait for the files being added.");
-    if (draft.startsWith("!")) return runShell(draft.slice(1).trim());
+    if (typed.startsWith("!")) return runShell(typed.slice(1).trim());
     // A command goes alone; what was added and the pictures wait in the box for the next message.
-    const command = commandOf(draft, commands);
+    const command = commandOf(typed, commands);
     if (command?.name === "clear") {
       setDraft("");
       onStart();
       return;
     }
-    const text = command ? command.text : composeMessage(draft, attached, threads);
+    const text = command ? command.text : composeMessage(typed, attached, threads);
     const pictures = command ? NO_IMAGES : images;
     if ((!text && !pictures.length) || readOnly) return;
     setError("");
     const uuid = newUUID();
-    sent.current.set(uuid, { draft, attached: command ? [] : attached, images: pictures });
+    sent.current.set(uuid, { draft: typed, attached: command ? [] : attached, images: pictures });
     const entry = { text, uuid, pictures, seen: said.get(text) || 0, command: !!command };
     carry.current = id ? null : entry;
     setPending((p) => [...p, entry]);
@@ -1006,7 +1049,7 @@ export default function AgentView({
         await api.agentSettings(to, start);
         setPicks({});
       }
-      if (!id && temporaryNew) {
+      if (!id && temporaryNew && !docked) {
         await api.agentTemporary(to, true);
         onTemporaryNew(false);
       }
@@ -1023,6 +1066,15 @@ export default function AgentView({
       setError(e.message);
     }
   };
+  // What the box holds goes along with a prompt picked or a question asked.
+  const withDraft = (text) => [text, draft].filter((t) => t.trim()).join("\n\n");
+  // A question asked from the code. The panel comes and goes with the view in
+  // it, so each is sent once, whatever mounts it.
+  useEffect(() => {
+    if (!sendNow || sendNow.n === sentNow) return;
+    sentNow = sendNow.n;
+    send(withDraft(sendNow.text));
+  }, [sendNow]);
   // runShell is the terminal's !: dv runs the command, and the agent is sent it
   // with what it printed. What was added and the pictures wait for the next message.
   const runShell = async (command) => {
@@ -1121,7 +1173,7 @@ export default function AgentView({
     // since this was called.
     if (to === (shownId.current || "")) setDraft(put);
     else {
-      const key = "draft:" + (to || "new");
+      const key = "draft:" + (to || (docked ? "ask" : "new"));
       setPref("repo", key, put(readPref("repo", key, "")), "");
     }
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -1183,15 +1235,19 @@ export default function AgentView({
   // Only what the agent still offers: a model it has dropped, or an effort that
   // model no longer takes, is not asked for - dv would turn it down, as would
   // the agent. Until it has answered with its models, nothing is.
+  // Docked, it starts as Settings say instead, mode and all.
   const startWith = useMemo(() => {
-    const want = picked[agentKind] || NO_PICKED;
+    const want = (docked ? startAs : picked[agentKind]) || NO_PICKED;
     const on = models.find((c) => c.id === (want.model || ""));
+    // Settings name it on purpose, so it goes even before the agent has said what it offers.
+    const unknown = docked && !models.length;
     const start = {};
     // "" is the agent's own model, which a session starts on anyway.
-    if (want.model && on) start.model = want.model;
-    if (want.effort && on?.efforts?.includes(want.effort)) start.effort = want.effort;
+    if (want.model && (on || unknown)) start.model = want.model;
+    if (want.effort && (on?.efforts?.includes(want.effort) || unknown)) start.effort = want.effort;
+    if (docked && want.mode) start.mode = want.mode;
     return start;
-  }, [picked, agentKind, models]);
+  }, [picked, agentKind, models, docked, startAs]);
   const temporary = id ? !!session?.temporary : temporaryNew;
   const toggleTemporary = () => {
     if (!id) return onTemporaryNew(!temporary);
@@ -1209,6 +1265,8 @@ export default function AgentView({
   // The mode is never remembered: a new session takes the agent's.
   const settings = (patch) => {
     if (id) return api.agentSettings(id, patch).catch((e) => setError(e.message));
+    // Docked, a pick is for this conversation alone: Settings say how the next starts.
+    if (docked) return setPicks((p) => ({ ...p, ...patch }));
     const { mode, ...pick } = patch;
     if (Object.keys(pick).length) {
       setPicked((all) => {
@@ -1500,6 +1558,15 @@ export default function AgentView({
   };
   const box = (
     <div className="agent-composer">
+      {docked && askPrompts?.length > 0 && !ask && (
+        <div className="ask-prompts">
+          {askPrompts.map((p) => (
+            <button key={p} title={`Ask: ${p}`} onClick={() => send(withDraft(p))}>
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         className={cx("composer-card", dropping && "dropping", (command || shell) && "command")}
         onDragOver={(e) => {
@@ -1649,7 +1716,7 @@ export default function AgentView({
               e.target.value = "";
             }}
           />
-          {!id && agents[""].available && agents.codex.available && (
+          {!id && !docked && agents[""].available && agents.codex.available && (
             <Picker label={agentLabel(agentKind)} title="The agent this session runs" choices={AGENT_CHOICES} value={agentKind} onPick={pickAgent} />
           )}
           {/* Hidden for the moment it takes to ask the agent, rather than naming no model. */}
@@ -1672,7 +1739,7 @@ export default function AgentView({
             value={mode}
             onPick={pickMode}
           />
-          {!readOnly && (
+          {!readOnly && !docked && (
             <button
               className={cx("ghost", temporary && "on")}
               aria-pressed={temporary}
@@ -1687,7 +1754,7 @@ export default function AgentView({
               {temporary && <span className="btn-label">Temporary</span>}
             </button>
           )}
-          {id && !readOnly && (
+          {id && !readOnly && !docked && (
             <button
               className={cx("ghost", kept && "on")}
               aria-pressed={kept}
@@ -1754,8 +1821,8 @@ export default function AgentView({
   return (
     <AttachTarget.Provider value={attachTarget}>
     <OpenCall.Provider value={setPeek}>
-    <div className="agent-pane" hidden={!active} ref={paneRef}>
-      <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />
+    <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef}>
+      {!docked && <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />}
       {id && (
         // What the session is and where it runs, its card in the list says; this
         // is what to do in it.
@@ -1786,10 +1853,22 @@ export default function AgentView({
           <span className="spacer" />
           {live?.context?.max > 0 && <ContextMeter context={live.context} agent={agentKind} onCompact={!readOnly && !lost ? compactNow : null} />}
           {live?.cost > 0 && <span className="dim agent-cost">${live.cost.toFixed(2)}</span>}
+          {docked && (
+            <>
+              <button className="ghost" onClick={() => onEndAsk(busy)} title="New conversation: this one ends, and the next question starts afresh">
+                <IconPlus size={13} />
+              </button>
+              <button className="ghost" onClick={onAskToAgent} title="Open in the Agent view, as a session in the list">
+                <IconForward size={13} />
+              </button>
+            </>
+          )}
           {/* As on its card: what closing does depends on what runs it, and says so. */}
-          <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, agentKind)}>
-            <IconX size={13} />
-          </button>
+          {!docked && (
+            <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, agentKind)}>
+              <IconX size={13} />
+            </button>
+          )}
         </header>
       )}
 
@@ -1850,6 +1929,11 @@ export default function AgentView({
                   {earlier.messages} {earlier.messages === 1 ? "message" : "messages"}
                 </span>
               )}
+            </div>
+          )}
+          {docked && !items.length && !incoming.length && !(id && !live && !lost) && (
+            <div className="agent-ask-empty">
+              Ask about the code you are reading: pick some lines, or a file, and use <IconAsk size={12} /> beside Send. Or ask here.
             </div>
           )}
           {items.map((it) => (
@@ -1985,6 +2069,9 @@ export default function AgentView({
     </AttachTarget.Provider>
   );
 }
+
+let sentNow = 0; // the last question from the code the docked view sent
+const CARET_KEY = `dv:${slug ? slug + ":" : ""}caret`; // { id, at: [start, end] }, for the tab
 
 // OpenCall opens the conversation page on a call, from the call's own line.
 const OpenCall = createContext(null);

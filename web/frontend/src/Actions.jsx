@@ -4,7 +4,7 @@ import { usePref } from "./prefs.js";
 import { cx } from "./util.js";
 import { Modal, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
-import { IconBolt, IconPlus } from "./icons.jsx";
+import { IconAsk, IconBolt, IconPlus, IconX } from "./icons.jsx";
 
 // An action is kept to run in a click, from ⚡ at the top or Alt+A: a prompt,
 // sent to the session last open in the Agent view or to a new one it sets up,
@@ -169,6 +169,108 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onC
         </button>
       </div>
     </Modal>
+  );
+}
+
+// The Ask panel's conversation starts as Settings say, not as the last pick:
+// Ask before edits, so a question cannot change the code under review.
+const ASK_START = { agent: "", model: "", effort: "", mode: "default" };
+export const ASK_PROMPTS = [
+  "Explain this",
+  "What does this change do?",
+  "Why might this have changed?",
+  "Any bugs or risks here?",
+  "Where is this used?",
+  "Is there a simpler way?",
+];
+const NO_ASK = {};
+
+// useAskSettings is { agent, model, effort, mode, prompts }, and its setter.
+export function useAskSettings() {
+  const [ask, setAsk] = usePref("user", "ask", NO_ASK);
+  return [useMemo(() => ({ ...ASK_START, prompts: ASK_PROMPTS, ...ask }), [ask]), setAsk];
+}
+
+// AskSettings is Settings' Ask tab.
+export function AskSettings() {
+  const [ask, setAsk] = useAskSettings();
+  const info = useAgentChoices();
+  const [adding, setAdding] = useState("");
+  const edit = (patch) => setAsk((a) => ({ ...a, ...patch }));
+  const models = modelsFor(ask, info);
+  const model = models.find((m) => m.id === ask.model);
+  const efforts = model?.efforts || [];
+  const setPrompts = (prompts) => edit({ prompts: prompts.map((p) => p.trim()).filter(Boolean) });
+  const add = () => {
+    if (adding.trim()) setPrompts([...ask.prompts, adding]);
+    setAdding("");
+  };
+  const usual = JSON.stringify(ask.prompts) === JSON.stringify(ASK_PROMPTS);
+  return (
+    <>
+      <div className="settings-note">
+        Ask answers questions about the code you are reading in the side panel, without leaving it: pick lines or a file and use <IconAsk size={11} />{" "}
+        beside Send. New questions join the same conversation, which stays out of the session list, and each repository keeps its own until you start a new one.
+      </div>
+      {info?.codex && (
+        <Setting label="Agent" value={ask.agent} onPick={(agent) => edit({ agent, model: "", effort: "" })} choices={[["", "Claude"], ["codex", "Codex"]]} />
+      )}
+      <div className="settings-row">
+        <div className="settings-text">Model</div>
+        <Picker
+          label={model?.label || ask.model || "Default"}
+          choices={models.map((m) => ({ id: m.id, label: m.label, description: m.description }))}
+          value={ask.model}
+          onPick={(id) => edit({ model: id, effort: "" })}
+        />
+      </div>
+      {efforts.length > 0 && (
+        <Setting label="Effort" value={ask.effort} onPick={(effort) => edit({ effort })} choices={[["", "Usual"], ...efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])]} />
+      )}
+      <Setting label="Mode" note="Ask before edits keeps a question from changing the code you are reviewing." value={ask.mode} onPick={(mode) => edit({ mode })} choices={SESSION_MODES} />
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Prompts</div>
+          <div className="settings-note">Offered over the Ask box. One click asks it, with whatever is in the box.</div>
+        </div>
+        {!usual && (
+          <button className="mini" onClick={() => setPrompts(ASK_PROMPTS)}>
+            Reset
+          </button>
+        )}
+      </div>
+      <div className="ask-prompt-list">
+        {ask.prompts.map((p, i) => (
+          <div key={p + i} className="ask-prompt-row">
+            <input
+              defaultValue={p}
+              onBlur={(e) => e.target.value !== p && setPrompts(ask.prompts.with(i, e.target.value))}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") e.target.blur();
+              }}
+            />
+            <button className="ghost" title="Remove this prompt" onClick={() => setPrompts(ask.prompts.filter((_, j) => j !== i))}>
+              <IconX size={12} />
+            </button>
+          </div>
+        ))}
+        <div className="ask-prompt-row">
+          <input
+            value={adding}
+            placeholder="Add a prompt"
+            onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") add();
+            }}
+          />
+          <button className="ghost" title="Add it" disabled={!adding.trim()} onClick={add}>
+            <IconPlus size={12} />
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 

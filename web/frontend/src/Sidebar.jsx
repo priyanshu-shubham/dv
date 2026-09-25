@@ -366,7 +366,9 @@ export default function Sidebar({
 // CommentsPanel is every comment in the review, at the page's right in any
 // mode, opened and closed from the header, which counts them; its switch
 // turns it to the repository's notes. Its width is dragged from its left edge.
-export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth, onClose }) {
+// ask is the Ask tab's view, where the page has one.
+export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth, onClose, ask }) {
+  if (tab === "ask" && !ask) tab = "comments";
   const open = threads.filter((t) => !t.resolved).length;
   const toDo = openNotes(notes.notes);
   const savedTo = tab === "notes" ? notes.path : commentsPath;
@@ -429,13 +431,19 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
             Notes
             {toDo > 0 && <span className="seg-count">{toDo}</span>}
           </button>
+          {ask && (
+            <button className={cx(tab === "ask" && "on")} aria-pressed={tab === "ask"} onClick={() => onTab("ask")} title="Questions about the code you are reading, answered here">
+              Ask
+            </button>
+          )}
         </div>
         <button className="ghost" onClick={onClose} title="Close (Esc)">
           <IconX size={13} />
         </button>
       </div>
+      {tab === "ask" && ask}
       {tab === "notes" && <Notes {...notes} />}
-      {tab !== "notes" && threads.length > 0 && onSend && (
+      {tab === "comments" && threads.length > 0 && onSend && (
         <div className="comment-picks">
           <label className="pick-all" title={all ? "Take the ticks off" : "Tick them all"}>
             <input type="checkbox" className="tick" checked={all} onChange={() => setTicked(all ? new Set() : new Set(threads.map((t) => t.id)))} />
@@ -457,7 +465,7 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
           )}
         </div>
       )}
-      {tab !== "notes" && (
+      {tab === "comments" && (
         <div className="comment-list">
           {threads.length === 0 ? (
             <div className="empty">No comments yet. Drag across line numbers, or hover a line and hit +.</div>
@@ -476,11 +484,13 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
           )}
         </div>
       )}
-      <div className="sidebar-foot">
-        <span className="saved-to" title={savedTo}>
-          saved to {savedTo}
-        </span>
-      </div>
+      {tab !== "ask" && (
+        <div className="sidebar-foot">
+          <span className="saved-to" title={savedTo}>
+            saved to {savedTo}
+          </span>
+        </div>
+      )}
     </aside>
   );
 }

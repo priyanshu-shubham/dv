@@ -114,7 +114,7 @@ export default function CodeView({
           <IconComment size={12} />
           <span className="btn-label">Comment</span>
         </button>
-        <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} what="this file" />
+        <AttachButton onClick={(to) => onAttach({ kind: "file", file: path }, to)} ask={() => ({ a: { kind: "file", file: path } })} what="this file" />
       </header>
       {(fileThreads.length > 0 || fileComposing) && (
         <div className="row-threads file-threads">

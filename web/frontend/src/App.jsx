@@ -7,7 +7,7 @@ import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
-import { ActionsPalette, ActionsSettings, runAction } from "./Actions.jsx";
+import { ActionsPalette, ActionsSettings, AskSettings, runAction, useAskSettings } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
@@ -24,7 +24,7 @@ import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
 import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
-import { boot } from "./boot.js";
+import { boot, slug } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
@@ -114,6 +114,15 @@ export default function App() {
   const showPanel = useCallback((on) => (phone ? setPanel(on ? "comments" : null) : setCommentsOpen(on)), [phone, setCommentsOpen]);
   const [commentsWidth, setCommentsWidth] = usePersisted("commentsWidth", 0); // 0: the stylesheet's default
   const [panelTab, setPanelTab] = usePersisted("panelTab", "comments");
+  // The Ask panel's conversation, out of the session list: "" until the first
+  // question, and again after a new one. Kept by folder, so going to another
+  // of the hub's and back, or a reload, finds it. askNow is a question asked
+  // from the code, for its view to send; askFocus, code added for one.
+  const [askId, setAskId] = usePersisted("askSession", "", { folder: true });
+  const [askNow, setAskNow] = useState(null);
+  const [askFocus, setAskFocus] = useState(0);
+  const [askSettings] = useAskSettings();
+  const askShown = showComments && panelTab === "ask";
   const [notes, setNotes] = useState({ notes: [], path: "" });
   const [newNote, setNewNote] = useState(false);
 
@@ -137,7 +146,11 @@ export default function App() {
   if (mode === "agent" && !agentVisited) setAgentVisited(true);
   const codeRef = useRef(null);
   const [lastCode, setLastCode] = usePersisted("codePath", "", { folder: true });
-  const [codeNav, setCodeNav] = useState(() => ({ stack: lastCode ? [{ path: lastCode }] : [], at: lastCode ? 0 : -1 }));
+  const [codeNav, setCodeNav] = useState(() => {
+    if (!lastCode) return { stack: [], at: -1 };
+    const was = readPlace().code;
+    return { stack: [{ path: lastCode, scroll: was?.path === lastCode ? was.scroll : undefined }], at: 0 };
+  });
   const codeAt = codeNav.stack[codeNav.at] || null;
   const codePath = codeAt?.path || "";
   const [plain, setPlain] = useState(null); // { path, fd } or { path, error }: a file outside the diff
@@ -178,7 +191,11 @@ export default function App() {
   const elsewhere = useHubActivity();
   // Sessions dv runs that are at work, here or in the hub's other folders: a restart stops them.
   const working = [activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length;
-  const windowed = useMemo(() => requests.filter((r) => mode !== "agent" || r.session !== agentId), [requests, mode, agentId]);
+  // What the conversation on screen asks, it asks in place: the Agent view's, and the Ask panel's.
+  const windowed = useMemo(
+    () => requests.filter((r) => (mode !== "agent" || r.session !== agentId) && (!askShown || r.session !== askId)),
+    [requests, mode, agentId, askShown, askId],
+  );
   const askingSessions = useMemo(() => new Set(requests.map((r) => r.session)), [requests]);
   const [promptOpen, setPromptOpen] = useState(false);
   const promptRef = useRef(false);
@@ -631,6 +648,47 @@ export default function App() {
     },
     [setPreview, openCode],
   );
+
+  // Leaving the page notes where the reader was, in the view they were in.
+  const placeRef = useRef(null);
+  placeRef.current = { scope: scopeKey(scope, diff), path: codePath };
+  useEffect(() => {
+    const save = () => {
+      const place = readPlace();
+      if (modeRef.current === "diff") place.diff = { scope: placeRef.current.scope, at: captureAnchor(scrollRef.current) };
+      if (modeRef.current === "code" && codeRef.current) place.code = { path: placeRef.current.path, scroll: codeRef.current.scrollTop };
+      try {
+        sessionStorage.setItem(PLACE_KEY, JSON.stringify(place));
+      } catch {}
+    };
+    const onHide = () => document.visibilityState === "hidden" && save();
+    window.addEventListener("pagehide", save);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", save);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, []);
+  // Coming back to Diff, the line goes back where it was once its file is
+  // drawn: for the same comparison, and only as the page opens.
+  const placed = useRef(mode !== "diff");
+  useEffect(() => {
+    if (placed.current || !diff) return;
+    placed.current = true;
+    const was = readPlace().diff;
+    const a = was?.at;
+    const root = scrollRef.current;
+    if (!a || !root || was.scope !== scopeKey(scope, diff)) return;
+    if (a.line) setReveal({ path: a.path, line: a.line });
+    chase(root, () => {
+      const section = document.getElementById("file-" + cssId(a.path));
+      if (!section) return null;
+      const cell = a.line ? section.querySelector(`[data-side="${a.side}"][data-line="${a.line}"]`) : null;
+      const el = cell || section;
+      const y = root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - (cell ? a.top : a.sectionTop);
+      return { y, final: !!cell || !a.line };
+    });
+  }, [diff]);
 
   // Arriving at a step: back to where it was left, or to its line.
   useEffect(() => {
@@ -1245,6 +1303,7 @@ export default function App() {
     ...[
       ["comments", "comments", "The comments in the review"],
       ["notes", "notes", "The repository's notes, shared by its worktrees"],
+      ["ask", "Ask", "Questions about the code, answered beside it"],
     ].map(([tab, what, note]) => {
       const shown = showComments && panelTab === tab;
       return { id: tab, name: `${shown ? "Close" : "Open"} ${what}`, note, run: () => (shown ? showPanel(false) : (setPanelTab(tab), showPanel(true))) };
@@ -1337,6 +1396,7 @@ export default function App() {
 
   const notices = useNotices({
     looking: mode === "agent" ? agentId : null,
+    asking: askShown ? askId : null,
     desktop: desktopNotices,
     go: openFolderSession,
     review: (id) => {
@@ -1345,6 +1405,11 @@ export default function App() {
     },
     open: (id) => {
       setPromptOpen(false);
+      // The Ask panel's conversation is in the panel, not the list.
+      if (id === askId) {
+        setPanelTab("ask");
+        return showPanel(true);
+      }
       setPanel(null);
       selectSession(id);
       switchMode("agent");
@@ -1423,10 +1488,6 @@ export default function App() {
     return out;
   }, [activity, agent.sessions, attachPick]);
   const attachTo = attachChoices.some((c) => c.id === attachPick) ? attachPick : attachChoices[0]?.id || "";
-  const attachTarget = useMemo(
-    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent }),
-    [attachChoices, attachTo, setAttachPick, newAgent],
-  );
 
   // attach puts something in a session's message box and goes there, where it
   // waits for the words that go with it. Code is taken as it reads on screen,
@@ -1437,8 +1498,8 @@ export default function App() {
     if (settings.addedTemporary) setTemporaryNew(true);
     switchMode("agent");
   }, [setAgentId, settings.addedTemporary, switchMode]);
-  const attach = useCallback(
-    (a, to = attachTo) => {
+  const addAttached = useCallback(
+    (a, to) => {
       const sc = diffRef.current?.scope;
       const newAt = sc?.newAt === "index" ? "staged" : sc?.newAt || "working tree";
       const at = a.kind !== "lines" ? "" : a.at || (a.side === "old" && modeRef.current !== "code" ? sc?.oldAt || "HEAD" : newAt);
@@ -1447,14 +1508,65 @@ export default function App() {
         const list = by[to] || [];
         return list.some((x) => x.key === key) ? by : { ...by, [to]: [...list, { ...a, at, key }] };
       });
+    },
+    [setAttachedBy],
+  );
+  const attach = useCallback(
+    (a, to = attachTo) => {
+      addAttached(a, to);
       setBoxFocus((n) => n + 1);
       if (to === "") return openAdded();
       setStack([]);
       setAgentId(to);
       switchMode("agent");
     },
-    [attachTo, setAttachedBy, openAdded, setAgentId, switchMode],
+    [attachTo, addAttached, openAdded, setAgentId, switchMode],
   );
+  // askAbout puts code in the Ask panel's box, which opens beside it; with a
+  // question, that is asked at once. Before the first, the box's is "ask".
+  const askAbout = useCallback(
+    (a, question = "") => {
+      addAttached(a, askId || "ask");
+      setPanelTab("ask");
+      showPanel(true);
+      if (question.trim()) setAskNow({ text: question, n: Date.now() + Math.random() });
+      else setAskFocus((n) => n + 1);
+    },
+    [addAttached, askId, setPanelTab, showPanel],
+  );
+  const attachTarget = useMemo(
+    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent, onAsk: agents[askSettings.agent]?.available ? askAbout : null }),
+    [attachChoices, attachTo, setAttachPick, newAgent, askAbout, agents, askSettings.agent],
+  );
+  const newAsk = useCallback(async () => {
+    const { id } = await api.agentCreate(askSettings.agent, true);
+    setAskId(id);
+    return id;
+  }, [askSettings.agent]);
+  // A new conversation ends the one there, whose transcript stays for the agent's resume.
+  const endAsk = useCallback(
+    (busy) => {
+      if (busy && !confirm("It is still answering. Stop it and start a new conversation?")) return;
+      if (askId) api.agentOpen(askId, false).catch(() => {});
+      setAskId("");
+      setAskFocus((n) => n + 1);
+    },
+    [askId],
+  );
+  // Grown into real work, it becomes an ordinary session, in the list and the Agent view.
+  const askToAgent = useCallback(async () => {
+    const id = askId;
+    try {
+      await api.agentAsk(id, false);
+      await api.agentOpen(id, true);
+    } catch (e) {
+      return say("Could not open it in the Agent view", e.message);
+    }
+    setAskId("");
+    await loadSessions();
+    setAgentId(id);
+    switchMode("agent");
+  }, [askId, loadSessions, setAgentId, switchMode]);
   // sendThreads hands comments over together, with a line to send them with
   // where nothing is typed there yet; deleteThreads is the panel's way to
   // clear out what the review is done with.
@@ -2015,6 +2127,49 @@ export default function App() {
             widthVar={sideRight ? "--side-w" : "--comments-w"}
             onWidth={sideRight ? setSideWidth : setCommentsWidth}
             onClose={() => showPanel(false)}
+            ask={
+              attachTarget.onAsk && (
+                <AgentView
+                  docked
+                  id={askId}
+                  agents={agents}
+                  newAgent={askSettings.agent}
+                  onNewAgent={() => {}}
+                  modes={agent.modes}
+                  root={meta?.root || ""}
+                  view={view}
+                  contextLines={contextLines}
+                  wrap={wrap}
+                  threads={threads}
+                  attached={attachedLive[askId || "ask"] || NO_ATTACHED}
+                  onAttach={(a, to) => attach(a, to)}
+                  onDetach={(key) => attachedFor(askId || "ask", (list) => list.filter((x) => x.key !== key))}
+                  onClearAttached={() => attachedFor(askId || "ask", () => [])}
+                  onRestoreAttached={(to, back) => attachedFor(to || "ask", (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list])}
+                  onJump={(a) => (a.kind === "thread" ? onThreadAction({ type: "jump", thread: threads.find((t) => t.id === a.threadId) }) : goTo(a.file, a.start || 0))}
+                  onComment={createComment}
+                  onThreadAction={onThreadAction}
+                  onSymbol={onSymbol}
+                  onOpenFile={goTo}
+                  requests={requests}
+                  hooks={agent.hooks}
+                  onHooks={pickHooks}
+                  onSelect={selectSession}
+                  onNew={newAsk}
+                  onStart={() => endAsk(false)}
+                  onStartAdded={openAdded}
+                  onClose={() => endAsk(false)}
+                  onChanged={loadSessions}
+                  boxFocus={askFocus}
+                  offline={offline}
+                  startAs={askSettings}
+                  sendNow={askNow}
+                  askPrompts={askSettings.prompts}
+                  onEndAsk={endAsk}
+                  onAskToAgent={askToAgent}
+                />
+              )
+            }
           />
         )}
       </div>
@@ -2117,6 +2272,7 @@ export default function App() {
           working={working}
           update={update}
           actions={<ActionsSettings />}
+          ask={<AskSettings />}
           tab={overlay.tab}
         />
       )}
@@ -2365,6 +2521,17 @@ function chase(root, aim) {
 }
 
 const scopeKey = (s, diff) => diff?.scope?.label || (s.kind === "custom" ? "custom:" + s.rev : s.kind);
+
+// Where the reader was, kept for the tab through a reload or a trip to another
+// of the hub's folders and back: { diff: { scope, at }, code: { path, scroll } }.
+const PLACE_KEY = `dv:${slug ? slug + ":" : ""}place`;
+function readPlace() {
+  try {
+    return JSON.parse(sessionStorage.getItem(PLACE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
 
 // What the Back control says it leads to, so a step backwards is a known
 // destination rather than a guess.

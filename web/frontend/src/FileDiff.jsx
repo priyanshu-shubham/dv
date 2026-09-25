@@ -126,7 +126,7 @@ function FileDiff({
           <IconFile size={12} />
           <span className="btn-label">File</span>
         </button>
-        <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} what="this file" />
+        <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} ask={() => ({ a: { kind: "file", file: entry.path } })} what="this file" />
         {onDiscard && (
           <button className="view-file discard" onClick={() => onDiscard(entry)} title="Put the file back as the last commit has it">
             <IconUndo size={12} />
@@ -1055,6 +1055,11 @@ function anchorNodes(anchor, ctx, key) {
                   const lines = { file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote };
                   ctx.onAttach(body ? { kind: "note", ...lines, body } : { kind: "lines", ...lines }, to);
                   ctx.setComposing(null);
+                }}
+                // What is written is the question.
+                ask={() => {
+                  ctx.setComposing(null);
+                  return { a: { kind: "lines", file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote }, question: body };
                 }}
                 what={body ? "this note" : "these lines"}
               />

@@ -24,6 +24,7 @@ type sessionsDoc struct {
 	Open      []string            `json:"open"`                // most recently opened first
 	Temporary []string            `json:"temporary,omitempty"` // left out of the list once closed
 	Kept      []string            `json:"kept,omitempty"`      // never stopped for being idle, and started with dv
+	Asks      []string            `json:"asks,omitempty"`      // the review's Ask panel's, never listed
 	Rewinds   map[string]Rewind   `json:"rewinds,omitempty"`
 	Switches  map[string][]Switch `json:"switches,omitempty"`
 	// Agents names the agent of a session that is not Claude Code's: "codex".
@@ -132,6 +133,19 @@ func (s *Sessions) KeptIDs() []string {
 // SetKept marks a session kept running or not.
 func (s *Sessions) SetKept(id string, on bool) error {
 	return s.mark(&s.doc.Kept, id, on)
+}
+
+// AskIDs lists the sessions the Ask panel started.
+func (s *Sessions) AskIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return slices.Clone(s.doc.Asks)
+}
+
+// SetAsk marks a session as the Ask panel's, or makes it an ordinary one.
+func (s *Sessions) SetAsk(id string, on bool) error {
+	return s.mark(&s.doc.Asks, id, on)
 }
 
 // mark puts id in the list or takes it out. The list is the doc's, read

@@ -229,7 +229,8 @@ func (m *Manager) Sessions() []Session {
 		// no order, so two alike would trade places on every listing.
 		return cmp.Or(b.Updated.Compare(a.Updated), cmp.Compare(a.ID, b.ID))
 	})
-	return out
+	asks := m.saved.AskIDs()
+	return slices.DeleteFunc(out, func(s Session) bool { return slices.Contains(asks, s.ID) })
 }
 
 // Activity is what a session open in dv is doing, for word of it to reach the
@@ -284,7 +285,9 @@ func (m *Manager) Activity() []Activity {
 	slices.SortStableFunc(out, func(a, b Activity) int {
 		return cmp.Or(b.Updated.Compare(a.Updated), cmp.Compare(a.ID, b.ID))
 	})
-	return out
+	// An ask is followed in its panel alone: no notices, no chat, no count at work.
+	asks := m.saved.AskIDs()
+	return slices.DeleteFunc(out, func(a Activity) bool { return slices.Contains(asks, a.ID) })
 }
 
 // Title is what the session list calls a session, "" for one nothing has been
@@ -382,7 +385,13 @@ func (m *Manager) running() map[string]running {
 
 // Create starts a new session in the repository with agent, "codex" or Claude
 // Code's "". Nothing runs until the first message is sent.
-func (m *Manager) Create(agent string) (string, error) {
+func (m *Manager) Create(agent string) (string, error) { return m.create(agent, false) }
+
+// CreateAsk is Create for the Ask panel: marked before anything is told of
+// it, so it is never listed, and never open, being the panel's alone.
+func (m *Manager) CreateAsk(agent string) (string, error) { return m.create(agent, true) }
+
+func (m *Manager) create(agent string, ask bool) (string, error) {
 	var id string
 	if agent == "codex" {
 		var err error
@@ -399,11 +408,25 @@ func (m *Manager) Create(agent string) (string, error) {
 		m.procs[id] = m.newProc(id, m.root, false)
 	}
 	m.mu.Unlock()
-	if _, err := m.saved.Set(id, true); err != nil {
+	if ask {
+		if err := m.saved.SetAsk(id, true); err != nil {
+			return "", err
+		}
+	} else if _, err := m.saved.Set(id, true); err != nil {
 		return "", err
 	}
 	m.broker.Notify()
 	return id, nil
+}
+
+// SetAsk marks a session as the Ask panel's, left out of the list and of
+// what is told of sessions at work; off, it is an ordinary session again.
+func (m *Manager) SetAsk(id string, on bool) error {
+	if err := m.saved.SetAsk(id, on); err != nil {
+		return err
+	}
+	m.broker.Notify()
+	return nil
 }
 
 // SetTemporary marks a session to leave the list once it is closed. Its
@@ -584,8 +607,17 @@ func (m *Manager) send(id, message, text string, images []Image) (string, error)
 	if f := strings.Fields(text); len(f) > 0 && f[0] == "/clear" {
 		return "", errors.New("/clear would move Claude Code to a session dv is not showing. + starts a new one.")
 	}
+	// Open, for its prompts to reach the page; the Ask panel's is never open,
+	// but dv runs it, which is as good while it has anything to ask.
+	open := func() error {
+		if slices.Contains(m.saved.AskIDs(), id) {
+			return nil
+		}
+		_, err := m.saved.Set(id, true)
+		return err
+	}
 	if m.isCodex(id) {
-		if _, err := m.saved.Set(id, true); err != nil {
+		if err := open(); err != nil {
 			return "", err
 		}
 		m.saved.SetAgent(id, "codex")
@@ -595,7 +627,7 @@ func (m *Manager) send(id, message, text string, images []Image) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if _, err := m.saved.Set(id, true); err != nil {
+	if err := open(); err != nil {
 		return "", err
 	}
 	return p.send(cmp.Or(message, newUUID()), text, images)

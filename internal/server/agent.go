@@ -70,13 +70,18 @@ func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Agent string `json:"agent"`
+		Ask   bool   `json:"ask"` // the Ask panel's, never listed
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.Agent != "" && req.Agent != "codex" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("dv runs Claude Code and Codex, not %q", req.Agent))
 		return
 	}
-	id, err := s.agent.Create(req.Agent)
+	create := s.agent.Create
+	if req.Ask {
+		create = s.agent.CreateAsk
+	}
+	id, err := create(req.Agent)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -110,6 +115,25 @@ func (s *Server) handleAgentStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.agent.Start(id); err != nil {
 		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleAgentAsk(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Ask bool `json:"ask"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.agent.SetAsk(id, req.Ask); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

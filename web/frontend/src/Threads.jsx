@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, Markdown } from "./links.js";
 import { agentName, cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
-import { AgentIcon, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
+import { AgentIcon, IconAsk, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
@@ -139,9 +139,10 @@ export const AttachTarget = createContext(null);
 // AttachButton sends code to a session's message box, in the Agent view, and
 // goes there: what it sends waits for you to write the rest and send it.
 // onClick is given the session it goes to, "" for a new one; its menu picks
-// another, which stays picked. what is what it sends, as "this file";
-// instead, that it goes in place of something else.
-export function AttachButton({ className, onClick, what, instead }) {
+// another, which stays picked, or a new one. what is what it sends, as "this
+// file"; instead, that it goes in place of something else. ask, where the
+// Ask panel is, is what to ask about instead: it returns { a, question }.
+export function AttachButton({ className, onClick, what, instead, ask }) {
   const t = useContext(AttachTarget);
   const [open, setOpen] = useState(false);
   const menu = useRef(null);
@@ -160,7 +161,6 @@ export function AttachButton({ className, onClick, what, instead }) {
     };
   }, [open]);
   const to = t?.choices.find((c) => c.id === t.target);
-  const picks = t?.choices.length > 1;
   const send = `Send ${what ? what + " " : ""}to a session's message box`;
   const title = t ? `${send.replace("a session's", "the")} of ${agentName(to ? to.agent : t.newAgent)}${instead ? ", in place of what is there" : ""}, in ${to ? to.label : "a new session"}` : send;
   return (
@@ -168,26 +168,34 @@ export function AttachButton({ className, onClick, what, instead }) {
       {/* It goes to the box, not to the agent: you write the rest and send it there. */}
       {/* Where it goes is in the title and marked in the menu, which keeps the button short. */}
       <button
-        className={cx("attach-btn", picks && "attach-picked")}
+        className={cx("attach-btn", to && "attach-picked")}
         onClick={() => onClick(t?.target)}
         title={title}
       >
         <IconSpark size={12} />
         <span className="btn-label">Send</span>
       </button>
-      {picks && (
+      {/* A new session is the menu's last choice, so there is one whenever a session is. */}
+      {to && (
         <button
           className="attach-btn attach-to"
           onClick={() => setOpen((o) => !o)}
-          title="Pick the session to send to"
+          title="Pick the session to send to, or a new one"
           aria-expanded={open}
         >
           <IconChevronDown size={10} />
         </button>
       )}
-      {to && (
-        <button className="attach-btn attach-new" onClick={() => onClick("")} title={`Send to a new ${agentName(t.newAgent)} session, and go to it`}>
-          <IconNewSession size={13} />
+      {t?.onAsk && ask && (
+        <button
+          className="attach-btn attach-ask"
+          onClick={() => {
+            const { a, question } = ask();
+            t.onAsk(a, question);
+          }}
+          title={`Ask about ${what || "this"}, answered in the side panel`}
+        >
+          <IconAsk size={13} />
         </button>
       )}
       {/* In the page's top layer: a file card clips what overflows it. */}
@@ -211,6 +219,18 @@ export function AttachButton({ className, onClick, what, instead }) {
               </span>
             </button>
           ))}
+          <button
+            onClick={() => {
+              setOpen(false);
+              onClick("");
+            }}
+            title={`Send to a new ${agentName(t.newAgent)} session, and go to it`}
+          >
+            <span className="model-name agent-label">
+              <IconNewSession size={12} />
+              New session
+            </span>
+          </button>
         </div>,
           document.body,
         )}

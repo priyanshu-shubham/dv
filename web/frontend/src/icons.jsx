@@ -22,6 +22,7 @@ export const IconForward = svg(<path d="M3 8h9.5M9 3.5L13 8l-4 4.5" />, { stroke
 export const IconFile = svg(<path d="M3 1.5h6L13 5.5v9H3z M9 1.5V6h4" />, { stroke: true });
 export const IconEye = svg(<><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" /><circle cx="8" cy="8" r="2" /></>, { stroke: true });
 export const IconComment =svg(<path d="M2 3.5h12v8H8l-3.5 3v-3H2z" />, { stroke: true });
+export const IconAsk = svg(<path d="M2 2.5h12v9H8.5L5 14.5v-3H2z M6.3 5.7a1.7 1.7 0 1 1 2.4 1.55c-.45.25-.7.55-.7 1.05 M8 9.9v.01" />, { stroke: true });
 export const IconNewSession = svg(
   <path d="M8 2.5c3.31 0 6 2.24 6 5s-2.69 5-6 5a6.9 6.9 0 0 1-2.2-.35L2.5 13.5l.85-2.55A4.6 4.6 0 0 1 2 7.5c0-2.76 2.69-5 6-5z M8 5.5v4M6 7.5h4" />,
   { stroke: true },

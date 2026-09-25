@@ -198,8 +198,11 @@ export const api = {
   agentCommands: (agent = "") => req(`/api/agent/commands${agent ? `?agent=${agent}` : ""}`),
 
   // agentCreate makes a session to send a first message to; nothing runs yet.
-  // agent is "codex", or "" for Claude Code.
-  agentCreate: (agent = "") => req("/api/agent/sessions", { method: "POST", body: JSON.stringify({ agent }) }),
+  // agent is "codex", or "" for Claude Code. ask makes it the Ask panel's,
+  // never listed.
+  agentCreate: (agent = "", ask = false) => req("/api/agent/sessions", { method: "POST", body: JSON.stringify({ agent, ask }) }),
+  // agentAsk takes a session out of the Ask panel, into the list, or back.
+  agentAsk: (id, ask) => req(`/api/agent/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ ask }) }),
 
   // Open sessions are the ones whose permission prompts come up in the page.
   agentOpen: (id, open) => req(`/api/agent/sessions/${id}/open`, { method: "POST", body: JSON.stringify({ open }) }),
