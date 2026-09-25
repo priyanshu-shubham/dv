@@ -3321,6 +3321,67 @@ a.path-link:hover {
   border-top: 5px solid transparent;
 }
 
+/* Wider than the bar, and reaching into the code's leading space, so it is
+   easy to hit without eating into the line number's click. */
+.mk-hit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -6px;
+  width: 10px;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.prompt-card.plan .mk-hit {
+  display: none;
+}
+
+.diff-code .cell.mk-open .gutter::before,
+.diff-code .cell.mk .gutter:has(> .mk-hit:hover)::before {
+  width: 5px;
+}
+
+.cell:hover .gutter:has(> .mk-hit:hover)::after {
+  visibility: hidden;
+}
+
+.diff-code .cell.mk-del.mk-open .gutter::before,
+.diff-code .cell.mk-del-end.mk-open .gutter::before,
+.diff-code .cell.mk-del .gutter:has(> .mk-hit:hover)::before,
+.diff-code .cell.mk-del-end .gutter:has(> .mk-hit:hover)::before {
+  width: 0;
+  border-left-width: 9px;
+}
+
+/* An open change, drawn as a strip under its line the way a comment is. */
+.peek {
+  background: var(--bg-panel);
+  padding-bottom: 8px;
+  scroll-margin: 48px 0 24px;
+}
+
+.peek-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  height: var(--row-h);
+  padding: 0 8px;
+}
+
+.peek-rows {
+  background: var(--bg);
+}
+
+.peek .gutter {
+  cursor: default;
+}
+
+.peek .gutter::after {
+  content: none;
+}
+
 /* ---------- overlays ---------- */
 
 .backdrop {

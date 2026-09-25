@@ -1,13 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { buildBlocks, codeLines, grow, pairRows, revealFor, stripOpener, unifiedRows } from "./hunks.js";
+import { buildBlocks, codeHunks, codeLines, grow, pairRows, revealFor, stripOpener, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
-import { charWidth, cx, isMac, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
+import { charWidth, cx, isMac, isTyping, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
 import { asMedia, MarkdownDocument, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile, IconUndo } from "./icons.jsx";
+import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile, IconSplit, IconUndo, IconX } from "./icons.jsx";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
 // once the section has been scrolled near, so a 500-file diff still opens
@@ -332,10 +332,12 @@ function chunk(blocks, split) {
 // with theirs.
 // toAgent is for an agent's own edit, where what you write is for it: the box
 // sends a note to its session rather than leaving a comment in the review.
+// In Code mode a change bar opens that change in place; onOpenDiff, given
+// { side, line, top }, carries it over to the Diff.
 export function DiffBody({
   fd, view, oneNumber, side, contextLines, expanded, onExpand, threads, selection, setSelection,
   composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, wrap,
-  reveal, hit = 0, drawAll = false, unknown = false, toAgent = false, onBody, found, foundAt, barsIn,
+  reveal, hit = 0, drawAll = false, unknown = false, toAgent = false, onBody, found, foundAt, barsIn, onOpenDiff,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
@@ -350,6 +352,34 @@ export function DiffBody({
     for (let i = 0; i < lines.length; i += ROW_BLOCK) out.push({ kind: "rows", lines: lines.slice(i, i + ROW_BLOCK) });
     return out;
   }, [fd, view, side, contextLines, expanded, anchors]);
+
+  // The change open in place, by its index in hunks; -1 for none.
+  const hunks = useMemo(() => (view === "code" ? codeHunks(fd) : null), [fd, view]);
+  const [peekAt, setPeek] = useState(-1);
+  const peek = hunks && peekAt < hunks.length ? peekAt : -1;
+  useEffect(() => setPeek(-1), [path]);
+  const togglePeek = useCallback((h) => setPeek((p) => (p === h ? -1 : h)), []);
+  useEffect(() => {
+    if (peek < 0) return;
+    rootRef.current?.querySelector(".peek")?.scrollIntoView({ block: "nearest" });
+    const onKey = (e) => {
+      if (e.key === "Escape" && !isTyping(e.target)) setPeek(-1);
+    };
+    // A click elsewhere closes it, but not one on a scrollbar, which is still
+    // reading, nor on another bar, which moves it there.
+    const onDown = (e) => {
+      const t = e.target;
+      if (t.clientWidth && (e.offsetX >= t.clientWidth || e.offsetY >= t.clientHeight)) return;
+      if (!t.closest?.(".peek, .mk-hit, .hbar")) setPeek(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [peek]);
+
   useEffect(() => {
     if (!onBody) return;
     onBody(path, { blocks, view, fd });
@@ -426,6 +456,7 @@ export function DiffBody({
       const from = cellOf(sel.anchorNode);
       const to = cellOf(sel.focusNode);
       if (!from || !to || !root.contains(from) || !root.contains(to)) return;
+      if (from.closest(".peek") || to.closest(".peek")) return; // text to copy: a peek is read-only
       // A selection dragged across both columns has no single anchor line, so
       // it is left alone rather than guessed at.
       if (from.dataset.side !== to.dataset.side) return;
@@ -486,12 +517,12 @@ export function DiffBody({
     () => ({
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
       onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, hit,
-      found, foundAt, oneNumber, toAgent,
+      found, foundAt, oneNumber, toAgent, hunks, peek, setPeek, togglePeek, onOpenDiff,
     }),
     [
       fd, oldHtml, newHtml, byAnchor, selection, composing, setComposing,
       onGutterDown, onGutterEnter, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, hit,
-      found, foundAt, oneNumber, toAgent,
+      found, foundAt, oneNumber, toAgent, hunks, peek, togglePeek, onOpenDiff,
     ],
   );
 
@@ -722,7 +753,7 @@ export function DiffBody({
             onMeasure={onMeasure}
             // A proposed edit sits in a modal that is hidden and shown again, which
             // the visibility observer has been seen to miss; it is small, so drawn whole.
-            force={drawAll || holdsLine(b.lines, reveal)}
+            force={drawAll || holdsLine(b.lines, reveal) || (peek >= 0 && b.lines.some((l) => l.hunk === peek))}
           />
         ),
       )}
@@ -1004,20 +1035,67 @@ const CodeRows = memo(function CodeRows({ lines, ctx }) {
   return lines.flatMap((l, i) => {
     const side = l.n < 0 ? "old" : "new";
     const idx = side === "old" ? l.o : l.n;
+    const peek = ctx.peek >= 0 && l.hunk === ctx.peek && <Peek key={"p" + i} ctx={ctx} />;
     return [
+      l.mark === "del" && peek,
       <div className="row" key={"r" + i}>
         <LineCell
           ctx={ctx}
           side={side}
           no={idx + 1}
           html={(side === "old" ? ctx.oldHtml : ctx.newHtml)[idx]}
-          mark={l.mark && "mk mk-" + l.mark}
+          mark={l.mark && cx("mk mk-" + l.mark, l.hunk === ctx.peek && "mk-open")}
+          hunk={l.mark ? l.hunk : undefined}
         />
       </div>,
+      l.end && peek,
       ...anchorNodes({ side, no: idx + 1 }, ctx, `t${i}`),
     ];
   });
 });
+
+const NO_ANCHORS = new Map();
+const noGutter = () => undefined;
+
+// Peek is Code mode's open change: its lines as the unified diff draws them,
+// read-only, since a comment here would hang on lines the file no longer shows.
+function Peek({ ctx }) {
+  const lines = ctx.hunks[ctx.peek];
+  const rows = useMemo(
+    () => ({
+      ...ctx, byAnchor: NO_ANCHORS, selection: null, composing: null, hit: 0, found: null, foundAt: null,
+      // One number, so its code lines up with the file's around it.
+      oneNumber: true, onGutterDown: noGutter, onGutterEnter: noGutter, readOnly: true,
+    }),
+    [ctx],
+  );
+  const ref = useRef(null);
+  const openDiff = () => {
+    const first = lines[0];
+    const side = first.t === "d" ? "old" : "new";
+    const pane = ref.current.closest(".content");
+    const top = pane ? ref.current.querySelector(".peek-rows").getBoundingClientRect().top - pane.getBoundingClientRect().top : undefined;
+    ctx.onOpenDiff({ side, line: (side === "old" ? first.o : first.n) + 1, top });
+  };
+  return (
+    <div className="peek" ref={ref}>
+      <div className="peek-head">
+        {ctx.onOpenDiff && (
+          <button className="mini" onClick={openDiff} title="Show this change in the Diff">
+            <IconSplit size={12} />
+            Diff
+          </button>
+        )}
+        <button className="mini" onClick={() => ctx.setPeek(-1)} title="Close (Esc)" aria-label="Close">
+          <IconX size={12} />
+        </button>
+      </div>
+      <div className="peek-rows">
+        <UnifiedRows lines={lines} ctx={rows} />
+      </div>
+    </div>
+  );
+}
 
 // anchorNodes renders any threads anchored at a line plus the open composer.
 function anchorNodes(anchor, ctx, key) {
@@ -1117,7 +1195,7 @@ function UnifiedCell({ line, ctx, ranges }) {
   );
 }
 
-function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter }) {
+function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter, hunk }) {
   const sel = ctx.selection;
   const selected = sel && sel.side === side && no >= sel.start && no <= sel.end;
   let body = ranges?.length ? applyRanges(html ?? "", ranges, "wd") : html ?? "";
@@ -1136,7 +1214,7 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
           composer for this line; dragging selects a range. */}
       <div
         className="gutter"
-        title="Click to comment on this line, drag for a range"
+        title={ctx.readOnly ? undefined : "Click to comment on this line, drag for a range"}
         onMouseDown={ctx.onGutterDown(side, no)}
         onMouseEnter={ctx.onGutterEnter(side, no)}
       >
@@ -1147,6 +1225,19 @@ function LineCell({ ctx, side, no, oldNo, newNo, html, ranges, mark, dualGutter 
           </>
         ) : (
           <span className="ln">{no}</span>
+        )}
+        {/* A strip of its own over the change bar, so opening the change is
+            never taken for the start of a comment. */}
+        {hunk !== undefined && (
+          <span
+            className="mk-hit"
+            title={ctx.peek === hunk ? "Hide the change" : "Show the change"}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              if (e.button === 0) ctx.togglePeek(hunk);
+            }}
+          />
         )}
       </div>
       <code

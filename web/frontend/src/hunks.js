@@ -408,12 +408,14 @@ export function mapLine(prev, next, side, line) {
 // codeLines lays out one side of a file for Code mode: every line, with what
 // the diff changed carried as a mark on the lines rather than as rows of its
 // own. A deletion marks the line that now stands where it was ("del"), or the
-// last line when it was at the end ("del-end").
+// last line when it was at the end ("del-end"). A marked line carries its
+// change's index in codeHunks as `hunk`, and `end` on the line that change's
+// peek hangs under; a "del" one's goes above its line, where the notch is.
 export function codeLines(fd, side) {
   const all = flatten(fd.ops || []);
   if (side === "old") return all.filter((l) => l.o >= 0).map((l) => ({ t: "e", o: l.o, n: -1 }));
   const out = [];
-  for (let i = 0; i < all.length; ) {
+  for (let i = 0, hunk = 0; i < all.length; ) {
     if (all[i].t === "e") {
       out.push(all[i++]);
       continue;
@@ -424,10 +426,22 @@ export function codeLines(fd, side) {
       if (all[i].t === "d") dels++;
       else adds.push(all[i]);
     }
-    for (const l of adds) out.push({ ...l, mark: dels ? "mod" : "add" });
-    if (adds.length) continue;
-    if (i < all.length) out.push({ ...all[i++], mark: "del" });
-    else if (out.length) out[out.length - 1] = { ...out[out.length - 1], mark: "del-end" };
+    adds.forEach((l, k) => out.push({ ...l, mark: dels ? "mod" : "add", hunk, end: k === adds.length - 1 }));
+    if (!adds.length && i < all.length) out.push({ ...all[i++], mark: "del", hunk });
+    else if (!adds.length && out.length) out[out.length - 1] = { ...out[out.length - 1], mark: "del-end", hunk, end: true };
+    hunk++;
+  }
+  return out;
+}
+
+// codeHunks is each change codeLines marks, as the diff's own lines, in order.
+export function codeHunks(fd) {
+  const out = [];
+  let run = null;
+  for (const l of flatten(fd.ops || [])) {
+    if (l.t === "e") run = null;
+    else if (run) run.push(l);
+    else out.push((run = [l]));
   }
   return out;
 }

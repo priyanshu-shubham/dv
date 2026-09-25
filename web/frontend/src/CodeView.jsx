@@ -62,6 +62,7 @@ export default function CodeView({
   const kind = media ? "" : previewKind(path);
   const lines = side === "old" ? fd?.oldLines : fd?.newLines;
   const readable = fd && !fd.binary && !fd.tooLarge;
+  const openDiff = useCallback((at) => onDiff({ path, ...at }), [onDiff, path]);
 
   return (
     <section className="file code-file" data-path={path} data-pending={(!fd && !error && !media) || undefined}>
@@ -101,7 +102,7 @@ export default function CodeView({
         {/* After the count, whose fixed column would otherwise open a gap beside it. */}
         {kind && <PreviewToggle kind={kind} on={preview} onChange={onPreview} />}
         {entry && (
-          <button className="view-file" onClick={() => onDiff(path)} title="Show this file's diff (m)">
+          <button className="view-file" onClick={() => onDiff()} title="Show this file's diff (m)">
             <IconSplit size={12} />
             <span className="btn-label">Diff</span>
           </button>
@@ -188,6 +189,7 @@ export default function CodeView({
             wrap={wrap}
             reveal={reveal}
             hit={hit}
+            onOpenDiff={entry ? openDiff : undefined}
           />
         )}
       </div>

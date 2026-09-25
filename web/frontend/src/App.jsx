@@ -970,12 +970,14 @@ export default function App() {
   // Switching mode keeps the reader's place: the line at the top of one view is
   // put at the same height in the other, when the other has it.
   const pendingDiff = useRef(null);
+  // `at` is where to land, { path, side, line, top }, in place of the line
+  // at the top of the view.
   const switchMode = useCallback(
-    (next) => {
+    (next, at) => {
       const from = modeRef.current;
       if (next === from) return;
       if (next === "agent" || from === "agent") return setMode(next);
-      const a = captureAnchor(from === "diff" ? scrollRef.current : codeRef.current);
+      const a = at || captureAnchor(from === "diff" ? scrollRef.current : codeRef.current);
       if (next === "code") {
         const path = a?.path || activePath;
         if (path) {
@@ -992,6 +994,7 @@ export default function App() {
     },
     [activePath, codePath, openCode, setMode],
   );
+  const onCodeDiff = useCallback((at) => switchMode("diff", at), [switchMode]);
   useEffect(() => {
     if (mode !== "diff") return;
     const a = pendingDiff.current;
@@ -2031,7 +2034,7 @@ export default function App() {
               onBody={onBody.code}
               found={(mode === "code" && found?.byFile.get(codePath)) || null}
               foundAt={mode === "code" && findCur?.path === codePath ? findCur : null}
-              onDiff={() => switchMode("diff")}
+              onDiff={onCodeDiff}
               onBack={codeNav.at > 0 ? () => stepCode(-1) : null}
               onForward={codeNav.at < codeNav.stack.length - 1 ? () => stepCode(1) : null}
               scope={scope}
