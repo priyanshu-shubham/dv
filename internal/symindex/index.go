@@ -31,6 +31,7 @@ type Symbol struct {
 // Lister supplies the files to index; *gitx.Repo satisfies it.
 type Lister interface {
 	TrackedFiles() ([]string, error)
+	SkippedDirs() []string
 }
 
 // Index holds the symbol table and rebuilds it on demand.
@@ -261,18 +262,9 @@ func scanFile(path string, content []byte, l *lang) []Symbol {
 	return out
 }
 
-var skipDirs = map[string]bool{
-	"node_modules": true, "vendor": true, "dist": true, "build": true, ".next": true,
-	"target": true, "__pycache__": true, ".venv": true, "venv": true, "coverage": true,
-	".git": true, "third_party": true, "bower_components": true,
-}
-
+// skipPath drops files that are noise to search even when tracked. Folders are
+// left to .gitignore: a fixed list of names like build/ also hid source.
 func skipPath(p string) bool {
-	for _, seg := range strings.Split(p, "/") {
-		if skipDirs[seg] {
-			return true
-		}
-	}
 	base := filepath.Base(p)
 	return strings.HasSuffix(base, ".min.js") || strings.HasSuffix(base, ".min.css") ||
 		strings.HasSuffix(base, ".lock") || base == "package-lock.json"

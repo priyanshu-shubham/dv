@@ -11,6 +11,7 @@ import (
 type fakeLister struct{ files []string }
 
 func (f fakeLister) TrackedFiles() ([]string, error) { return f.files, nil }
+func (f fakeLister) SkippedDirs() []string           { return nil }
 
 func build(t *testing.T, files map[string]string) *Index {
 	t.Helper()

@@ -23,6 +23,23 @@ var folderIgnored = map[string]bool{
 	"node_modules": true, "__pycache__": true, ".venv": true, ".cache": true, ".next": true, ".tox": true,
 }
 
+// SkippedDirs names the folders TrackedFiles leaves out, so a tool walking the
+// disk itself, like ripgrep, need not go through node_modules only to have its
+// results thrown away. A repository has none: ripgrep reads its .gitignore.
+func (r *Repo) SkippedDirs() []string {
+	if r.IsGit() {
+		return nil
+	}
+	var out []string
+	for d := range folderSkip {
+		out = append(out, d)
+	}
+	for d := range folderIgnored {
+		out = append(out, d)
+	}
+	return out
+}
+
 // maxFolderFiles bounds a listing, which is walked on every poll, so dv opened
 // on a home directory stays usable.
 const maxFolderFiles = 50000

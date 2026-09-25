@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,8 +76,23 @@ type badPattern struct{ msg string }
 
 func (e *badPattern) Error() string { return e.msg }
 
+// searchRG searches only what TrackedFiles lists, as the builtin engine does:
+// ripgrep's own walk and ignore rules just keep it off folders it would throw
+// away anyway.
 func (ix *Index) searchRG(opts SearchOpts) (*SearchResult, error) {
-	args := []string{"--json", "--line-number", "--no-heading", "--color", "never", "--max-columns", "400"}
+	paths, err := ix.lister.TrackedFiles()
+	if err != nil {
+		return nil, err
+	}
+	listed := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		listed[p] = true
+	}
+
+	// --hidden keeps .github/ and dotfiles in; it would also take ripgrep into
+	// .git/, which .gitignore can't exclude.
+	args := []string{"--json", "--line-number", "--no-heading", "--color", "never", "--max-columns", "400",
+		"--hidden", "--glob", "!.git/", "--max-filesize", strconv.Itoa(maxIndexedBytes)}
 	if opts.CaseSens {
 		args = append(args, "--case-sensitive")
 	} else {
@@ -85,7 +101,7 @@ func (ix *Index) searchRG(opts SearchOpts) (*SearchResult, error) {
 	if opts.Glob != "" {
 		args = append(args, "--glob", opts.Glob)
 	}
-	for d := range skipDirs {
+	for _, d := range ix.lister.SkippedDirs() {
 		args = append(args, "--glob", "!"+d+"/")
 	}
 	args = append(args, "--regexp", pattern(opts), "--", ".")
@@ -129,7 +145,7 @@ func (ix *Index) searchRG(opts SearchOpts) (*SearchResult, error) {
 			continue
 		}
 		path := strings.TrimPrefix(ev.Data.Path.Text, "./")
-		if skipPath(path) {
+		if !listed[path] || skipPath(path) {
 			continue
 		}
 		m := Match{File: path, Line: ev.Data.LineNumber, Text: strings.TrimRight(ev.Data.Lines.Text, "\r\n")}
