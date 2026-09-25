@@ -1410,33 +1410,42 @@ function UpdateCheck({ settings, onChange }) {
 
 const RESTART_WAIT_MS = 60000;
 
-// RestartRow runs dv again from the binary installed now, or first installs
-// update, the newer release; then it reloads the page once the new run
-// answers. working is how many sessions dv runs are busy, which it stops.
+// okToRestart asks first when a restart would stop sessions at work: working
+// is how many sessions dv runs are busy.
+export function okToRestart(working) {
+  const which = working === 1 ? "A session is" : `${working} sessions are`;
+  return !working || confirm(`${which} still working. Restart dv and stop ${working === 1 ? "it" : "them"}?`);
+}
+
+// restartDv runs dv again from the binary installed now, or first installs
+// version; then it reloads the page once the new run answers, or throws.
+export async function restartDv(version) {
+  try {
+    const was = await api.run();
+    sessionStorage.setItem(RESTART_KEY, JSON.stringify(was));
+    // The old run can close the connection before its answer is out.
+    await (version ? api.update(version) : api.restart()).catch((e) => {
+      if (!(e instanceof TypeError)) throw e;
+    });
+    for (const until = Date.now() + RESTART_WAIT_MS; Date.now() < until; ) {
+      await new Promise((r) => setTimeout(r, 400));
+      const now = await api.run().catch(() => null);
+      if (now && now.started !== was.started) return location.reload();
+    }
+    throw new Error("dv did not come back within a minute; its terminal says why.");
+  } catch (e) {
+    sessionStorage.removeItem(RESTART_KEY);
+    throw e;
+  }
+}
+
+// RestartRow restarts dv, or updates it to update, the newer release.
 function RestartRow({ working, update }) {
   const [state, setState] = useState(""); // "", "restarting", "updating", or what went wrong
-  const go = (install) => async () => {
-    const which = working === 1 ? "A session is" : `${working} sessions are`;
-    if (working && !confirm(`${which} still working. Restart dv and stop ${working === 1 ? "it" : "them"}?`)) return;
+  const go = (install) => () => {
+    if (!okToRestart(working)) return;
     setState(install ? "updating" : "restarting");
-    try {
-      const was = await api.run();
-      sessionStorage.setItem(RESTART_KEY, JSON.stringify(was));
-      // The old run can close the connection before its answer is out.
-      await (install ? api.update(update.latest) : api.restart()).catch((e) => {
-        if (!(e instanceof TypeError)) throw e;
-      });
-      for (const until = Date.now() + RESTART_WAIT_MS; Date.now() < until; ) {
-        await new Promise((r) => setTimeout(r, 400));
-        const now = await api.run().catch(() => null);
-        if (now && now.started !== was.started) return location.reload();
-      }
-      sessionStorage.removeItem(RESTART_KEY);
-      setState("dv did not come back within a minute; its terminal says why.");
-    } catch (e) {
-      sessionStorage.removeItem(RESTART_KEY);
-      setState(e.message);
-    }
+    restartDv(install && update.latest).catch((e) => setState(e.message));
   };
   const busy = state === "restarting" || state === "updating";
   const failed = state && !busy;

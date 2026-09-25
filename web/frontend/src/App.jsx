@@ -5,7 +5,7 @@ import Header, { AUTO, PRESETS, usePR } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, HelpOverlay, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
+import { FilePalette, FileViewer, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import { ActionsPalette, ActionsSettings, runAction } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
@@ -175,6 +175,9 @@ export default function App() {
   // Agent view asks in its conversation; the rest are told of in notices, and
   // answered in a window over the page opened from one or from the bell.
   const { requests, sessions: activity } = useAgentEvents();
+  const elsewhere = useHubActivity();
+  // Sessions dv runs that are at work, here or in the hub's other folders: a restart stops them.
+  const working = [activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length;
   const windowed = useMemo(() => requests.filter((r) => mode !== "agent" || r.session !== agentId), [requests, mode, agentId]);
   const askingSessions = useMemo(() => new Set(requests.map((r) => r.session)), [requests]);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -1259,6 +1262,16 @@ export default function App() {
     pr && { id: "pr", name: `Open pull request #${pr.number}`, note: pr.title, run: () => window.open(pr.url, "_blank", "noopener") },
     meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
     { id: "settings", name: "Open settings", note: "Also the , key", run: () => openOverlay({ type: "settings" }) },
+    {
+      id: "restart",
+      name: "Restart dv",
+      note: "Runs it again from the version installed · also in Settings",
+      run: () => {
+        if (!okToRestart(working)) return;
+        say("Restarting dv", "The page reloads once it is back.");
+        restartDv().catch((e) => say("Could not restart dv", e.message));
+      },
+    },
     boot.base && { id: "hub", name: "Back to the hub", note: "Also Alt+H", run: () => (location.href = "/") },
   ].filter(Boolean);
 
@@ -1322,7 +1335,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openOverlay]);
 
-  const elsewhere = useHubActivity();
   const notices = useNotices({
     looking: mode === "agent" ? agentId : null,
     desktop: desktopNotices,
@@ -2102,7 +2114,7 @@ export default function App() {
           settings={settings}
           onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onClose={closeOverlay}
-          working={[activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length}
+          working={working}
           update={update}
           actions={<ActionsSettings />}
           tab={overlay.tab}
