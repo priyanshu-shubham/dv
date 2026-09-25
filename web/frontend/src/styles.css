@@ -5037,6 +5037,80 @@ button.ghost.agent-context {
   }
 }
 
+/* A Mermaid diagram stands in for its code, which its button brings back. */
+.mermaid-block {
+  position: relative;
+}
+
+.mermaid-block.drawn:not(.source) > pre,
+.mermaid-block.source > .mermaid-diagram {
+  display: none;
+}
+
+.mermaid-diagram {
+  padding: 16px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  display: block;
+  margin: 0 auto;
+}
+
+/* In a Markdown file the box is the block, spaced as the code was. */
+.md-preview .mermaid-block {
+  margin: 0 0 1em;
+}
+
+.mermaid-block > pre {
+  margin: 0;
+}
+
+.md-preview .mermaid-diagram {
+  border-radius: var(--r-lg);
+}
+
+.mermaid-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  visibility: hidden;
+}
+
+.mermaid-toggle,
+.mermaid-toggle:hover {
+  background: var(--bg-raised);
+}
+
+/* Beside the code block's copy button. */
+.code-block .mermaid-toggle {
+  right: calc(8px + var(--ctl-h));
+}
+
+.mermaid-block:hover .mermaid-toggle,
+.mermaid-toggle:focus-visible,
+.mermaid-block.source .mermaid-toggle {
+  visibility: visible;
+}
+
+.mermaid-block.source .mermaid-toggle {
+  color: var(--accent);
+}
+
+.mermaid-error {
+  margin-top: 4px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+@media (hover: none) {
+  .mermaid-toggle {
+    visibility: visible;
+  }
+}
+
 .agent-text table {
   display: block;
   width: max-content;

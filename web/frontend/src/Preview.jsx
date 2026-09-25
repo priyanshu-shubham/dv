@@ -1,8 +1,9 @@
 // Files shown as what they are rather than as lines: Markdown rendered, and
 // images, videos and sounds drawn or played by the browser.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
+import { drawDiagrams } from "./diagrams.js";
 import { ensureLanguage } from "./highlight.js";
 import { blockAt, isMarkdown, renderMarkdown } from "./markdown.js";
 import { usePathsVersion } from "./links.js";
@@ -42,7 +43,10 @@ export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }
     else e.currentTarget.querySelector("#" + CSS.escape("md-" + a.dataset.anchor))?.scrollIntoView({ block: "start" });
   };
 
-  return <div className="md-preview" data-side={side} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
+  const ref = useRef(null);
+  useLayoutEffect(() => drawDiagrams(ref.current));
+
+  return <div className="md-preview" ref={ref} data-side={side} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // MarkdownDocument is a Markdown file rendered and open to the comments its

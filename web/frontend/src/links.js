@@ -2,7 +2,8 @@
 // a tab of its own, away from dv, and a path to a file here - with a line, or
 // not - opens the file at it. Only a path to a file the repository has is
 // linked, so a word that merely looks like one stays a word.
-import { createElement, useSyncExternalStore } from "react";
+import { createElement, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { drawDiagrams } from "./diagrams.js";
 import { useGrammarsVersion } from "./highlight.js";
 import { copyText } from "./util.js";
 
@@ -156,7 +157,9 @@ export function linkPaths(md) {
 export function Markdown({ md, text, className }) {
   usePathsVersion();
   useGrammarsVersion();
-  return createElement("div", { className, onClick: copyCode, dangerouslySetInnerHTML: { __html: md.render(text || "") } });
+  const ref = useRef(null);
+  useLayoutEffect(() => drawDiagrams(ref.current));
+  return createElement("div", { ref, className, onClick: copyCode, dangerouslySetInnerHTML: { __html: md.render(text || "") } });
 }
 
 // copyCode answers the copy button codeBlocks puts on a code block. The mark
