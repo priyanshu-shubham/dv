@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { usePref } from "./prefs.js";
 import { cx } from "./util.js";
-import { Modal, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
+import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
 import { IconAsk, IconBolt, IconPlus, IconX } from "./icons.jsx";
 
@@ -172,6 +172,10 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onC
   );
 }
 
+// modeFor is the mode a start keeps on moving to agent: one it has no way to
+// do becomes Ask before edits, as the server would take it.
+const modeFor = (agent, mode) => (modesFor(agent).some(([id]) => id === mode) ? mode : "default");
+
 // The Ask panel's conversation starts as Settings say, not as the last pick:
 // Ask before edits, so a question cannot change the code under review.
 const ASK_START = { agent: "", model: "", effort: "", mode: "default" };
@@ -213,7 +217,7 @@ export function AskSettings() {
         beside Send. New questions join the same conversation, which stays out of the session list, and each repository keeps its own until you start a new one.
       </div>
       {info?.codex && (
-        <Setting label="Agent" value={ask.agent} onPick={(agent) => edit({ agent, model: "", effort: "" })} choices={[["", "Claude"], ["codex", "Codex"]]} />
+        <Setting label="Agent" value={ask.agent} onPick={(agent) => edit({ agent, model: "", effort: "", mode: modeFor(agent, ask.mode) })} choices={[["", "Claude"], ["codex", "Codex"]]} />
       )}
       <div className="settings-row">
         <div className="settings-text">Model</div>
@@ -227,7 +231,7 @@ export function AskSettings() {
       {efforts.length > 0 && (
         <Setting label="Effort" value={ask.effort} onPick={(effort) => edit({ effort })} choices={[["", "Usual"], ...efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])]} />
       )}
-      <Setting label="Mode" note="Ask before edits keeps a question from changing the code you are reviewing." value={ask.mode} onPick={(mode) => edit({ mode })} choices={SESSION_MODES} />
+      <Setting label="Mode" note="Ask before edits keeps a question from changing the code you are reviewing." value={ask.mode} onPick={(mode) => edit({ mode })} choices={modesFor(ask.agent)} />
       <div className="settings-row">
         <div className="settings-text">
           <div>Prompts</div>
@@ -389,7 +393,7 @@ function ActionForm({ action, info, onSave, onCancel }) {
       {!command && a.where === "new" && (
         <>
           {info?.codex && (
-            <Setting label="Agent" value={a.agent} onPick={(agent) => edit({ agent, model: "", effort: "", modelLabel: "" })} choices={[["", "Claude"], ["codex", "Codex"]]} />
+            <Setting label="Agent" value={a.agent} onPick={(agent) => edit({ agent, model: "", effort: "", modelLabel: "", mode: modeFor(agent, a.mode) })} choices={[["", "Claude"], ["codex", "Codex"]]} />
           )}
           <div className="settings-row">
             <div className="settings-text">Model</div>
@@ -403,7 +407,7 @@ function ActionForm({ action, info, onSave, onCancel }) {
           {efforts.length > 0 && (
             <Setting label="Effort" value={a.effort} onPick={(effort) => edit({ effort })} choices={[["", "Usual"], ...efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])]} />
           )}
-          <Setting label="Mode" value={a.mode} onPick={(mode) => edit({ mode })} choices={SESSION_MODES} />
+          <Setting label="Mode" value={a.mode} onPick={(mode) => edit({ mode })} choices={modesFor(a.agent)} />
           <Setting label="Temporary" note="Once closed, it leaves the session list." value={a.temporary} onPick={(temporary) => edit({ temporary })} choices={OFF_ON} />
           <Setting
             label="When it is done"

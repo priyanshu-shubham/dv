@@ -369,10 +369,13 @@ func (t *Transcript) Items(leaf string, switches ...store.Switch) []Item {
 		// Where the conversation first shows a new mode; the first it shows is
 		// the one it began in.
 		if e.mode != "" && e.mode != recorded {
-			if recorded != "" && e.mode != shown {
-				items = append(items, Item{Key: "mode:" + e.uuid, Kind: "mode", Text: e.mode, From: shown})
+			if !sameMode(e.mode, shown) {
+				if recorded != "" {
+					items = append(items, Item{Key: "mode:" + e.uuid, Kind: "mode", Text: e.mode, From: shown})
+				}
+				shown = e.mode
 			}
-			recorded, shown = e.mode, e.mode
+			recorded = e.mode
 		}
 		group := []*entry{e}
 		if e.msg != "" {
@@ -442,7 +445,10 @@ func (t *Transcript) Mode(leaf string, switches []store.Switch) string {
 	recorded, mode := "", t.mode
 	for _, e := range slices.Backward(t.chain(leaf)) {
 		if e.mode != "" && e.mode != recorded {
-			recorded, mode = e.mode, e.mode
+			recorded = e.mode
+			if !sameMode(e.mode, mode) {
+				mode = e.mode
+			}
 		}
 		if to, ok := after[e.uuid]; ok {
 			mode = to

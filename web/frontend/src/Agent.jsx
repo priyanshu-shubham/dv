@@ -266,14 +266,15 @@ function splitSaid(said) {
 }
 
 // The server notes in a message where it was written - a chat app, or dv again
-// after one - which the page did not put there.
+// after one - and the mode it went in, which the page did not put there.
 const VIA = /<via app="([^"]*)">[\s\S]*?<\/via>/;
-const withoutVia = (text) => text.replace(new RegExp("\\n?" + VIA.source), "").replace(/\n*<dv-context>\n*<\/dv-context>\s*$/, "");
+const NOTES = /\n?<(via|mode) [^>]*>[\s\S]*?<\/\1>/g;
+const withoutVia = (text) => text.replace(NOTES, "").replace(/\n*<dv-context>\n*<\/dv-context>\s*$/, "");
 
-function Chip({ kind, path, lines, on, onClick, onRemove }) {
-  const name = splitPath(path)[1];
+function Chip({ kind, path, lines, label, title, on, onClick, onRemove }) {
+  const name = label || splitPath(path)[1];
   return (
-    <span className={cx("agent-chip", (kind === "comment" || kind === "note") && "comment", on && "on")} title={path + (lines ? `:${lines}` : "")}>
+    <span className={cx("agent-chip", (kind === "comment" || kind === "note") && "comment", on && "on")} title={title || path + (lines ? `:${lines}` : "")}>
       <button className="agent-chip-label" onClick={onClick} disabled={!onClick}>
         {kind === "comment" && "comment · "}
         {kind === "note" && "note · "}
@@ -552,7 +553,7 @@ function prettyModel(id) {
 // AgentView is Agent mode's main pane: one session's conversation, and the box
 // to talk to it in. A session running in a terminal is followed, not talked to.
 export default function AgentView({
-  id, session, agents, newAgent, onNewAgent, modes, root, view, contextLines, wrap, threads, attached,
+  id, session, agents, newAgent, onNewAgent, modes: allModes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
   requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, boxFocus, offline, active = true,
   docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent,
@@ -569,6 +570,8 @@ export default function AgentView({
   const items = useMemo(() => (agentKind === "codex" ? read : withWorked(read, !!live?.busy)), [read, agentKind, live?.busy]);
   const name = agentName(agentKind);
   const { available, models = NO_MODELS, mode: defaultMode } = agents[agentKind] || agents[""];
+  // Codex's auto review takes every approval, edits too.
+  const modes = useMemo(() => (agentKind === "codex" ? allModes.filter((m) => m.id !== "autoAskEdits") : allModes), [agentKind, allModes]);
   // Hidden rather than gone in the other modes, so coming back draws nothing
   // again; its keys and its grabs for focus wait until then.
   // Docked in the Ask panel, it is shown beside another view whose keys they are.
@@ -2525,7 +2528,7 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
       ) : (
         text && <div className="agent-prompt-text">{text}</div>
       )}
-      <Refs refs={refs} onOpenFile={onOpenFile} />
+      <Refs refs={refs} raw={item.kind === "prompt" && CONTEXT.test(item.text) && item.text} onOpenFile={onOpenFile} />
       {(queued || hint || via || item.answer) && (
         <div className="agent-prompt-foot">
           {item.answer && <span>With your {item.answer}</span>}
@@ -2543,10 +2546,12 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
   );
 }
 
-// Refs is what went with a message, a chip each, one opened at a time.
-function Refs({ refs, onOpenFile }) {
+// Refs is what went with a message, a chip each, one opened at a time. raw is
+// the message as the agent got it, where the page added context to it.
+function Refs({ refs, raw, onOpenFile }) {
   const [shown, setShown] = useState(-1);
-  if (!refs.length) return null;
+  if (!refs.length && !raw) return null;
+  const toggle = (i) => () => setShown(i === shown ? -1 : i);
   return (
     <>
       <div className="agent-chips">
@@ -2558,11 +2563,17 @@ function Refs({ refs, onOpenFile }) {
             lines={r.lines}
             on={i === shown}
             // Only a file's name went, so there is nothing to show but the file.
-            onClick={r.kind === "file" ? onOpenFile && (() => onOpenFile(r.path)) : () => setShown(i === shown ? -1 : i)}
+            onClick={r.kind === "file" ? onOpenFile && (() => onOpenFile(r.path)) : toggle(i)}
           />
         ))}
+        {raw && <Chip label="as sent" title="The whole message as the agent got it, with what dv added" on={shown === refs.length} onClick={toggle(refs.length)} />}
       </div>
       {refs[shown] && <Sent entry={refs[shown]} onOpenFile={onOpenFile} />}
+      {raw && shown === refs.length && (
+        <div className="agent-sent">
+          <pre className="agent-sent-raw">{raw}</pre>
+        </div>
+      )}
     </>
   );
 }
@@ -2614,6 +2625,7 @@ const MODE_NAMES = {
   acceptEdits: "Accept edits",
   plan: "Plan",
   auto: "Auto",
+  autoAskEdits: "Auto, ask before edits", // dv's own: auto, with each edit put to you
   bypassPermissions: "Bypass permissions",
   dontAsk: "Don't ask",
   fullAccess: "Full access", // Codex's own config, without its sandbox

@@ -1111,6 +1111,28 @@ func TestASessionKeepsItsRecordedMode(t *testing.T) {
 	}
 }
 
+// With no page following it, as when a chat app's message resumes it, a
+// session still resumes in the mode it was left in, dv's own included.
+func TestAnUnfollowedSessionResumesInItsMode(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	for id, mode := range map[string]string{"s1": "acceptEdits", "s2": "auto"} {
+		first := user("u1", "", "go on")
+		first["cwd"], first["permissionMode"] = root, mode
+		os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(line(t, first)), 0o644)
+	}
+	saved, _ := store.OpenSessions(root)
+	saved.SetAsksEdits("s2", true)
+	m := New(root, permit.New(root), saved)
+	for id, want := range map[string]string{"s1": "acceptEdits", "s2": AutoAskEdits} {
+		if p, err := m.procFor(id); err != nil || p.mode != want {
+			t.Errorf("%s resumed in %q, %v; want %s", id, p.mode, err, want)
+		}
+	}
+}
+
 // An agent's conversation is its own file, found by the call that started it;
 // a call it made is looked up there, and a call left running in the background
 // is followed in the file its result names.
@@ -1339,6 +1361,33 @@ func TestASwitchIsMarkedWhereItWasMade(t *testing.T) {
 	}
 	if items[2].From != "default" {
 		t.Fatalf("switched from %q", items[2].From)
+	}
+}
+
+// Claude Code records AutoAskEdits as auto, which is no change from it, but
+// one to plain auto is.
+func TestAutoAskingBeforeEditsIsNotRecordedAway(t *testing.T) {
+	auto := user("u2", "a2", "go on")
+	auto["permissionMode"] = "auto"
+	first := user("u1", "", "look around")
+	first["permissionMode"] = "default"
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, first) + line(t, assistant("a1", "u1", "msg_1", text("Looking.")))))
+	tr.Feed([]byte(line(t, assistant("a2", "a1", "msg_2", text("Looked."))) + line(t, auto)))
+	switches := []store.Switch{{After: "a1", To: AutoAskEdits}}
+	want := []string{"prompt:look around", "text:Looking.", "mode:" + AutoAskEdits, "text:Looked.", "prompt:go on"}
+	if got := kinds(tr.Items("", switches...)); !slices.Equal(got, want) {
+		t.Fatalf("items\n got %q\nwant %q", got, want)
+	}
+	if got := tr.Mode("", switches); got != AutoAskEdits {
+		t.Fatalf("mode %q; want %s", got, AutoAskEdits)
+	}
+	switches = append(switches, store.Switch{After: "u2", To: "auto"})
+	if got := kinds(tr.Items("", switches...)); !slices.Contains(got, "mode:auto") {
+		t.Fatalf("the switch to plain auto not drawn: %q", got)
+	}
+	if got := tr.Mode("", switches); got != "auto" {
+		t.Fatalf("mode %q; want auto", got)
 	}
 }
 

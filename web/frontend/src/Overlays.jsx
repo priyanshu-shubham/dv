@@ -1020,7 +1020,12 @@ export const SESSION_MODES = [
   ["acceptEdits", "Edits", "Accept edits"],
   ["plan", "Plan"],
   ["auto", "Auto"],
+  ["autoAskEdits", "Auto, ask", "Auto, ask before edits (Codex asks before everything)"],
 ];
+
+// modesFor is SESSION_MODES less what agent has no way to do: Codex's auto
+// review takes every approval, edits too.
+export const modesFor = (agent) => (agent === "codex" ? SESSION_MODES.filter(([id]) => id !== "autoAskEdits") : SESSION_MODES);
 
 const onThisComputer = (origin) => /^https?:\/\/(localhost|127\.[\d.]+|\[::1\])(:\d+)?$/.test(origin);
 

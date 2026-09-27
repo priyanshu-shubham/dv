@@ -510,7 +510,7 @@ export default function App() {
     const unchanged =
       files.length === was.files.length &&
       files.every((f, i) => f === was.files[i]) &&
-      JSON.stringify([d.scope, d.head]) === JSON.stringify([was.scope, was.head]);
+      JSON.stringify([d.scope, d.head, d.uncommitted]) === JSON.stringify([was.scope, was.head, was.uncommitted]);
     // The same diff over different files: an edit outside it, or anything at
     // all in a folder outside git. Code mode reads those files still.
     if (unchanged) return setRepoAt((n) => n + 1);
@@ -540,6 +540,10 @@ export default function App() {
       setTimeout(() => swapFile(path, fd));
     }
   }, [composing, swapFile]);
+
+  // The Diff toggle counts uncommitted files wherever the page is not showing them.
+  const showingUncommitted = mode === "diff" && [diff?.scope.kind, diff?.scope.picked].includes("working");
+  const uncommittedElsewhere = showingUncommitted ? 0 : diff?.uncommitted || 0;
 
   const generatedCount = useMemo(() => (diff?.files || []).filter((f) => f.generated).length, [diff]);
   const { files, filteredOut, hiddenGenerated } = useMemo(() => {
@@ -1915,6 +1919,7 @@ export default function App() {
           modes={modes}
           onMode={switchMode}
           attached={attachedCount}
+          uncommitted={uncommittedElsewhere}
           files={mode === "code" ? explorer : files}
           onOpenIgnored={listIgnored}
           threads={threads}

@@ -51,6 +51,9 @@ type proc struct {
 	// fellBack is told of a model Claude Code moved off, after the message it
 	// refused, if one did.
 	fellBack func(at string, sw store.ModelSwitch)
+	// compacted is told the conversation was summarised, which may have left
+	// out what dv told Claude.
+	compacted func()
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
@@ -131,7 +134,7 @@ func (p *proc) args() []string {
 		args = append(args, "--model", p.model)
 	}
 	if p.mode != "" {
-		args = append(args, "--permission-mode", p.mode)
+		args = append(args, "--permission-mode", claudeMode(p.mode))
 	}
 	if p.effort != "" {
 		args = append(args, "--effort", p.effort)
@@ -188,11 +191,16 @@ func (p *proc) startLocked() error {
 	go p.wait(cmd, read, p.exited, stderr)
 
 	// A note the reader wrote when allowing a call can only reach Claude beside
-	// the call's result, which this hook is how dv hears of.
+	// the call's result, which the PostToolUse hook is how dv hears of. The
+	// PreToolUse one is how AutoAskEdits puts an edit to the user: auto mode
+	// still asks about a call a hook says to.
 	go func() {
 		p.request(context.Background(), map[string]any{
 			"subtype": "initialize",
-			"hooks":   map[string]any{"PostToolUse": []any{map[string]any{"matcher": nil, "hookCallbackIds": []string{"note"}}}},
+			"hooks": map[string]any{
+				"PostToolUse": []any{map[string]any{"matcher": nil, "hookCallbackIds": []string{"note"}}},
+				"PreToolUse":  []any{map[string]any{"matcher": editTools, "hookCallbackIds": []string{"edit"}}},
+			},
 		})
 		p.refresh()
 	}()
@@ -498,7 +506,10 @@ func (p *proc) handle(line []byte) {
 		p.mu.Lock()
 		switch m.Subtype {
 		case "init":
-			p.using, p.mode = m.Model, m.Mode
+			p.using = m.Model
+			if !sameMode(m.Mode, p.mode) {
+				p.mode = m.Mode
+			}
 		case "status":
 			// Summarising is a request too; it is still compacting until it says otherwise.
 			if p.status != "compacting" || m.Status != "requesting" {
@@ -525,6 +536,9 @@ func (p *proc) handle(line []byte) {
 		}
 		if m.Subtype == "compact_boundary" {
 			p.wrote()
+			if p.compacted != nil {
+				p.compacted()
+			}
 		}
 		switch m.Subtype {
 		case "model_refusal_fallback", "model_fallback", "model_consent_fallback", "model_refusal_no_fallback":
@@ -679,12 +693,22 @@ func (p *proc) control(id string, raw json.RawMessage) {
 
 	case "hook_callback":
 		var hook struct {
+			Event string          `json:"hook_event_name"`
 			Tool  string          `json:"tool_name"`
 			Input json.RawMessage `json:"tool_input"`
 		}
 		json.Unmarshal(r.Input, &hook)
 		var out any = map[string]any{}
-		if note := p.broker.TakeNote(p.id, hook.Tool, hook.Input); note != "" {
+		if hook.Event == "PreToolUse" {
+			p.mu.Lock()
+			ask := p.mode == AutoAskEdits
+			p.mu.Unlock()
+			if ask {
+				out = map[string]any{"hookSpecificOutput": map[string]any{
+					"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "Auto, ask before edits",
+				}}
+			}
+		} else if note := p.broker.TakeNote(p.id, hook.Tool, hook.Input); note != "" {
 			out = map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PostToolUse", "additionalContext": note}}
 		}
 		p.respond(id, out)
@@ -731,6 +755,25 @@ func (p *proc) planning(m *message) {
 		}
 	}
 }
+
+// AutoAskEdits is a mode of dv's own: Claude Code's auto, with each file edit
+// put to the user as in Ask before edits. Commands still go to the classifier.
+const AutoAskEdits = "autoAskEdits"
+
+// editTools are the calls AutoAskEdits asks about, as a hook matcher.
+const editTools = "Edit|Write|NotebookEdit"
+
+// claudeMode is the permission mode Claude Code runs one of dv's in.
+func claudeMode(mode string) string {
+	if mode == AutoAskEdits {
+		return "auto"
+	}
+	return mode
+}
+
+// sameMode says whether Claude Code recording a mode is no change from one
+// dv shows.
+func sameMode(recorded, shown string) bool { return recorded == claudeMode(shown) }
 
 // modeSet is the permission mode an answer to Claude Code switches to, if any.
 func modeSet(d map[string]any) string {

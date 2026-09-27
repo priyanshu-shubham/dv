@@ -63,6 +63,30 @@ func TestVersionMovesWithTheRepository(t *testing.T) {
 	}
 }
 
+func TestSnapshotCountsUncommitted(t *testing.T) {
+	repo := tempRepo(t, map[string]string{"a.txt": "one\n", "b.txt": "two\n"})
+	commitAll(t, repo, "base")
+	count := func() int {
+		t.Helper()
+		_, n, err := repo.Snapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count(); n != 0 {
+		t.Fatalf("clean repository: %d uncommitted", n)
+	}
+	// Staged and changed again, a.txt is still one file.
+	write(t, repo, "a.txt", "one\nmore\n")
+	git(t, repo, "add", "a.txt")
+	write(t, repo, "a.txt", "one\nmore\nstill more\n")
+	write(t, repo, "c.txt", "three\n")
+	if n := count(); n != 2 {
+		t.Errorf("got %d uncommitted, want 2", n)
+	}
+}
+
 func TestFilesRevFollowsContent(t *testing.T) {
 	repo := tempRepo(t, map[string]string{"a.txt": "one\n", "b.txt": "two\n"})
 	commitAll(t, repo, "base")

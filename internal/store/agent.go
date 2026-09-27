@@ -27,6 +27,12 @@ type sessionsDoc struct {
 	Asks      []string            `json:"asks,omitempty"`      // the review's Ask panel's, never listed
 	Rewinds   map[string]Rewind   `json:"rewinds,omitempty"`
 	Switches  map[string][]Switch `json:"switches,omitempty"`
+	// AskEdits are sessions whose auto mode puts each edit to the user, which
+	// the transcript records as plain auto.
+	AskEdits []string `json:"askEdits,omitempty"`
+	// ToldEdits are sessions whose agent was last told so, which holds until
+	// it is told otherwise.
+	ToldEdits []string `json:"toldEdits,omitempty"`
 	// Agents names the agent of a session that is not Claude Code's: "codex".
 	Agents map[string]string `json:"agents,omitempty"`
 	// Via names the chat app a session's last message came through, when it
@@ -146,6 +152,32 @@ func (s *Sessions) AskIDs() []string {
 // SetAsk marks a session as the Ask panel's, or makes it an ordinary one.
 func (s *Sessions) SetAsk(id string, on bool) error {
 	return s.mark(&s.doc.Asks, id, on)
+}
+
+// AsksEdits says whether a session's auto mode asks before each edit.
+func (s *Sessions) AsksEdits(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return slices.Contains(s.doc.AskEdits, id)
+}
+
+// SetAsksEdits marks a session's auto mode as asking before edits, or not.
+func (s *Sessions) SetAsksEdits(id string, on bool) error {
+	return s.mark(&s.doc.AskEdits, id, on)
+}
+
+// ToldEdits says whether a session's agent was last told edits are put to the user.
+func (s *Sessions) ToldEdits(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return slices.Contains(s.doc.ToldEdits, id)
+}
+
+// SetToldEdits records what a session's agent was last told of edits.
+func (s *Sessions) SetToldEdits(id string, on bool) error {
+	return s.mark(&s.doc.ToldEdits, id, on)
 }
 
 // mark puts id in the list or takes it out. The list is the doc's, read

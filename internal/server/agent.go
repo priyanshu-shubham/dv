@@ -21,9 +21,13 @@ type choice struct {
 	Label string `json:"label"`
 }
 
-// The modes Shift+Tab cycles through in the terminal, in its order. Codex
-// sessions take the same four, made of its sandbox and approval settings.
-var agentModes = []choice{{"default", "Ask before edits"}, {"acceptEdits", "Accept edits"}, {"plan", "Plan"}, {"auto", "Auto"}}
+// The modes Shift+Tab cycles through in the terminal, in its order, and one of
+// dv's. Codex sessions take the terminal's four, made of its sandbox and
+// approval settings.
+var agentModes = []choice{
+	{"default", "Ask before edits"}, {"acceptEdits", "Accept edits"}, {"plan", "Plan"}, {"auto", "Auto"},
+	{agent.AutoAskEdits, "Auto, ask before edits"},
+}
 
 var sessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 

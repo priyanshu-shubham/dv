@@ -536,6 +536,16 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 		m.saved.SetPicked(id, store.Pick{Model: model, Effort: effort})
 	}
 	p.fellBack = func(at string, sw store.ModelSwitch) { m.markModel(id, at, sw) }
+	// Still in AutoAskEdits, Claude is told of it again with the next message.
+	// Out of it, what is still to be told is that it is over.
+	p.compacted = func() {
+		p.mu.Lock()
+		asking := p.mode == AutoAskEdits
+		p.mu.Unlock()
+		if asking {
+			m.saved.SetToldEdits(id, false)
+		}
+	}
 	p.ended = func() {
 		// A turn spends from the plan; the next look should show it.
 		m.mu.Lock()
@@ -574,25 +584,39 @@ func (m *Manager) procFor(id string) (*proc, error) {
 	if _, elsewhere := m.running()[id]; elsewhere {
 		return nil, errors.New("this session is open in a terminal; dv follows it, but only the terminal can talk to it")
 	}
+	mode := m.modeOf(id)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p = m.procs[id]; p == nil {
 		// Resumed where it was started: Claude Code finds a transcript by the
 		// working directory's folder.
 		p = m.newProc(id, row.Cwd, true)
-		// In the mode the page shows it in: the transcript's last, or a switch since.
-		if f := m.follows[id]; f != nil {
-			f.mu.Lock()
-			last := f.t.Last()
-			f.mu.Unlock()
-			leaf, switches := m.leaf(id, last), m.saved.Switches(id)
-			f.mu.Lock()
-			p.mode = f.t.Mode(leaf, switches)
-			f.mu.Unlock()
-		}
+		p.mode = mode
 		m.procs[id] = p
 	}
 	return p, nil
+}
+
+// modeOf is the mode a session is left in, as its page shows it: the
+// transcript's last, or a switch since. With no page following it, the
+// transcript is read here, as a page would, or a resume would start in
+// whatever the user's settings start sessions in.
+func (m *Manager) modeOf(id string) string {
+	m.mu.Lock()
+	f := m.follows[id]
+	m.mu.Unlock()
+	if f == nil {
+		f = &follow{id: id, key: id}
+		f.t = f.transcript(m.root)
+		m.read(f)
+	}
+	f.mu.Lock()
+	last := f.t.Last()
+	f.mu.Unlock()
+	leaf, switches := m.leaf(id, last), m.saved.Switches(id)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return m.ownMode(id, f.t.Mode(leaf, switches))
 }
 
 // Send gives a session a message, starting it if it is not running, and
@@ -727,11 +751,22 @@ func (m *Manager) Interrupt(id string) error {
 // now and the next one started.
 func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	if m.isCodex(id) {
+		// Codex's auto review takes every approval, so edits cannot be kept
+		// for the user alone; asking before all of them is the nearer.
+		if mode != nil && *mode == AutoAskEdits {
+			asking := "default"
+			mode = &asking
+		}
 		return m.codex.thread(id).configure(model, mode, effort)
 	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return err
+	}
+	if mode != nil {
+		if err := m.saved.SetAsksEdits(id, *mode == AutoAskEdits); err != nil {
+			return err
+		}
 	}
 	opts := m.Options()
 	p.mu.Lock()
@@ -772,7 +807,7 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 			}
 		}
 		if mode != nil {
-			if _, err := p.request(ctx, map[string]any{"subtype": "set_permission_mode", "mode": *mode}); err != nil {
+			if _, err := p.request(ctx, map[string]any{"subtype": "set_permission_mode", "mode": claudeMode(*mode)}); err != nil {
 				return err
 			}
 		}
@@ -787,6 +822,30 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	}
 	p.changed()
 	return nil
+}
+
+// ownMode is dv's name for a mode Claude Code recorded: its auto, where the
+// session was put in AutoAskEdits, is that.
+func (m *Manager) ownMode(id, recorded string) string {
+	if recorded == "auto" && m.saved.AsksEdits(id) {
+		return AutoAskEdits
+	}
+	return recorded
+}
+
+// AsksEdits says whether a session is in AutoAskEdits, for its messages to
+// say so.
+func (m *Manager) AsksEdits(id string) bool {
+	if m.isCodex(id) {
+		return false
+	}
+	p, err := m.procFor(id)
+	if err != nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.mode == AutoAskEdits
 }
 
 // markSwitch keeps where in the conversation the mode was changed, which the
@@ -1625,7 +1684,7 @@ func (m *Manager) update(id string, s *Sub) Update {
 	// Until Claude Code runs it and says, the mode the transcript last recorded,
 	// or one switched to since.
 	if u.Live.Mode == "" {
-		u.Live.Mode = f.t.Mode(leaf, switches)
+		u.Live.Mode = m.ownMode(id, f.t.Mode(leaf, switches))
 	}
 	f.mu.Unlock()
 	u.Live.Running, u.Live.Busy = where(p, r)

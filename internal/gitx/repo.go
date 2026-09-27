@@ -141,26 +141,35 @@ func (r *Repo) Head() HeadRef {
 // and the content of each changed or untracked file - so a client can poll it
 // to learn that the diff it is showing has gone stale. It is one `git status`.
 func (r *Repo) Version() (string, error) {
+	v, _, err := r.Snapshot()
+	return v, err
+}
+
+// Snapshot is Version along with how many files have uncommitted changes,
+// untracked ones included, which the same `git status` lists.
+func (r *Repo) Snapshot() (version string, uncommitted int, err error) {
 	if !r.IsGit() {
-		return r.folderVersion()
+		version, err = r.folderVersion()
+		return version, 0, err
 	}
 	// Plain status refreshes the index under index.lock; polled, that makes the
 	// user's own commits fail now and then on the lock.
 	out, err := r.run("--no-optional-locks", "status", "--porcelain=v2", "-z",
 		"--branch", "--no-ahead-behind", "--untracked-files=all")
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	h := fnv.New64a()
 	h.Write([]byte(out))
 	// status says which files differ, not what they now hold: a second edit to
 	// an already modified file shows only in its size and mtime.
-	for _, p := range statusPaths(out) {
+	paths := statusPaths(out)
+	for _, p := range paths {
 		if fi, err := os.Lstat(filepath.Join(r.Root, p)); err == nil {
 			fmt.Fprintf(h, "\x00%d.%d", fi.Size(), fi.ModTime().UnixNano())
 		}
 	}
-	return strconv.FormatUint(h.Sum64(), 36), nil
+	return strconv.FormatUint(h.Sum64(), 36), len(paths), nil
 }
 
 // statusPaths pulls the paths out of `git status --porcelain=v2 -z`.

@@ -275,13 +275,19 @@ export default function Header({
 // ModeSwitch is Diff, Files and Agent, at the top of the sidebar whose list
 // each of them fills; a folder outside git has no Diff. Files is Code mode,
 // by its name in the code. Agent counts what waits to go with the next message.
-export function ModeSwitch({ mode, modes, onMode, attached }) {
+export function ModeSwitch({ mode, modes, onMode, attached, uncommitted }) {
   const agent = mode === "agent";
   return (
     <div className="seg mode-switch" role="group" aria-label="Mode">
       {modes.includes("diff") && (
-        <button className={cx(mode === "diff" && "on")} aria-pressed={mode === "diff"} onClick={() => onMode("diff")} title="The changes (Shift+←/→ steps through the modes)">
+        <button
+          className={cx(mode === "diff" && "on")}
+          aria-pressed={mode === "diff"}
+          onClick={() => onMode("diff")}
+          title={`The changes (Shift+←/→ steps through the modes)${uncommitted ? ` - ${uncommitted} file${uncommitted === 1 ? "" : "s"} uncommitted` : ""}`}
+        >
           Diff
+          {uncommitted > 0 && ` (${uncommitted})`}
         </button>
       )}
       <button className={cx(mode === "code" && "on")} aria-pressed={mode === "code"} onClick={() => onMode("code")} title="Every file, one at a time (Shift+←/→ steps through the modes)">

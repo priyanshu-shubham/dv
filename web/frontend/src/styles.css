@@ -5092,6 +5092,17 @@ button.ghost.agent-context {
   overflow-wrap: anywhere;
 }
 
+.agent-sent-raw {
+  max-height: 360px;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  color: var(--fg-2);
+  font: var(--fs-xs) / 18px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .agent-chip-x {
   display: inline-grid;
   place-items: center;

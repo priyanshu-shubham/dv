@@ -73,7 +73,7 @@ func HomeRelative(path string) string {
 func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
 	// Taken before listing, so an edit that lands mid-request reads as newer on
 	// the client's next poll rather than being folded into this one unnoticed.
-	version, _ := s.repo.Version()
+	version, uncommitted, _ := s.repo.Snapshot()
 	sc, ok := s.scopeFromRequest(w, r)
 	if !ok {
 		return
@@ -91,6 +91,8 @@ func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
 		"files":   files,
 		"head":    s.repo.Head(),
 		"version": version,
+		// Whatever scope is listed, so the page can say there is work to commit.
+		"uncommitted": uncommitted,
 	})
 }
 
