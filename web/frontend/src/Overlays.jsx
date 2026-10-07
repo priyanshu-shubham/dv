@@ -135,7 +135,7 @@ export function usePaletteNav(count, open) {
   return { sel, setSel, onKey, listRef };
 }
 
-function markMatches(name, matches) {
+export function markMatches(name, matches) {
   if (!matches?.length) return escapeHtml(name);
   const set = new Set(matches);
   let out = "";
@@ -1015,7 +1015,7 @@ const CHAT_WORKTREE = [
 ];
 
 export const SESSION_MODES = [
-  ["", "Usual", "The mode a new session begins in, in dv"],
+  ["", "Usual", "The mode the agent's own settings start in"],
   ["default", "Ask", "Ask before edits"],
   ["acceptEdits", "Edits", "Accept edits"],
   ["plan", "Plan"],
@@ -1519,7 +1519,8 @@ export function HelpOverlay({ onClose }) {
     ["n / p", "Next / previous change"],
     ["f", "View the whole file at the focused line"],
     ["c", "Comment on the focused line"],
-    ["a", "Add the focused line, or the file, to your next message to Claude or Codex"],
+    ["a", "Ask about the focused line, or the file, in the Ask panel"],
+    ["Shift+A", "Add the focused line, or the file, to your next message to Claude or Codex"],
     ["v", "Mark the current file viewed, in Diff"],
     ["u", "Toggle split / unified"],
     ["w", "Toggle line wrapping"],
@@ -1528,7 +1529,7 @@ export function HelpOverlay({ onClose }) {
     ...(boot.base
       ? [
           ["Alt+H", "Back to the hub (from the message box too)"],
-          [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone)"],
+          [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone). A tap of ↑ searches every folder, open or not"],
         ]
       : []),
     [`${modKey}+click`, "Jump to a symbol's definition, or search its uses (double tap on a phone)"],

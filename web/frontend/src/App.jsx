@@ -1651,17 +1651,23 @@ export default function App() {
   // Only what a session still open, or the next new one, would send.
   const attachedCount = attachChoices.reduce((n, c) => n + (attachedLive[c.id]?.length || 0), attachedLive[""]?.length || 0);
 
-  // attachHere is `a`: the line under the pointer, else the file being read.
-  const attachHere = useCallback(() => {
-    const h = hovered.current;
-    const fd = h && (fileDataRef.current[h.path]?.fd || (plain?.path === h.path ? plain.fd : null));
-    if (fd) {
-      const src = h.side === "old" ? fd.oldLines : fd.newLines;
-      return attach({ kind: "lines", file: h.path, side: h.side, start: h.line, end: h.line, quote: [src[h.line - 1]] });
-    }
-    const path = modeRef.current === "code" ? codePath : activePath;
-    if (path) attach({ kind: "file", file: path });
-  }, [attach, plain, codePath, activePath]);
+  // attachHere is `a`: the line under the pointer, else the file being read,
+  // asked about in the Ask panel. Shift+A, or no agent there to ask, adds it
+  // to the next message instead.
+  const attachHere = useCallback(
+    (add) => {
+      const to = (!add && attachTarget.onAsk) || attach;
+      const h = hovered.current;
+      const fd = h && (fileDataRef.current[h.path]?.fd || (plain?.path === h.path ? plain.fd : null));
+      if (fd) {
+        const src = h.side === "old" ? fd.oldLines : fd.newLines;
+        return to({ kind: "lines", file: h.path, side: h.side, start: h.line, end: h.line, quote: [src[h.line - 1]] });
+      }
+      const path = modeRef.current === "code" ? codePath : activePath;
+      if (path) to({ kind: "file", file: path });
+    },
+    [attach, attachTarget.onAsk, plain, codePath, activePath],
+  );
 
   const startCommentAtCursor = useCallback(() => {
     const h = hovered.current;
@@ -1815,8 +1821,9 @@ export default function App() {
           startCommentAtCursor();
           break;
         case "a":
+        case "A":
           e.preventDefault();
-          attachHere();
+          attachHere(e.shiftKey);
           break;
         case "f": {
           if (code) break; // Code mode is already the whole file

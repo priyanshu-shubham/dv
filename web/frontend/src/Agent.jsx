@@ -1052,6 +1052,11 @@ export default function AgentView({
         await api.agentSettings(to, start);
         setPicks({});
       }
+      // Remembered on starting rather than on picking, which Shift+Tab does on
+      // its way past each mode. Plan is for the one task.
+      if (!id && !docked && picks.mode && picks.mode !== "plan") {
+        setPicked((all) => ({ ...all, [agentKind]: { ...(all[agentKind] || NO_PICKED), mode: picks.mode } }));
+      }
       if (!id && temporaryNew && !docked) {
         await api.agentTemporary(to, true);
         onTemporaryNew(false);
@@ -1231,14 +1236,14 @@ export default function AgentView({
   // With no session yet, the mode picked waits for the one the first message
   // starts; the model and effort are the remembered ones below.
   const [picks, setPicks] = useState({});
-  // The model and effort last picked, by agent, since the models are the
+  // The model, effort and mode last picked, by agent, since the models are the
   // agent's own: where a new session starts, as it starts with the agent last
-  // picked. { "": { model, effort }, codex: … }
+  // picked. { "": { model, effort, mode }, codex: … }
   const [picked, setPicked] = usePref("user", "newModel", NO_PICKED);
   // Only what the agent still offers: a model it has dropped, or an effort that
   // model no longer takes, is not asked for - dv would turn it down, as would
   // the agent. Until it has answered with its models, nothing is.
-  // Docked, it starts as Settings say instead, mode and all.
+  // Docked, it starts as Settings say instead.
   const startWith = useMemo(() => {
     const want = (docked ? startAs : picked[agentKind]) || NO_PICKED;
     const on = models.find((c) => c.id === (want.model || ""));
@@ -1248,9 +1253,9 @@ export default function AgentView({
     // "" is the agent's own model, which a session starts on anyway.
     if (want.model && (on || unknown)) start.model = want.model;
     if (want.effort && (on?.efforts?.includes(want.effort) || unknown)) start.effort = want.effort;
-    if (docked && want.mode) start.mode = want.mode;
+    if (want.mode && (docked || modes.some((m) => m.id === want.mode))) start.mode = want.mode;
     return start;
-  }, [picked, agentKind, models, docked, startAs]);
+  }, [picked, agentKind, models, modes, docked, startAs]);
   const temporary = id ? !!session?.temporary : temporaryNew;
   const toggleTemporary = () => {
     if (!id) return onTemporaryNew(!temporary);
@@ -1265,7 +1270,7 @@ export default function AgentView({
   };
   // A model or effort picked for the session to come is where the next one
   // starts too; one picked in a session under way is that conversation's own.
-  // The mode is never remembered: a new session takes the agent's.
+  // The mode is remembered once the session starts in it, see send.
   const settings = (patch) => {
     if (id) return api.agentSettings(id, patch).catch((e) => setError(e.message));
     // Docked, a pick is for this conversation alone: Settings say how the next starts.

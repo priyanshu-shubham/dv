@@ -66,11 +66,13 @@ func (t talk) Progress(session, message string) notify.Progress {
 	return notify.Finished
 }
 
-// newModel is the page's pref of that name: the model and effort last picked
-// for a new session, by agent.
+// newModel is the page's pref of that name: the model, effort and mode last
+// picked for a new session, by agent. A chat's session takes chatMode instead
+// of the mode, which is only kept here so Configure writes it back.
 type newModel map[string]struct {
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	Mode   string `json:"mode,omitempty"`
 }
 
 // Start begins a session as the page does: with the agent last picked for a
