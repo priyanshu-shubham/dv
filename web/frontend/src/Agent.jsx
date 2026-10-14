@@ -777,7 +777,13 @@ export default function AgentView({
   const queued = live?.queued || NO_QUEUED;
   const incoming = useMemo(() => {
     const out = queued.map((q) => ({ ...q, queued: true }));
-    for (const m of pending) if (!out.some((w) => w.uuid === m.uuid)) out.push(m);
+    // One sent after a message still queued waits behind it, before the
+    // server has said so, rather than showing above it as taken up.
+    let behind = false;
+    for (const m of pending) {
+      if (out.some((w) => w.uuid === m.uuid)) behind = true;
+      else out.push(behind ? { ...m, behind } : m);
+    }
     return out;
   }, [queued, pending]);
   // Nothing said yet: the page's blank session, or one made and not written to.
@@ -1169,13 +1175,16 @@ export default function AgentView({
     setPending((p) => p.filter((w) => !messages.some((m) => m.uuid === w.uuid)));
     setJustSent(null);
     const words = [];
+    const pictures = [];
     for (const m of messages) {
       if (lastSent.current?.uuid === m.uuid) lastSent.current = null;
       const s = sent.current.get(m.uuid) || (await readBack(m, from, threads));
       words.push(s.draft);
-      if (s.images.length) setImages((list) => [...s.images, ...list], to);
+      pictures.push(...s.images);
       if (s.attached.length) onRestoreAttached(to, s.attached);
     }
+    // In the order they were sent, ahead of any already in the box, as the words are.
+    if (pictures.length) setImages((list) => [...pictures, ...list], to);
     const put = (old) => [...words, old].filter((t) => t.trim()).join("\n\n");
     // The box's draft follows the session on screen, which may have moved on
     // since this was called.
@@ -1808,7 +1817,7 @@ export default function AgentView({
       item={w.shell ? { kind: "shell", text: w.shell } : { kind: w.command || commandOf(w.text, commands) ? "command" : "prompt", text: w.text, images: w.images }}
       pictures={w.pictures || sent.current.get(w.uuid)?.images}
       pending
-      queued={w.queued}
+      queued={w.queued || w.behind}
       hint={w.queued ? "Esc or ↑ to edit" : w.uuid === justSent ? "Esc to edit" : undefined}
     />
   );
@@ -1974,10 +1983,10 @@ export default function AgentView({
             <Streaming key={i} block={b} />
           ))}
           {/* What Claude is doing is under what it was asked; what waits for it, under that. */}
-          {incoming.filter((w) => !w.queued).map(bubble)}
+          {incoming.filter((w) => !w.queued && !w.behind).map(bubble)}
           {/* A terminal's turn is only known to have started by its last message. */}
           {busy && !ask && <Activity live={live} items={items} root={root} since={live?.shell?.since || live?.since || items.findLast((it) => it.turn)?.at} />}
-          {incoming.filter((w) => w.queued).map(bubble)}
+          {incoming.filter((w) => w.queued || w.behind).map(bubble)}
           {/* As the terminal's guess, they are there while the box is empty. */}
           {offered.length > 0 && !busy && !ask && !readOnly && !draft.trim() && (
             <div className="agent-followups">
