@@ -4,7 +4,8 @@ import { api } from "./api.js";
 import { Modal, SettingsOverlay, useUpdate } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
-import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
+import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
+import { enableBack } from "./phone/back.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { setTabIcon, tabDot } from "./favicon.js";
 import { PRChip } from "./Header.jsx";
@@ -39,6 +40,18 @@ export default function Hub() {
   useEffect(() => {
     document.title = `${settings.tabName?.trim() || "dv"} hub`;
   }, [settings.tabName]);
+  // On a phone, the app's look (phone.css), and Back closing a dialog.
+  const phoneApp = useMedia(PHONE_APP);
+  useEffect(() => {
+    if (!phoneApp) return;
+    const html = document.documentElement;
+    html.classList.add("phone");
+    const off = enableBack();
+    return () => {
+      html.classList.remove("phone");
+      off();
+    };
+  }, [phoneApp]);
 
   // "settings", "folder" or "clone", or { worktree } or { hooks }, a folder.
   const [dialog, setDialog] = useState(null);
@@ -140,7 +153,8 @@ export default function Hub() {
   });
   const dismissFrom = () => {
     setFrom(null);
-    history.replaceState(null, "", "/");
+    // The phone app's hub page is ?folders; / would take it to a folder.
+    history.replaceState(null, "", phoneApp ? "/?folders" : "/");
   };
 
   const act = (promise) => promise.then(load, (e) => (setError(e.message), load()));
@@ -223,7 +237,7 @@ export default function Hub() {
   return (
     <>
     {/* Out of the page's grid, whose rows are the header's and the rest's. */}
-    <Notices />
+    <Notices phone={phoneApp} />
     <div className="hub">
       <header className="topbar">
         <div className="topbar-left">
@@ -329,6 +343,7 @@ export default function Hub() {
 
       {dialog === "settings" && (
         <SettingsOverlay
+          phoneApp={phoneApp}
           theme={theme}
           onTheme={setTheme}
           view={view}

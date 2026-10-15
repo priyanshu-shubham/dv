@@ -78,7 +78,8 @@ type fileMark struct {
 }
 
 // holdFor is how long a message sent mid-turn waits before it is steered in:
-// the page's window for taking a message back.
+// the page's window for taking a message back. The phone app's is longer, and
+// past this it rewinds instead.
 const holdFor = 2 * time.Second
 
 var errTerminal = errors.New("this session is open in a terminal; dv follows it, but only the terminal can talk to it")

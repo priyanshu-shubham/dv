@@ -187,14 +187,15 @@ func (f *Folders) SetCloneInto(dir string) error {
 	return f.file.save(f.doc)
 }
 
-// reservedSlugs are the hub's own paths.
-var reservedSlugs = map[string]bool{"api": true, "static": true}
+// reservedSlugs are the hub's own paths, and the app's (main.go's withNotices).
+var reservedSlugs = map[string]bool{"api": true, "static": true, "icon": true, "sw.js": true, "manifest.webmanifest": true}
 
 // slugFor names a folder in URLs: the slug it had before, else its base name,
 // numbered past one already taken or retired for another path. Callers hold f.mu.
 func (f *Folders) slugFor(path string) string {
 	for s, p := range f.doc.Retired {
-		if p == path {
+		// One retired before the app took it as a path is not given back.
+		if p == path && !reservedSlugs[s] {
 			return s
 		}
 	}

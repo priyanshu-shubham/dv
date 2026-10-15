@@ -18,6 +18,8 @@ export function pickSession(slug, session) {
   try {
     localStorage.setItem(prefix + "agentSession", JSON.stringify(session));
     localStorage.setItem(prefix + "mode", JSON.stringify("agent"));
+    // The phone app reads this to open the session's screen, not just its tab.
+    sessionStorage.setItem("dv:open", JSON.stringify({ slug, session }));
   } catch {}
 }
 
@@ -105,6 +107,11 @@ export function useFixedMenu(open, ref, menu) {
 export const PHONE = "(max-width: 760px)";
 // A finger rather than a pointer: the browser has selection keys of its own there.
 export const TOUCH = "(pointer: coarse)";
+// PHONE_APP is where dv is the phone app rather than the page laid out small:
+// a phone held upright, or turned on its side, where it is wide but short.
+export const PHONE_APP = `${PHONE}, ${TOUCH} and (max-height: 500px)`;
+// The hub folder the phone app was last in, which it opens on (main.jsx).
+export const PHONE_FOLDER_KEY = "dv:phone-folder";
 
 // useMedia is whether a media query matches, as the window changes.
 export function useMedia(query) {

@@ -4,6 +4,7 @@ import MarkdownIt from "markdown-it";
 import { linkPaths, Markdown } from "./links.js";
 import { agentName, cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
 import { AgentIcon, IconAsk, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
+import { useBack } from "./phone/back.js";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
@@ -255,6 +256,16 @@ export function Composer({
   const pressedInside = useRef(null); // the last mousedown in the composer
   bodyRef.current = body;
   const draft = body.trim() !== initial.trim();
+  // Android's Back is its Escape, but a draft goes only when that is said; kept,
+  // Back is armed again.
+  const [armed, setArmed] = useState(true);
+  useBack(armed && !!onCancel, () => {
+    if (!draft || confirm("Discard what you wrote?")) onCancel();
+    else setArmed(false);
+  });
+  useEffect(() => {
+    if (!armed) setArmed(true);
+  }, [armed]);
 
   useEffect(() => {
     if (autoFocus && ref.current) {

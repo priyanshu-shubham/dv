@@ -14,6 +14,8 @@ import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from 
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
 import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
 import { Picker } from "./Picker.jsx";
+import { useBack } from "./phone/back.js";
+import { PushSetting } from "./phone/PushSetting.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -40,6 +42,8 @@ export function Modal({ onClose, onBack, className, children, wide, centred }) {
 
   const ref = useRef(null);
   useLayer(ref, 100);
+  // In the phone app, Android's Back is this Esc.
+  useBack(true, onBack || onClose);
   return createPortal(
     <div className={cx("backdrop", centred && "centred")} ref={ref} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={cx("modal", wide && "modal-wide", className)}>{children}</div>
@@ -565,14 +569,19 @@ function matchesIn(text, re) {
 // markSpans highlights matched byte ranges. Offsets come from ripgrep in bytes,
 // so the line is measured through a TextEncoder-free approximation: for ASCII
 // they coincide, and for wider text we fall back to plain escaping.
-function markSpans(text, spans) {
+function markSpans(full, spans) {
+  // Its indentation is left out, so a match far into a line is still in view.
+  const lead = full.length - full.trimStart().length;
+  const text = full.slice(lead);
   if (!spans?.length) return escapeHtml(text);
   // eslint-disable-next-line no-control-regex
-  if (/[^\x00-\x7F]/.test(text)) return escapeHtml(text);
+  if (/[^\x00-\x7F]/.test(full)) return escapeHtml(text);
   let out = "";
   let pos = 0;
-  for (const [s, e] of spans) {
-    if (s < pos) continue;
+  for (let [s, e] of spans) {
+    s = Math.max(0, s - lead);
+    e -= lead;
+    if (s < pos || e <= s) continue;
     out += escapeHtml(text.slice(pos, s)) + "<mark>" + escapeHtml(text.slice(s, e)) + "</mark>";
     pos = e;
   }
@@ -772,7 +781,7 @@ const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
 // keys to toggle the diff with (keys false). Its tabs are its sections, and
 // actions, a folder page's, a tab of their own; tab is the one it opens on.
 export function SettingsOverlay({
-  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
+  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, phoneApp, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
   working = 0,
   update,
   actions,
@@ -821,7 +830,8 @@ export function SettingsOverlay({
       <div className="settings-body">
         {tab === "appearance" && (
           <>
-            <Setting label="Theme" value={theme} onPick={onTheme} choices={[["dark", "Dark"], ["light", "Light"]]} />
+            {/* The phone app is dark, and has no sidebar or tab to name. */}
+            {!phoneApp && <Setting label="Theme" value={theme} onPick={onTheme} choices={[["dark", "Dark"], ["light", "Light"]]} />}
             <Setting
               label="Code colors"
               note="How code is highlighted. Monokai is dark only: the light theme shows GitHub's."
@@ -829,32 +839,36 @@ export function SettingsOverlay({
               onPick={(v) => onChange({ codeColors: v })}
               choices={[["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]]}
             />
-            <Setting
-              label="Sidebar"
-              note="On the right, the comments open over it."
-              value={settings.sidebar || "left"}
-              onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
-              choices={[["left", "Left"], ["right", "Right"]]}
-            />
-            <label className="settings-row">
-              <div className="settings-text">
-                <div>Name in the tab</div>
-                <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's. Every dv on this computer uses it.</div>
-              </div>
-              <input
-                value={settings.tabName || ""}
-                placeholder="dv"
-                maxLength={40}
-                spellCheck={false}
-                onChange={(e) => onChange({ tabName: e.target.value || undefined })}
-              />
-            </label>
-            <Setting
-              label="Tab icon"
-              value={settings.tabColor || ""}
-              onPick={(v) => onChange({ tabColor: v || undefined })}
-              choices={TAB_ICONS}
-            />
+            {!phoneApp && (
+              <>
+                <Setting
+                  label="Sidebar"
+                  note="On the right, the comments open over it."
+                  value={settings.sidebar || "left"}
+                  onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
+                  choices={[["left", "Left"], ["right", "Right"]]}
+                />
+                <label className="settings-row">
+                  <div className="settings-text">
+                    <div>Name in the tab</div>
+                    <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's. Every dv on this computer uses it.</div>
+                  </div>
+                  <input
+                    value={settings.tabName || ""}
+                    placeholder="dv"
+                    maxLength={40}
+                    spellCheck={false}
+                    onChange={(e) => onChange({ tabName: e.target.value || undefined })}
+                  />
+                </label>
+                <Setting
+                  label="Tab icon"
+                  value={settings.tabColor || ""}
+                  onPick={(v) => onChange({ tabColor: v || undefined })}
+                  choices={TAB_ICONS}
+                />
+              </>
+            )}
           </>
         )}
         {tab === "diff" && (
@@ -866,17 +880,21 @@ export function SettingsOverlay({
         )}
         {tab === "notifications" && (
           <>
-            <Setting
-              label="Desktop notifications"
-              note={
-                typeof Notification === "undefined"
-                  ? "This browser does not offer them here: they need https or localhost."
-                  : "You are told when an agent asks or finishes, if no dv page is in front of you."
-              }
-              value={!!notices}
-              onPick={onNotices}
-              choices={OFF_ON}
-            />
+            {phoneApp ? (
+              <PushSetting />
+            ) : (
+              <Setting
+                label="Desktop notifications"
+                note={
+                  typeof Notification === "undefined"
+                    ? "This browser does not offer them here: they need https or localhost."
+                    : "You are told when an agent asks or finishes, if no dv page is in front of you."
+                }
+                value={!!notices}
+                onPick={onNotices}
+                choices={OFF_ON}
+              />
+            )}
             <ChatApps settings={settings} onChange={onChange} />
           </>
         )}

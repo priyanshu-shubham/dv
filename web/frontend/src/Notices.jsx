@@ -8,16 +8,29 @@ import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { cx, PHONE, useMedia } from "./util.js";
+import { cx, PHONE_APP, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 
 // Below the header, clear of the message box. Outside the page, which an
-// overlay makes inert, so a notice can still be acted on over one.
-export function Notices() {
+// overlay makes inert, so a notice can still be acted on over one. In the phone
+// app they are Android's snackbars, at the foot over the tabs.
+export function Notices({ phone }) {
   useRestartNotice();
   return createPortal(
-    <Toaster position="top-right" offset={{ top: 46, right: 14 }} mobileOffset={{ top: 48 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />,
+    phone ? (
+      <Toaster
+        position="bottom-center"
+        // A phone on its side is past sonner's mobile width.
+        offset={{ bottom: 92 }}
+        mobileOffset={{ bottom: 92, left: 12, right: 12 }}
+        gap={8}
+        visibleToasts={3}
+        toastOptions={{ unstyled: true }}
+      />
+    ) : (
+      <Toaster position="top-right" offset={{ top: 46, right: 14 }} mobileOffset={{ top: 48 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />
+    ),
     document.body,
   );
 }
@@ -72,7 +85,7 @@ function restartedOn(was, now) {
 // On a phone a tap anywhere on a notice does what its action marked opens
 // does, and that action's button goes.
 function Notice({ id, kind, agent, title, detail, last, actions }) {
-  const phone = useMedia(PHONE);
+  const phone = useMedia(PHONE_APP);
   const opener = phone && actions?.find((a) => a.opens);
   const shown = opener ? actions.filter((a) => a !== opener) : actions;
   const down = useRef(null);
@@ -189,8 +202,9 @@ function usePresence() {
 // reader. looking is the session on screen in the Agent view, asking the Ask
 // panel's when it shows; review opens a request of this page's folder in its
 // window, open goes to one of its sessions, and go to a session in another of
-// the hub's folders. It returns the notices open.
-export function useNotices({ looking, asking: askOpen, desktop, review, open, go }) {
+// the hub's folders. In the phone app a request is answered in its session,
+// so that is where its notice goes. It returns the notices open.
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go, phone }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
@@ -246,7 +260,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
           : [{ label: "Open folder", opens: true, run: goThere }]
         : !asking
         ? [{ label: "Open session", opens: true, run: goThere }]
-        : own
+        : own && !phone
           ? [
               { label: "Review", primary: true, run: () => now.current.review(n.request) },
               { label: "Open session", opens: true, run: goThere },
@@ -282,7 +296,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
         return null;
       }
     }
-  }, [notices, looking, askOpen]);
+  }, [notices, looking, askOpen, phone]);
 
   return notices;
 }

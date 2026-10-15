@@ -311,6 +311,12 @@ export const api = {
   gchatSetUp: (relay) => req("/api/notify/gchat", { method: "POST", body: JSON.stringify({ relay, origin: location.origin }) }, ""),
   gchatRemove: () => req("/api/notify/gchat", { method: "DELETE" }, ""),
   gchatTest: () => req("/api/notify/gchat/test", { method: "POST", body: JSON.stringify({ origin: location.origin }) }, ""),
+  // Web push, to the phones that turned it on: pushStatus is { key, devices,
+  // subscribed }, key the one every dv on this computer signs with, to subscribe with.
+  pushStatus: (endpoint) => req("/api/notify/push" + (endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ""), {}, ""),
+  pushSubscribe: (sub) => req("/api/notify/push", { method: "POST", body: JSON.stringify(sub) }, ""),
+  pushUnsubscribe: (endpoint) => req("/api/notify/push", { method: "DELETE", body: JSON.stringify({ endpoint }) }, ""),
+  pushTest: (endpoint) => req("/api/notify/push/test", { method: "POST", body: JSON.stringify({ endpoint }) }, ""),
 
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
   // user's settings' version; with details, each git folder has its remote and

@@ -9,6 +9,7 @@ import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Prev
 import { agentName, cx, isTyping, LRM, splitPath, useCopy, usePersisted } from "./util.js";
 import { readPref, usePref } from "./prefs.js";
 import { AgentIcon, IconFile, IconX } from "./icons.jsx";
+import { Answers } from "./phone/Session.jsx";
 
 const NO_COMMENTS = [];
 
@@ -132,7 +133,7 @@ export function RequestTitle({ req }) {
 // by the caller so they outlive the request being put away. children go at the
 // end of its foot.
 export function Request({
-  req, active, grab, draft, onDraft, onLater, view, contextLines, wrap, onSymbol, onOpenFile, children,
+  req, active, grab, draft, onDraft, onLater, view, contextLines, wrap, onSymbol, onOpenFile, children, phone, dock,
 }) {
   const note = draft?.note || "";
   const comments = draft?.comments || NO_COMMENTS;
@@ -297,87 +298,97 @@ export function Request({
         </div>
       )}
 
-      <div className="prompt-answer" hidden={asking}>
-        <div className="prompt-question">{question(req, what)}</div>
-        <div className="prompt-list">
-          <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
-            {options.map((o, i) => {
-              const no = req.tool === "ExitPlanMode" ? "keep planning" : `stops ${agentName(req.via)}`;
-              const hint = optionHint(o, said, no);
-              return (
-                <button
-                  key={i}
-                  id={`opt-${req.id}-${i}`}
-                  role="option"
-                  aria-selected={i === sel}
-                  className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && "no")}
-                  disabled={busy}
-                  // Not mouseenter: that also fires when a scroll carries a row
-                  // under a pointer at rest, which would change what Enter answers.
-                  onMouseMove={() => setSel(i)}
-                  onClick={() => choose(i)}
-                  title={o.title}
-                >
-                  <span className="badge">{i + 1}</span>
-                  <span className="label">{o.label}</span>
-                  {hint && <span className="hint">{hint}</span>}
-                  {i === modeOption && <kbd>Shift+Tab</kbd>}
-                </button>
-              );
-            })}
-          </div>
-          <label className="prompt-note">
-            <span className="badge" title="Tab">
-              ⇥
-            </span>
-            <textarea
-              ref={noteRef}
-              rows={1}
-              value={note}
-              placeholder={
-                options[sel]?.allow === false ? `Tell ${agentName(req.via)} what to do instead` : `Add a note for ${agentName(req.via)} - it goes with your answer`
-              }
-              onChange={(e) => onDraft({ note: e.target.value })}
-            />
-          </label>
-        </div>
-      </div>
+      {/* The phone's answers sit over the message box, which is the note. */}
+      {phone && !asking && (
+        <Answers dock={dock} question={question(req, what)} options={options} said={said} plan={req.tool === "ExitPlanMode"} busy={busy} error={error} onChoose={choose} />
+      )}
+      {phone && asking && error && <div className="prompt-error">{error}</div>}
 
-      <div className="palette-foot prompt-foot">
-        {error ? (
-          <span className="prompt-error">{error}</span>
-        ) : (
-          <span className="prompt-keys">
-            {manyQuestions && (
-              <span>
-                <kbd>←</kbd> <kbd>→</kbd> question
+      {!phone && (
+        <>
+          <div className="prompt-answer" hidden={asking}>
+            <div className="prompt-question">{question(req, what)}</div>
+            <div className="prompt-list">
+              <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
+                {options.map((o, i) => {
+                  const no = req.tool === "ExitPlanMode" ? "keep planning" : `stops ${agentName(req.via)}`;
+                  const hint = optionHint(o, said, no);
+                  return (
+                    <button
+                      key={i}
+                      id={`opt-${req.id}-${i}`}
+                      role="option"
+                      aria-selected={i === sel}
+                      className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && "no")}
+                      disabled={busy}
+                      // Not mouseenter: that also fires when a scroll carries a row
+                      // under a pointer at rest, which would change what Enter answers.
+                      onMouseMove={() => setSel(i)}
+                      onClick={() => choose(i)}
+                      title={o.title}
+                    >
+                      <span className="badge">{i + 1}</span>
+                      <span className="label">{o.label}</span>
+                      {hint && <span className="hint">{hint}</span>}
+                      {i === modeOption && <kbd>Shift+Tab</kbd>}
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="prompt-note">
+                <span className="badge" title="Tab">
+                  ⇥
+                </span>
+                <textarea
+                  ref={noteRef}
+                  rows={1}
+                  value={note}
+                  placeholder={
+                    options[sel]?.allow === false ? `Tell ${agentName(req.via)} what to do instead` : `Add a note for ${agentName(req.via)} - it goes with your answer`
+                  }
+                  onChange={(e) => onDraft({ note: e.target.value })}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="palette-foot prompt-foot">
+            {error ? (
+              <span className="prompt-error">{error}</span>
+            ) : (
+              <span className="prompt-keys">
+                {manyQuestions && (
+                  <span>
+                    <kbd>←</kbd> <kbd>→</kbd> question
+                  </span>
+                )}
+                <span>
+                  <kbd>↑</kbd> <kbd>↓</kbd> choose
+                </span>
+                <span>
+                  <kbd>Enter</kbd> {asking ? "pick" : "answer"}
+                </span>
+                <span>
+                  <kbd>Tab</kbd> note
+                </span>
+                {onLater && (
+                  <span>
+                    <kbd>Esc</kbd> later
+                  </span>
+                )}
+                {/* In the conversation it goes without saying where Claude waits. */}
+                {(!req.dv || onLater) && (
+                  <span className="also">
+                    {req.dv ? `${agentName(req.via)} is waiting in a session dv runs.` : "The terminal is asking too; the first answer counts."}
+                  </span>
+                )}
               </span>
             )}
-            <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> choose
-            </span>
-            <span>
-              <kbd>Enter</kbd> {asking ? "pick" : "answer"}
-            </span>
-            <span>
-              <kbd>Tab</kbd> note
-            </span>
-            {onLater && (
-              <span>
-                <kbd>Esc</kbd> later
-              </span>
-            )}
-            {/* In the conversation it goes without saying where Claude waits. */}
-            {(!req.dv || onLater) && (
-              <span className="also">
-                {req.dv ? `${agentName(req.via)} is waiting in a session dv runs.` : "The terminal is asking too; the first answer counts."}
-              </span>
-            )}
-          </span>
-        )}
-        <span className="spacer" />
-        {children}
-      </div>
+            <span className="spacer" />
+            {children}
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -1051,7 +1062,7 @@ function optionHint(o, said, no) {
 }
 
 // saidWith names what goes with an answer.
-function saidWith(note, comments) {
+export function saidWith(note, comments) {
   const n = comments.length;
   return [note.trim() && "your note", n === 1 ? "your comment" : n > 1 && `your ${n} comments`].filter(Boolean).join(" and ");
 }

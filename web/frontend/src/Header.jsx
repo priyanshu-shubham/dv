@@ -4,33 +4,8 @@ import { boot } from "./boot.js";
 import { blockedNote, branchRows, fetchNote, rowHint, rowLabel, switchDone, useBranchChoices } from "./Branches.jsx";
 import { cx, modKey, useDismiss } from "./util.js";
 import {
-  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconFile, IconKeyboard, IconMenu, IconPin, IconPlus, IconSearch, IconSettings, IconUndo,
+  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconPin, IconSearch, IconSettings, IconUndo,
 } from "./icons.jsx";
-
-// NewSession is the phone's +: a session here, or - where the hub can make
-// one - in a new worktree, which it asks between.
-function NewSession({ onNew, onNewWorktree, canStart }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
-  const pick = (fn) => () => (setOpen(false), fn());
-  return (
-    <div className="model-menu phone-only" ref={ref}>
-      <button className="icon" onClick={onNewWorktree ? () => setOpen((o) => !o) : onNew} disabled={!canStart} title="New session (Alt+N)">
-        <IconPlus size={15} />
-      </button>
-      {open && (
-        <div className="model-list">
-          <button onClick={pick(onNew)}>
-            <span className="model-name">New session here</span>
-          </button>
-          <button onClick={pick(onNewWorktree)}>
-            <span className="model-name">New session in a worktree…</span>
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 const PR_MS = 60000;
 
@@ -179,38 +154,23 @@ export const AUTO = { kind: "auto", rev: "" };
 
 // The bar names the repository in its middle, and holds what is compared and
 // the tools at its right; how the page is drawn is in Settings. Which mode the
-// page is in is the sidebar's, at the top of the list that mode fills. On a
-// phone, what is marked wide-only gives way and what is marked phone-only comes
-// in: the menu button the sidebar is behind, and buttons for what is otherwise
-// in the sidebar or on a key. The menu button is at the edge the sidebar
-// slides in from.
+// page is in is the sidebar's, at the top of the list that mode fills. A phone
+// has its own app (phone/Phone.jsx) instead.
 export default function Header({
-  meta, folder, mode, scope, resolvedScope, onScope, onSearch, onOpenFile, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, sideOn, onSide, sideRight, onNewSession, onNewWorktree, canStart, update, pr, onActions,
+  meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
+  comments, commentsOn, onComments, update, pr, onActions,
 }) {
   const agent = mode === "agent";
-  const menu = (
-    <button className={cx("icon", "phone-only", sideOn && "on")} aria-pressed={sideOn} onClick={onSide} title="Files and sessions">
-      <IconMenu size={15} className={cx("menu-glyph", sideOn && "open")} />
-    </button>
-  );
   return (
     <header className="topbar">
       <div className="topbar-left">
-        {!sideRight && menu}
-        {/* A phone has no title bar, so the folder's name stands in for dv's, which
-            is the one thing there that says where you are. */}
         {boot.base ? (
           <a className="logo to-hub" href="/" title="Back to the hub (Alt+H)">
             <IconBack size={13} />
-            <span className="wide-only">dv</span>
-            <span className="phone-only here">{meta?.repo || "dv"}</span>
+            dv
           </a>
         ) : (
-          <span className="logo">
-            <span className="wide-only">dv</span>
-            <span className="phone-only here">{meta?.repo || "dv"}</span>
-          </span>
+          <span className="logo">dv</span>
         )}
       </div>
 
@@ -225,8 +185,7 @@ export default function Header({
       <div className="topbar-right">
       {!agent && !folder && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />}
 
-      {!agent && !folder && <span className="divider wide-only" />}
-      {agent && <NewSession onNew={onNewSession} onNewWorktree={onNewWorktree} canStart={canStart} />}
+      {!agent && !folder && <span className="divider" />}
 
       {waiting > 0 && (
         <button
@@ -251,22 +210,18 @@ export default function Header({
         <IconComment size={14} />
         {comments > 0 && <span className="comments-count">{comments}</span>}
       </button>
-      <button className="icon phone-only" onClick={onOpenFile} title={`Open a file (${modKey}+P)`}>
-        <IconFile size={14} />
-      </button>
       <button className="icon" onClick={onActions} title="Actions (Alt+A)">
         <IconBolt size={14} />
       </button>
       <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
         <IconSearch size={14} />
       </button>
-      <button className="icon wide-only" onClick={onHelp} title="Keyboard shortcuts (?)">
+      <button className="icon" onClick={onHelp} title="Keyboard shortcuts (?)">
         <IconKeyboard size={14} />
       </button>
       <button className={cx("icon", update && "has-update")} onClick={onSettings} title={update ? `Settings (,): dv v${update.latest} is out` : "Settings (,)"}>
         <IconSettings size={14} />
       </button>
-      {sideRight && menu}
       </div>
     </header>
   );

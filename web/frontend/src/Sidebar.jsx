@@ -168,9 +168,6 @@ export default function Sidebar({
   const ignoredCount = useMemo(() => files.reduce((n, f) => n + (f.ignored ? 1 : 0), 0), [files]);
 
   return (
-    // Slid off a phone's screen it is out of reach already. It is not made inert:
-    // with the accessibility tree on, as a phone's autofill turns it on, that
-    // rebuilds the tree for every row on each open and close.
     <aside className="sidebar" ref={rootRef}>
       <div
         className="side-resize"

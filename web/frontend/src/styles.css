@@ -6,6 +6,8 @@
    and needs no network. */
 @import "@fontsource-variable/jetbrains-mono/wght.css";
 @import "@fontsource-variable/jetbrains-mono/wght-italic.css";
+/* The phone app's look, all of it under html.phone. */
+@import "./phone/phone.css";
 
 /* Regions are told apart by shade, and lines are kept for the few edges a
    shade cannot draw. Four grounds: --bg is the editor and every list or well
@@ -518,14 +520,6 @@ a.link:hover {
   color: var(--fg);
   font: 700 var(--fs-md) / 1 var(--font-ui);
   letter-spacing: 0.02em;
-}
-
-/* The folder's name in the logo's place, on a phone: long ones are cut. */
-.topbar .logo .here {
-  max-width: 44vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Served by a hub, the name is the way back to it. */
@@ -4655,10 +4649,6 @@ body.resizing * {
   font-family: var(--font-ui);
 }
 
-.agent-context-left .short {
-  display: none;
-}
-
 /* Where to compact from: the meter, as it reads. */
 button.ghost.agent-context {
   gap: 6px;
@@ -4998,7 +4988,25 @@ button.ghost.agent-context {
   color: var(--fg-3);
 }
 
-/* No Esc to press: the send button takes a message back instead. */
+/* A queued message, which a click takes back to edit. */
+.agent-prompt.tappable {
+  cursor: pointer;
+}
+
+.agent-prompt.tappable:hover {
+  background-image: linear-gradient(var(--bg-hover), var(--bg-hover));
+}
+
+.agent-undo {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+
+.agent-undo:hover {
+  text-decoration: underline;
+}
+
+/* No Esc to press: Undo and a tap take a message back instead. */
 @media (hover: none) {
   .agent-prompt-foot .agent-prompt-hint {
     display: none;
@@ -7107,32 +7115,9 @@ button.ghost.composer-add {
   75% { transform: rotate(2deg); }
 }
 
-/* The phone's menu button turns into a close as the sidebar slides in, in the
-   sidebar's time. Each outer line is centred first, then turned. */
-.menu-glyph path {
-  transform-origin: 8px 8px;
-  transition: transform 180ms ease, opacity 180ms ease;
-}
-
-.menu-glyph.open path:nth-child(1) {
-  transform: rotate(45deg) translateY(4px);
-}
-
-.menu-glyph.open path:nth-child(2) {
-  opacity: 0;
-}
-
-.menu-glyph.open path:nth-child(3) {
-  transform: rotate(-45deg) translateY(-4px);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .bell-glyph {
     animation: none;
-  }
-
-  .menu-glyph path {
-    transition: none;
   }
 }
 
@@ -7165,251 +7150,6 @@ button.ghost.back {
 @media (max-width: 860px) {
   .topbar-title {
     display: none;
-  }
-}
-
-.topbar .phone-only {
-  display: none;
-}
-
-/* A phone: one column, and the sidebar and the comments over it, one at a
-   time, sliding in from their edges. PHONE in App.jsx. */
-@media (max-width: 760px) {
-  /* Room for a finger. */
-  :root {
-    --bar-h: 44px;
-  }
-
-  /* The message box's bar keeps its send button in reach; the accent says Temporary. */
-  .composer-bar .btn-label {
-    display: none;
-  }
-
-  .topbar {
-    --ctl-h: 36px;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 4px;
-    padding: 0 4px;
-  }
-
-  .topbar .wide-only {
-    display: none;
-  }
-
-  .topbar .phone-only {
-    display: inline-flex;
-  }
-
-  .topbar-right > .scope {
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-
-  .topbar-right .scope-button {
-    max-width: 100%;
-  }
-
-  .topbar-right .scope-button > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Across the screen under the bar, wherever its button is. */
-  .topbar .scope-menu {
-    position: fixed;
-    top: calc(var(--bar-h) + 4px);
-    left: 8px;
-    right: 8px;
-    width: auto;
-    max-height: calc(100% - var(--bar-h) - 16px);
-    overflow-y: auto;
-  }
-
-  /* One column, the panels over it - the sidebar on the right included, whose
-     own rule is the more particular one and would otherwise keep its column. */
-  .main,
-  .main.with-comments,
-  .main.side-right,
-  .main.side-right.with-comments {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .main.side-right > .sidebar,
-  .main.side-right > .comments-panel {
-    grid-column: 1;
-  }
-
-  .main > .sidebar,
-  .main > .comments-panel,
-  .main.side-right > .comments-panel {
-    position: fixed;
-    top: var(--bar-h);
-    bottom: 0;
-    z-index: 60;
-    box-shadow: var(--shadow-pop);
-  }
-
-  /* Drawn while it is away, on a layer of its own, so opening it only moves
-     it; the list is inert until then (Sidebar.jsx). */
-  .main > .sidebar {
-    --row-h: 34px;
-    left: 0;
-    width: min(86vw, 340px);
-    transform: translateX(calc(-100% - 16px));
-    transition: transform 180ms ease;
-    will-change: transform;
-  }
-
-  .main.side-right > .sidebar {
-    left: auto;
-    right: 0;
-    transform: translateX(calc(100% + 16px));
-  }
-
-  .main.side-open > .sidebar,
-  .main.side-right.side-open > .sidebar {
-    transform: none;
-  }
-
-  .main > .comments-panel {
-    right: 0;
-    width: min(90vw, 380px);
-    animation: panel-in 180ms ease;
-  }
-
-  /* A note takes the whole screen. */
-  .backdrop:has(> .note-view) {
-    padding: 0;
-  }
-
-  .modal.note-view,
-  .modal.note-view.writing {
-    width: 100%;
-    height: 100%;
-    max-height: none;
-    border-radius: 0;
-  }
-
-  .note-view-body {
-    padding: 20px 18px 28px;
-  }
-
-  .note-form-top {
-    padding: 18px 18px 0;
-  }
-
-  .note-form .note-body-input {
-    padding: 14px 18px 20px;
-  }
-
-  .note-form .composer-error {
-    padding: 0 18px 10px;
-  }
-
-  .note-form-foot .hint {
-    display: none;
-  }
-
-  /* Room for a finger, without moving the title off its line. */
-  .note-status,
-  .note-priority {
-    width: 28px;
-    height: 28px;
-    margin: -4px -3px;
-  }
-
-  .side-resize {
-    display: none;
-  }
-
-  /* Always there, on a layer of its own, and only faded: put in and taken out,
-     it had the whole diff under it painted again each time. */
-  .panel-backdrop {
-    position: fixed;
-    inset: var(--bar-h) 0 0;
-    z-index: 59;
-    background: var(--backdrop);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 180ms ease;
-    will-change: opacity;
-  }
-
-  .panel-backdrop.on {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .agent-log {
-    --log-pad: 12px;
-  }
-
-  .agent-composer,
-  .agent-at-work {
-    padding-inline: 12px;
-  }
-
-  /* How full the context is, as the percent alone, and near compacting, how
-     near. */
-  .agent-context .meter,
-  .agent-context-tokens,
-  .agent-context-left .until {
-    display: none;
-  }
-
-  .agent-context-left .short {
-    display: inline;
-  }
-
-  /* A phone has no keys to press, and no room to set a comment in under the
-     code column. */
-  .composer-actions .hint {
-    display: none;
-  }
-
-  .thread-slot {
-    padding: 0 8px;
-  }
-
-  .composer-actions {
-    flex-wrap: wrap;
-  }
-
-  /* One number, the line's own, and no slot for the "+" there is no pointer
-     to hover it with: a line is commented on by tapping its number. */
-  .gutter {
-    padding: 0 4px 0 2px;
-  }
-
-  .gutter::after {
-    content: none;
-  }
-
-  .ln {
-    min-width: 22px;
-  }
-
-  .gutter .ln:first-child:not(:only-child),
-  .cell.del .gutter .ln + .ln {
-    display: none;
-  }
-
-  .cell.del .gutter .ln:first-child {
-    display: inline-block;
-  }
-
-  .code::before {
-    width: 8px;
-  }
-
-  .code {
-    padding-right: 8px;
-  }
-}
-
-@keyframes panel-in {
-  from {
-    transform: translateX(100%);
   }
 }
 

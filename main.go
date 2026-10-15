@@ -32,6 +32,7 @@ import (
 	"dv/internal/notify"
 	"dv/internal/notify/gchat"
 	"dv/internal/notify/telegram"
+	"dv/internal/notify/webpush"
 	"dv/internal/permit"
 	"dv/internal/server"
 	"dv/internal/store"
@@ -201,10 +202,12 @@ func run() error {
 const authUsage = "ask browsers for this key, as the password of HTTP basic auth (any user name); $" + authEnv + " gives it too, unseen by other users"
 
 // chatApps are the chat apps a dv talks through: Telegram, and Google Chat
-// through a relay.
+// through a relay; and the reader's devices, through their browsers' push
+// services.
 type chatApps struct {
-	tg *telegram.Telegram
-	gc *gchat.GChat
+	tg   *telegram.Telegram
+	gc   *gchat.GChat
+	push *webpush.Push
 }
 
 // sendOn starts the chat apps for a dv serving at url, and returns what stops
@@ -216,12 +219,13 @@ func sendOn(notices *notify.Center, url string) (chatApps, func()) {
 	if trial || err != nil || keyErr != nil {
 		return chatApps{}, func() {}
 	}
-	apps := chatApps{telegram.New(notices, url, dir, keyDir), gchat.New(notices, url, dir, keyDir)}
+	apps := chatApps{telegram.New(notices, url, dir, keyDir), gchat.New(notices, url, dir, keyDir), webpush.New(url, dir, keyDir)}
 	notices.Add(apps.tg)
 	notices.Add(apps.gc)
+	notices.Add(apps.push)
 	ctx, cancel := context.WithCancel(context.Background())
 	var running sync.WaitGroup
-	for _, run := range []func(context.Context){apps.tg.Run, apps.gc.Run} {
+	for _, run := range []func(context.Context){apps.tg.Run, apps.gc.Run, apps.push.Run} {
 		running.Add(1)
 		go func() {
 			defer running.Done()
@@ -243,9 +247,13 @@ func sendOn(notices *notify.Center, url string) (chatApps, func()) {
 }
 
 // withNotices serves the notices, which are the whole process's - a hub's
-// folders and all - at its root, ahead of the pages and API of h.
+// folders and all - at its root, ahead of the pages and API of h; and what
+// installs dv as an app, which is the process too.
 func withNotices(h http.Handler, notices *notify.Center, apps chatApps) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /manifest.webmanifest", server.HandleManifest)
+	mux.HandleFunc("GET /icon/{name}", server.HandleIcon)
+	mux.HandleFunc("GET /sw.js", server.HandleWorker)
 	mux.HandleFunc("GET /api/notify", server.Guarded(notices.HandleStream))
 	mux.HandleFunc("POST /api/notify/presence", server.Guarded(notices.HandlePresence))
 	if tg := apps.tg; tg != nil {
@@ -260,6 +268,12 @@ func withNotices(h http.Handler, notices *notify.Center, apps chatApps) http.Han
 		mux.HandleFunc("POST /api/notify/gchat", server.Guarded(gc.HandleSetUp))
 		mux.HandleFunc("DELETE /api/notify/gchat", server.Guarded(gc.HandleRemove))
 		mux.HandleFunc("POST /api/notify/gchat/test", server.Guarded(gc.HandleTest))
+	}
+	if push := apps.push; push != nil {
+		mux.HandleFunc("GET /api/notify/push", server.Guarded(push.HandleStatus))
+		mux.HandleFunc("POST /api/notify/push", server.Guarded(push.HandleSubscribe))
+		mux.HandleFunc("DELETE /api/notify/push", server.Guarded(push.HandleUnsubscribe))
+		mux.HandleFunc("POST /api/notify/push/test", server.Guarded(push.HandleTest))
 	}
 	mux.Handle("/", h)
 	return mux

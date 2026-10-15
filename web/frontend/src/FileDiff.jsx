@@ -3,7 +3,10 @@ import { createPortal } from "react-dom";
 import { buildBlocks, codeHunks, codeLines, grow, pairRows, revealFor, stripOpener, unifiedRows } from "./hunks.js";
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
-import { charWidth, cx, isMac, isTyping, LRM, PHONE, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength } from "./util.js";
+import {
+  charWidth, cx, isMac, isTyping, LRM, PHONE_APP, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength,
+} from "./util.js";
+import { hunkOf, PickBar, usePick } from "./phone/Pick.jsx";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
 import { asMedia, MarkdownDocument, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
@@ -511,6 +514,30 @@ export function DiffBody({
     };
   }, [onStartComment, onSymbol, path]);
 
+  // In the phone app a finger picks lines instead, and a bar acts on them.
+  const [picking, endPick] = usePick(rootRef, useMedia(PHONE_APP) && !!setSelection, selection, setSelection);
+  const pickBar = picking && (
+    <PickBar
+      selection={selection}
+      lines={(selection.side === "old" ? fd.oldLines : fd.newLines).slice(selection.start - 1, selection.end)}
+      onHunk={(() => {
+        const h = hunkOf(fd, selection);
+        return h && (h.side !== selection.side || h.start !== selection.start || h.end !== selection.end) ? () => setSelection(h) : null;
+      })()}
+      onComment={onStartComment && (() => onStartComment(selection.side, selection.start, selection.end))}
+      onAttach={
+        onAttach &&
+        (() => {
+          const { side, start, end } = selection;
+          const quote = (side === "old" ? fd.oldLines : fd.newLines).slice(start - 1, end);
+          endPick();
+          onAttach({ kind: "lines", file: path, side, start, end, quote });
+        })
+      }
+      onClose={endPick}
+    />
+  );
+
   // The row blocks below are memoised on this object, so it must be stable
   // across renders that changed nothing they depend on.
   const ctx = useMemo(
@@ -550,7 +577,7 @@ export function DiffBody({
   const split = view === "split";
   // What the gutter occupies: one line number in split and code, two in
   // unified; on a phone, one number and no room for the "+".
-  const phone = useMedia(PHONE);
+  const phone = useMedia(PHONE_APP);
   const gutter = phone ? 32 : view === "unified" ? 96 : 60;
 
   // What a rendered row is actually as wide as, gutter included, reported by
@@ -761,6 +788,7 @@ export function DiffBody({
       {/* A view of one file can hold the bars under its scrolling, barsIn,
           where they cover no code; a stream of files keeps them stuck here. */}
       {bars && (barsIn ? createPortal(bars, barsIn) : bars)}
+      {pickBar}
     </div>
   );
 }

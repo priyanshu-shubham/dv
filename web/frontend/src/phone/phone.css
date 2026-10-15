@@ -1,0 +1,2024 @@
+/* The phone app (Phone.jsx): Material 3's dark scheme, as Google's own apps
+   draw it, over dv's parts. Everything is under html.phone, which Phone sets,
+   so the page on a wider screen is untouched. Dark only, whatever Settings say:
+   html.phone:root outranks :root[data-theme]. */
+
+html.phone:root {
+  --bg: #131314;
+  --bg-panel: #1e1f20;
+  --bg-bar: #1e1f20;
+  --bg-shell: #1e1f20;
+  --bg-raised: #282a2c;
+  --bg-hover: rgba(227, 227, 227, 0.08);
+  --bg-active: rgba(227, 227, 227, 0.12);
+  --bg-input: #282a2c;
+  --backdrop: rgba(0, 0, 0, 0.4);
+
+  --border: #444746;
+  --border-soft: #333537;
+  --border-strong: #8e918f;
+
+  --fg: #e3e3e3;
+  --fg-2: #c4c7c5;
+  --fg-3: #8e918f;
+  --fg-4: #5f6368;
+
+  --accent: #a8c7fa;
+  --accent-fill: #a8c7fa;
+  --accent-fg: #062e6f;
+  --accent-soft: rgba(168, 199, 250, 0.14);
+
+  --add: #6dd58c;
+  --del: #f2b8b5;
+  --mod: #fdd663;
+  --add-bg: rgba(109, 213, 140, 0.12);
+  --del-bg: rgba(242, 184, 181, 0.12);
+  --mod-bg: rgba(253, 214, 99, 0.1);
+  --add-word: rgba(109, 213, 140, 0.3);
+  --del-word: rgba(242, 184, 181, 0.28);
+
+  --shadow-pop: 0 2px 6px 2px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-modal: none;
+
+  --hl-keyword: #ff7b72;
+  --hl-entity: #d2a8ff;
+  --hl-constant: #79c0ff;
+  --hl-string: #a5d6ff;
+  --hl-variable: #ffa657;
+  --hl-comment: #8b949e;
+  --hl-tag: #7ee787;
+  --hl-heading: #a8c7fa;
+  --hl-list: #f2cc60;
+
+  /* Roboto, Android's own; Google Sans where a phone has it. */
+  --font-ui: "Google Sans Text", "Google Sans", Roboto, system-ui, sans-serif;
+  --fs-tag: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --ctl-h: 36px;
+  --ctl-h-sm: 32px;
+  --row-h: 36px;
+  --bar-h: 44px;
+  --file-head-h: 48px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+
+  /* Material's own roles, for the app's parts. */
+  --m-low: #1b1b1b;
+  --m-surface: #1e1f20;
+  --m-high: #282a2c;
+  --m-highest: #333537;
+  --m-tonal: #004a77;
+  --m-on-tonal: #c2e7ff;
+  --m-container: #0842a0;
+  --m-on-container: #d3e3fd;
+  --m-error: #f2b8b5;
+  --m-on-error: #601410;
+  --m-bar-h: 64px;
+  --m-nav-h: 80px;
+  --m-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  color-scheme: dark;
+}
+
+html.phone,
+html.phone body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.phone body {
+  font: var(--fs-md) / 1.45 var(--font-ui);
+}
+
+html.phone #root {
+  height: 100dvh;
+}
+
+/* Text is for reading here, not selecting by accident: what can be quoted or
+   copied says so. */
+html.phone .p-app button {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.phone ::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* ---- The shell: bar, tabs, nav, screens over them ---- */
+
+.p-app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.p-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--m-bar-h);
+  padding: 0 4px;
+  background: var(--bg);
+}
+
+.p-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  color: var(--fg-2);
+}
+
+.p-icon.small {
+  width: 40px;
+  height: 40px;
+}
+
+.p-icon:active,
+.p-row:active,
+.p-menu-item:active,
+.p-chip:active,
+.p-btn:active,
+.p-pick:active,
+.p-title:not(:disabled):active,
+.p-nav-item:active .p-nav-ind,
+.p-tile:active,
+.p-limits:active {
+  background-image: linear-gradient(var(--bg-active), var(--bg-active));
+}
+
+.p-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 48px;
+  padding: 0 8px 0 12px;
+  border-radius: 8px;
+  color: var(--fg);
+  text-align: left;
+}
+
+.p-bar > .p-icon + .p-title {
+  padding-left: 4px;
+}
+
+.p-title-main {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 20px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p-title-main svg {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--fg-3);
+  vertical-align: -4px;
+}
+
+.p-title-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p-title.path .p-title-main {
+  display: block;
+  font: 500 15px / 1.3 var(--font-mono);
+  text-overflow: ellipsis;
+}
+
+.p-title.path .p-title-sub {
+  display: block;
+  direction: rtl;
+  font-family: var(--font-mono);
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.p-tabs {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.p-tab {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.p-tab[hidden] {
+  display: none;
+}
+
+.p-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.p-nav {
+  flex: none;
+  display: flex;
+  height: calc(var(--m-nav-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--m-surface);
+}
+
+.p-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.p-nav-ind {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 32px;
+  border-radius: 16px;
+  transition: background-color 0.2s;
+}
+
+.p-nav-item.on {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.p-nav-item.on .p-nav-ind {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+.p-badge {
+  position: absolute;
+  top: -2px;
+  left: 36px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--m-error);
+  color: var(--m-on-error);
+  font: 600 11px / 16px var(--font-ui);
+  text-align: center;
+}
+
+.p-badge.quiet {
+  background: var(--m-highest);
+  color: var(--fg);
+}
+
+.p-fab {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--m-nav-h) + env(safe-area-inset-bottom) + 16px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 20px 0 16px;
+  border-radius: 16px;
+  background: var(--m-container);
+  color: var(--m-on-container);
+  font-size: 15px;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+}
+
+.p-fab:active {
+  background-image: linear-gradient(rgba(211, 227, 253, 0.12), rgba(211, 227, 253, 0.12));
+}
+
+.p-fab-room {
+  height: 88px;
+}
+
+/* A screen over the tabs: a file, a session. Kept laid out while away, so
+   coming back finds the place held. */
+.p-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(28px);
+  transition:
+    opacity 0.2s,
+    transform 0.28s var(--m-ease),
+    visibility 0s 0.28s;
+}
+
+.p-screen.open {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.22s,
+    transform 0.28s var(--m-ease);
+}
+
+/* A file opened from a session goes over it. */
+.p-screen.p-file {
+  z-index: 11;
+}
+
+.p-screen > .content {
+  flex: 1;
+  min-height: 0;
+}
+
+.p-screen.session > .agent-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+.p-app.offline .p-bar .p-title-sub::after {
+  content: " · offline";
+  color: var(--m-error);
+}
+
+/* ---- Lists ---- */
+
+.p-sec {
+  display: flex;
+  align-items: baseline;
+  padding: 20px 16px 6px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.p-sec-aside {
+  margin-left: 8px;
+  color: var(--fg-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.p-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 16px;
+  color: var(--fg);
+  text-align: left;
+}
+
+.p-row.on {
+  color: var(--accent);
+}
+
+.p-row.dim {
+  opacity: 0.6;
+}
+
+.p-row-icon {
+  flex: none;
+  width: 24px;
+  color: var(--fg-2);
+}
+
+.p-row.on .p-row-icon {
+  color: var(--accent);
+}
+
+.p-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.p-row-title {
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p-row-title > .clamp2,
+.p-row-title > .p-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.p-row-sub {
+  color: var(--fg-2);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.p-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.p-row-top .p-row-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.p-when {
+  flex: none;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+
+.clamp2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.p-session {
+  position: relative;
+  align-items: flex-start;
+  min-height: 72px;
+  padding: 12px 16px;
+  background: var(--bg);
+  touch-action: pan-y;
+  transition: transform 0.2s var(--m-ease);
+  -webkit-touch-callout: none;
+}
+
+.p-session.moving {
+  transition: none;
+}
+
+.p-lead {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--m-high);
+  color: var(--fg-2);
+}
+
+.p-lead.claude {
+  color: #d97757;
+}
+
+.p-badge-text {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-right: 6px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
+.p-badge-text.warn {
+  background: var(--mod-bg);
+  color: var(--mod);
+}
+
+.p-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
+.p-dot.busy {
+  background: var(--accent);
+  animation: p-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes p-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.p-fold {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.p-warn {
+  color: var(--mod);
+}
+
+.p-swipe {
+  position: relative;
+  overflow: hidden;
+}
+
+.p-swipe-bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: var(--m-high);
+  color: var(--fg-2);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.p-swipe.armed .p-swipe-bg {
+  background: #8c1d18;
+  color: #f9dedc;
+}
+
+.p-empty {
+  padding: 40px 24px;
+  color: var(--fg-3);
+  text-align: center;
+}
+
+.p-empty h2 {
+  margin: 0 0 8px;
+  color: var(--fg);
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.p-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: calc(100% - 32px);
+  margin: 8px 16px 0;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: var(--m-surface);
+}
+
+.p-limits-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--fg-2);
+}
+
+.p-limits-row > svg {
+  margin-right: -4px;
+}
+
+.p-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.p-limit-label {
+  color: var(--fg-3);
+}
+
+.p-meter {
+  position: relative;
+  width: 44px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--m-highest);
+}
+
+.p-meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.p-limit.warn .p-meter > span {
+  background: var(--mod);
+}
+
+.p-limit.high .p-meter > span {
+  background: var(--del);
+}
+
+/* ---- Chips, buttons, fields ---- */
+
+.p-subbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.p-sum {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-3);
+  font-size: 12.5px;
+}
+
+.p-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.p-chips.wrap {
+  flex-wrap: wrap;
+  padding: 4px 24px 12px;
+}
+
+.p-chips-lead {
+  flex: none;
+  color: var(--fg-3);
+}
+
+.p-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--fg-2);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.p-chip.on {
+  background: var(--m-tonal);
+  box-shadow: none;
+  color: var(--m-on-tonal);
+}
+
+.p-chip.small {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.p-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-crumbs {
+  gap: 2px;
+}
+
+.p-crumb {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.p-crumb-sep {
+  color: var(--fg-4);
+}
+
+.p-crumbs .p-chip {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.p-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 20px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.p-btn.filled {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.p-btn.tonal {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+.p-btn.outline {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.p-btn.text {
+  padding: 0 12px;
+}
+
+.p-btn:disabled {
+  opacity: 0.38;
+}
+
+.p-field {
+  display: block;
+  width: calc(100% - 48px);
+  height: 56px;
+  margin: 4px 24px 12px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 4px 4px 0 0;
+  outline: none;
+  background: var(--m-high);
+  box-shadow: inset 0 -1px 0 var(--fg-2);
+  color: var(--fg);
+  font-size: 16px;
+}
+
+.p-field:focus {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.p-inline-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px 4px;
+}
+
+.p-inline-form .p-field {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.p-seg {
+  display: flex;
+  margin: 4px 24px 12px;
+  overflow: hidden;
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.p-seg > button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.p-seg > button + button {
+  border-left: 1px solid var(--border-strong);
+}
+
+.p-seg > button.on {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+.p-tag {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: var(--m-high);
+  color: var(--fg-2);
+  font-size: 12px;
+  vertical-align: 1px;
+}
+
+.p-num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--m-high);
+  color: var(--fg-2);
+  font-size: 13px;
+}
+
+.p-row.on .p-num {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+.p-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+.p-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0 14px;
+  border-radius: 16px;
+  background: var(--m-high);
+  color: var(--fg);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.p-tile svg {
+  color: var(--accent);
+}
+
+.p-preview {
+  display: -webkit-box;
+  margin: 0 16px 8px;
+  padding: 10px 14px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--m-high);
+  color: var(--fg-2);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.p-note {
+  padding: 0 24px 10px;
+  color: var(--fg-2);
+  font-size: 14px;
+}
+
+.p-sub-label {
+  padding: 12px 24px 6px;
+  color: var(--fg-2);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ---- Files ---- */
+
+.p-list {
+  padding-bottom: 16px;
+}
+
+.p-row-trail {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.p-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+
+.p-status {
+  font: 600 12px / 1 var(--font-mono);
+  color: var(--fg-3);
+}
+
+.p-status.st-A,
+.p-status.st-U {
+  color: var(--add);
+}
+
+.p-status.st-M {
+  color: var(--mod);
+}
+
+.p-status.st-D {
+  color: var(--del);
+}
+
+.p-status.st-R {
+  color: var(--accent);
+}
+
+.p-mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mod);
+}
+
+/* ---- Sheets and menus ---- */
+
+.p-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--backdrop);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.p-scrim.open {
+  opacity: 1;
+}
+
+.p-scrim.clear {
+  background: none;
+  opacity: 1;
+}
+
+.p-sheet {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 88%;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 28px 28px 0 0;
+  background: var(--m-low);
+  transform: translateY(100%);
+  transition: transform 0.3s var(--m-ease);
+}
+
+.p-sheet.open {
+  transform: none;
+}
+
+.p-sheet.dragging {
+  transition: none;
+}
+
+.p-grab {
+  flex: none;
+  padding-bottom: 4px;
+  touch-action: none;
+}
+
+.p-handle {
+  width: 32px;
+  height: 4px;
+  margin: 16px auto 14px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  opacity: 0.5;
+}
+
+.p-sheet-title {
+  padding: 0 24px 12px;
+  color: var(--fg);
+  font-size: 22px;
+  line-height: 1.3;
+}
+
+.p-sheet-body {
+  min-height: 0;
+  padding-bottom: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.p-sheet-body > .p-row {
+  padding: 8px 24px;
+}
+
+.p-sheet-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 16px 16px;
+}
+
+.p-choice {
+  gap: 16px;
+}
+
+.p-radio {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--fg-2);
+  border-radius: 50%;
+}
+
+.p-choice.on {
+  color: var(--fg);
+}
+
+.p-choice.on .p-radio {
+  border-color: var(--accent);
+  background: radial-gradient(var(--accent) 0 4.5px, transparent 5.5px);
+}
+
+.p-menu {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 8px);
+  right: 8px;
+  min-width: 220px;
+  max-width: calc(100% - 16px);
+  padding: 8px 0;
+  border-radius: 8px;
+  background: var(--m-high);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: scale(0.92);
+  transform-origin: top right;
+  transition:
+    transform 0.18s var(--m-ease),
+    opacity 0.15s;
+}
+
+.p-menu.open {
+  opacity: 1;
+  transform: none;
+}
+
+.p-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  height: 48px;
+  padding: 0 20px 0 16px;
+  color: var(--fg);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.p-menu-item svg {
+  color: var(--fg-2);
+}
+
+.p-menu-sep {
+  height: 1px;
+  margin: 8px 0;
+  background: var(--border);
+}
+
+.p-menu-sep:first-child,
+.p-menu-sep:last-child,
+.p-menu-sep + .p-menu-sep {
+  display: none;
+}
+
+/* ---- The Diff and the code ---- */
+
+html.phone .p-tab .content,
+html.phone .p-screen .content {
+  background: var(--bg);
+}
+
+html.phone .file {
+  margin: 0 0 8px;
+}
+
+/* A file's head is two rows, its name over its counts and buttons, which in
+   one ran off the card. */
+html.phone .file-head {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--file-head-h);
+  row-gap: 2px;
+  padding: 6px 4px 4px;
+  background: var(--m-surface);
+}
+
+html.phone .file-head > .file-path {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+html.phone .file-head > .spacer {
+  flex: 1 0 100%;
+  height: 0;
+}
+
+/* The Comments tab counts them. */
+html.phone .file-head > .file-comments {
+  display: none;
+}
+
+/* The second row has room for the counts a narrow card leaves out. */
+html.phone .file-head > .stat {
+  display: inline-flex;
+  margin-right: auto;
+  padding-left: 8px;
+}
+
+html.phone .file-head .view-file,
+html.phone .file-head .btn {
+  min-width: 36px;
+  height: 36px;
+  justify-content: center;
+}
+
+/* One number, the line's own, and no "+" there is no pointer to hover with: a
+   line is commented on by pressing it. */
+html.phone .gutter {
+  padding: 0 4px 0 8px;
+}
+
+html.phone .gutter::after {
+  display: none;
+}
+
+html.phone .ln {
+  min-width: 22px;
+}
+
+/* Of unified's two numbers; one beside a change bar's strip is the only one. */
+html.phone .gutter .ln:has(+ .ln),
+html.phone .cell.del .gutter .ln + .ln {
+  display: none;
+}
+
+html.phone .cell.del .gutter .ln:first-child {
+  display: inline-block;
+}
+
+html.phone .code::before {
+  width: 8px;
+}
+
+html.phone .code {
+  padding-right: 8px;
+}
+
+/* No keys to press, and no room to set a comment in beside the code. */
+html.phone .composer-actions {
+  flex-wrap: wrap;
+}
+
+html.phone .composer-actions .hint {
+  display: none;
+}
+
+html.phone .thread-slot {
+  padding: 0 8px;
+}
+
+/* A note takes the whole screen. */
+html.phone .backdrop:has(> .note-view) {
+  padding: 0;
+}
+
+html.phone .modal.note-view,
+html.phone .modal.note-view.writing {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+html.phone .note-view-body {
+  padding: 20px 18px 28px;
+}
+
+html.phone .note-form-top {
+  padding: 18px 18px 0;
+}
+
+html.phone .note-form .note-body-input {
+  padding: 14px 18px 20px;
+}
+
+html.phone .note-form .composer-error {
+  padding: 0 18px 10px;
+}
+
+html.phone .note-form-foot .hint {
+  display: none;
+}
+
+/* Room for a finger, without moving the title off its line. */
+html.phone .note-status,
+html.phone .note-priority {
+  width: 28px;
+  height: 28px;
+  margin: -4px -3px;
+}
+
+/* A line held is picked (phone/Pick.jsx), not the browser's selection. */
+html.phone .diff .cell {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+html.phone .diff .cell.sel {
+  background-image: linear-gradient(rgba(168, 199, 250, 0.2), rgba(168, 199, 250, 0.2));
+}
+
+html.phone .diff .cell.sel .ln {
+  color: var(--accent);
+}
+
+.p-pickbar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: calc(var(--m-bar-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 8px 0 4px;
+  background: var(--m-high);
+  animation: p-pickbar-in 0.18s var(--m-ease);
+}
+
+.p-pickbar-title {
+  flex: 1;
+  min-width: 0;
+  padding-left: 4px;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p-icon.tonal {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+@keyframes p-pickbar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+/* ---- The session ---- */
+
+html.phone .agent-pane {
+  position: relative;
+  background: var(--bg);
+}
+
+html.phone .agent-log {
+  --log-pad: 16px;
+  gap: 6px;
+  padding-bottom: 24px;
+}
+
+html.phone .agent-text {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+html.phone .agent-prompt {
+  max-width: 86%;
+  margin-top: 16px;
+  padding: 10px 16px;
+  border-radius: 20px 20px 6px 20px;
+  background: var(--m-high);
+  font-size: 15px;
+  -webkit-touch-callout: none;
+}
+
+html.phone .agent-prompt.queued {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--border);
+}
+
+html.phone .agent-prompt.tappable:active {
+  background-image: linear-gradient(var(--bg-active), var(--bg-active));
+}
+
+/* A long press does what the button beside it does. */
+html.phone .agent-rewind {
+  display: none;
+}
+
+html.phone .agent-prompt-foot {
+  align-items: center;
+  font-size: 12px;
+}
+
+html.phone .agent-prompt-foot .agent-prompt-hint {
+  display: inline;
+}
+
+html.phone .agent-undo {
+  position: relative;
+  height: 32px;
+  margin: 4px -8px -4px 4px;
+  padding: 0 16px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--m-highest);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html.phone .agent-undo:hover {
+  text-decoration: none;
+}
+
+/* How long it is there for: PHONE_TAKE_BACK_MS. */
+html.phone .agent-undo::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 3px;
+  background: var(--accent);
+  transform-origin: left;
+  animation: p-undo 4s linear forwards;
+}
+
+@keyframes p-undo {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+html.phone .agent-working {
+  font-size: 14px;
+}
+
+html.phone .agent-jump > button {
+  height: 36px;
+  padding: 0 16px 0 12px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--m-high);
+  box-shadow: var(--shadow-pop);
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.p-jump {
+  position: absolute;
+  right: 12px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--m-high);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translateX(8px);
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    transform 0.2s var(--m-ease);
+}
+
+.p-jump.on {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.p-jump > button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--fg);
+}
+
+.p-jump > button + button {
+  border-top: 1px solid var(--border-soft);
+}
+
+.p-jump > button:active {
+  background: var(--bg-active);
+}
+
+html.phone .agent-at-work {
+  margin: 0 12px 4px;
+  padding-inline: 12px;
+}
+
+html.phone .agent-readonly {
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  border-top: 0;
+  background: var(--m-surface);
+  color: var(--fg-2);
+  font-size: 14px;
+}
+
+/* Nothing said yet: the question, places to start, the box at the foot. */
+html.phone .agent-start {
+  justify-content: flex-end;
+  gap: 20px;
+  padding: 24px 16px 20px;
+}
+
+html.phone .agent-start-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 400;
+}
+
+html.phone .agent-suggestions {
+  max-width: 100%;
+}
+
+html.phone .agent-suggestions > button {
+  max-width: 100%;
+  height: auto;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 18px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--fg-2);
+  font-size: 14px;
+  text-align: center;
+  white-space: normal;
+}
+
+/* Text selected in the conversation: the bar over the box, clear of
+   Android's own menu over the selection. */
+html.phone .selection-ask.at-foot {
+  bottom: calc(var(--p-box-h, 120px) + 8px);
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--m-high);
+}
+
+html.phone .selection-ask .attach-btn {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 20px;
+  font-size: 14px;
+}
+
+/* A request in the conversation: what it would do, its answers at the box. */
+html.phone .agent-ask.prompt {
+  margin: 12px 0;
+  padding: 14px;
+  border-radius: 20px;
+  background: var(--m-surface);
+}
+
+html.phone .agent-ask-head {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+html.phone .agent-ask .prompt-card {
+  border: 0;
+  border-radius: 12px;
+}
+
+/* ---- The Comments tab: the page's comments panel, the whole tab ---- */
+
+html.phone .p-comments .comments-panel {
+  position: static;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  box-shadow: none;
+  background: var(--bg);
+  animation: none;
+}
+
+/* The tab bar is the way out, and where comments are kept is the desktop's to say. */
+html.phone .p-comments .side-resize,
+html.phone .p-comments .sidebar-modes > .ghost,
+html.phone .p-comments .sidebar-foot {
+  display: none;
+}
+
+html.phone .p-comments .sidebar-modes {
+  padding: 8px 16px;
+}
+
+html.phone .p-comments .sidebar-modes > .seg {
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+html.phone .p-comments .sidebar-modes > .seg > button {
+  flex: 1;
+  justify-content: center;
+  height: 40px;
+  border-radius: 0;
+  color: var(--fg);
+  font-size: 14px;
+}
+
+html.phone .p-comments .sidebar-modes > .seg > button + button {
+  border-left: 1px solid var(--border-strong);
+}
+
+html.phone .p-comments .sidebar-modes > .seg > button.on {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+html.phone .p-comments .comment-list,
+html.phone .p-comments .notes {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 24px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+html.phone .p-comments .comment-picks {
+  background: var(--bg);
+}
+
+html.phone .p-comments .comment-picks {
+  min-height: 48px;
+  padding: 4px 16px;
+  font-size: 14px;
+}
+
+html.phone .p-comments .tick {
+  width: 22px;
+  height: 22px;
+}
+
+html.phone .p-comments .thread {
+  margin: 0 12px 10px;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--m-surface);
+  font-size: 15px;
+}
+
+html.phone .p-comments .comment-actions button,
+html.phone .p-comments .thread-foot .link,
+html.phone .p-comments .thread-foot button {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+html.phone .p-comments .thread-foot {
+  gap: 4px;
+  margin-left: -10px;
+}
+
+html.phone .agent-chip-x {
+  width: 32px;
+  height: 32px;
+}
+
+/* ---- The message box ---- */
+
+.p-composer {
+  flex: none;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: var(--bg);
+}
+
+.p-composer > .p-chips {
+  padding: 0 2px 10px;
+}
+
+.p-dock[hidden] {
+  display: none;
+}
+
+.p-dock {
+  padding: 2px 2px 10px;
+}
+
+.p-dock-q {
+  padding: 0 6px 8px;
+  color: var(--fg);
+  font-size: 14.5px;
+  font-weight: 500;
+}
+
+.p-dock-error {
+  padding: 0 6px 8px;
+  color: var(--del);
+  font-size: 13.5px;
+}
+
+.p-dock-row {
+  display: flex;
+  gap: 8px;
+}
+
+.p-dock-row > .p-btn {
+  flex: 1 1 auto;
+  padding: 0 10px;
+}
+
+.p-dock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.p-dock-list > .p-btn {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 40px;
+  padding: 8px 20px;
+  text-align: left;
+  white-space: normal;
+}
+
+.p-box {
+  position: relative;
+  padding: 8px 8px 6px 16px;
+  border-radius: 26px;
+  background: var(--m-high);
+}
+
+.p-box-text {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin-left: -10px;
+}
+
+.p-box textarea {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  min-height: 26px;
+  max-height: 160px;
+  padding: 6px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: none;
+  color: var(--fg);
+  font: 16px / 1.4 var(--font-ui);
+}
+
+.p-box textarea::placeholder {
+  color: var(--fg-3);
+}
+
+.p-box-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0 0 -8px;
+}
+
+.p-pick {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  border-radius: 18px;
+  color: var(--fg-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.p-pick-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-pick-effort {
+  flex: none;
+  color: var(--fg-3);
+  font-weight: 400;
+}
+
+.p-spacer {
+  flex: 1;
+}
+
+.p-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.p-send:disabled {
+  background: var(--bg-active);
+  color: var(--fg-4);
+}
+
+.p-send.stop {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+.p-with {
+  padding: 6px 4px 6px 0;
+  color: var(--fg-3);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* What goes with the message, over its words. */
+html.phone .p-box .agent-attached {
+  margin: 0 0 6px -8px;
+  gap: 6px;
+}
+
+html.phone .p-box .agent-chip,
+html.phone .p-box .agent-image-chip {
+  height: 32px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+html.phone .p-box .command-menu {
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: auto;
+  max-height: 45dvh;
+  border-radius: 16px;
+}
+
+html.phone .p-box .composer-command {
+  margin: 0 0 4px -8px;
+}
+
+/* ---- dv's windows, as sheets ---- */
+
+html.phone .backdrop {
+  align-items: flex-end;
+  padding: 0;
+}
+
+html.phone .modal,
+html.phone .modal-wide {
+  width: 100%;
+  max-height: 92dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 28px 28px 0 0;
+  background: var(--m-low);
+  animation: p-sheet-in 0.3s var(--m-ease);
+}
+
+html.phone .backdrop.centred {
+  align-items: center;
+  padding: 24px;
+}
+
+html.phone .backdrop.centred .modal {
+  border-radius: 28px;
+  animation: none;
+}
+
+@keyframes p-sheet-in {
+  from {
+    transform: translateY(40%);
+    opacity: 0;
+  }
+}
+
+html.phone .palette-input,
+html.phone .viewer-head {
+  min-height: 56px;
+  padding: 8px 16px 0;
+  background: none;
+}
+
+html.phone .palette-input input {
+  font-size: 16px;
+}
+
+html.phone .palette-row {
+  min-height: 48px;
+}
+
+/* No keys to press on a phone. */
+html.phone .palette-foot > span:has(kbd),
+html.phone .palette-foot.prompt-foot .prompt-keys {
+  display: none;
+}
+
+html.phone .p-box textarea:focus,
+html.phone .p-box textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Settings is a screen of its own, as Android's are: its sections a row of
+   chips under the title, each setting its words over its choices. */
+html.phone .backdrop:has(> .modal.settings) {
+  align-items: stretch;
+  padding: 0;
+}
+
+html.phone .modal.settings,
+html.phone .backdrop.centred > .modal.settings {
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  background: var(--bg);
+  animation: none;
+}
+
+html.phone .settings .viewer-head {
+  min-height: var(--m-bar-h);
+  padding: 0 4px 0 20px;
+}
+
+html.phone .settings .viewer-head .path {
+  font: 400 22px / 1.3 var(--font-ui);
+}
+
+html.phone .settings .viewer-head .ghost {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+}
+
+html.phone .settings-tabs {
+  padding: 4px 16px 8px;
+}
+
+html.phone .settings-tabs > .seg {
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  scrollbar-width: none;
+}
+
+html.phone .settings-tabs > .seg > button {
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--fg-2);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html.phone .settings-tabs > .seg > button.on {
+  background: var(--m-tonal);
+  box-shadow: none;
+  color: var(--m-on-tonal);
+}
+
+html.phone .settings-body {
+  gap: 24px;
+  padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
+}
+
+html.phone .settings-text > div:first-child {
+  color: var(--fg);
+  font-size: 16px;
+}
+
+html.phone .settings-note {
+  font-size: 13.5px;
+  color: var(--fg-2);
+}
+
+html.phone .settings-row > .seg {
+  margin-top: 4px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+html.phone .settings-row > .seg > button {
+  height: 40px;
+  border-radius: 0;
+  color: var(--fg);
+  font-size: 14px;
+}
+
+html.phone .settings-row > .seg > button + button {
+  border-left: 1px solid var(--border-strong);
+}
+
+html.phone .settings-row > .seg > button.on {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+/* ---- Notices, as Android's snackbars ---- */
+
+html.phone .notice {
+  width: 100%;
+  padding: 12px 40px 12px 14px;
+  border-radius: 8px;
+  background: #e3e3e3;
+  box-shadow: var(--shadow-pop);
+  color: #303030;
+  font-size: 14px;
+}
+
+html.phone .notice .notice-detail,
+html.phone .notice .notice-last {
+  color: #5f6368;
+}
+
+html.phone .notice .notice-icon {
+  background: rgba(0, 0, 0, 0.08);
+  color: #303030;
+}
+
+html.phone .notice .notice-close {
+  color: #5f6368;
+}
+
+html.phone .notice .notice-actions button {
+  color: #0b57d0;
+  background: none;
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .p-screen,
+  .p-screen.open,
+  .p-sheet,
+  .p-menu,
+  .p-jump {
+    transition: none;
+  }
+
+  html.phone .modal {
+    animation: none;
+  }
+}

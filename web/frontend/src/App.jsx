@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
 import Header, { AUTO, PRESETS, usePR } from "./Header.jsx";
@@ -22,7 +22,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE_APP, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
@@ -36,6 +36,10 @@ const MODES = ["diff", "code", "agent"];
 const FOLDER_MODES = ["code", "agent"];
 const NO_FILTER = { include: "", exclude: "" };
 
+// The phone app's shell is its own chunk, fetched only by a phone; the parts
+// it shares with the page's views come with them.
+const Phone = lazy(() => import("./phone/Phone.jsx"));
+
 export default function App() {
   const [meta, setMeta] = useState(null);
   // A picked scope is a pin for this tab; a new session follows the work again.
@@ -44,16 +48,16 @@ export default function App() {
   const [threads, setThreads] = useState([]);
   const [error, setError] = useState("");
 
-  // A phone has room for one side of a diff, and wraps by default, with its own
-  // setting; it shows one panel at a time, over the page: "side", "comments" or null.
-  const phone = useMedia(PHONE);
-  const [panel, setPanel] = useState(null);
+  // A phone gets the phone app, drawn from the same state, rather than this
+  // page. It has room for one side of a diff, and wraps by default, with its
+  // own setting.
+  const phoneApp = useMedia(PHONE_APP);
   const [viewPicked, setView] = usePersisted("view", "split");
-  const view = phone ? "unified" : viewPicked;
+  const view = phoneApp ? "unified" : viewPicked;
   const [contextLines, setContextLines] = usePref("user", "context", 3);
   const [wrapWide, setWrapWide] = usePersisted("wrap", false);
   const [wrapPhone, setWrapPhone] = usePersisted("wrapPhone", true);
-  const [wrap, setWrap] = phone ? [wrapPhone, setWrapPhone] : [wrapWide, setWrapWide];
+  const [wrap, setWrap] = phoneApp ? [wrapPhone, setWrapPhone] : [wrapWide, setWrapWide];
   const [theme, setTheme] = usePref("user", "theme", "dark");
   const [hideGenerated, setHideGenerated] = usePref("repo", "hideGenerated", false);
   const [pathFilter, setPathFilter] = usePref("repo", "pathFilter", NO_FILTER);
@@ -109,9 +113,16 @@ export default function App() {
   // Counts what was put in the Agent view's message box from elsewhere, each
   // to leave the box ready to write in.
   const [boxFocus, setBoxFocus] = useState(0);
+  // The phone app shows a session over its tabs, which says when it is open;
+  // going to a session from a notice asks it to open, by count.
+  const [phoneSession, setPhoneSession] = useState(false);
+  const [showSession, setShowSession] = useState(0);
+  const [showCode, setShowCode] = useState(0);
+  const phoneRef = useRef(phoneApp);
+  phoneRef.current = phoneApp;
   const [commentsOpen, setCommentsOpen] = usePersisted("commentsOpen", false, { folder: true });
-  const showComments = phone ? panel === "comments" : commentsOpen;
-  const showPanel = useCallback((on) => (phone ? setPanel(on ? "comments" : null) : setCommentsOpen(on)), [phone, setCommentsOpen]);
+  const showComments = commentsOpen;
+  const showPanel = setCommentsOpen;
   const [commentsWidth, setCommentsWidth] = usePersisted("commentsWidth", 0); // 0: the stylesheet's default
   const [panelTab, setPanelTab] = usePersisted("panelTab", "comments");
   // The Ask panel's conversation, out of the session list: "" until the first
@@ -136,7 +147,8 @@ export default function App() {
   // A folder outside git has nothing to diff, so it opens on its files.
   const folder = meta?.git === false;
   const modes = folder ? FOLDER_MODES : MODES;
-  const [modePicked, setMode] = usePersisted("mode", "diff", { folder: true });
+  // The phone app's home is Agent.
+  const [modePicked, setMode] = usePersisted("mode", phoneApp ? "agent" : "diff", { folder: true });
   const mode = folder && modePicked === "diff" ? "code" : modePicked;
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -951,7 +963,7 @@ export default function App() {
       if (e.code !== "KeyH" || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
       if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
       e.preventDefault();
-      location.href = "/";
+      location.href = phoneRef.current ? "/?folders" : "/";
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -1083,6 +1095,7 @@ export default function App() {
         if (thread.origin) {
           setMode("agent");
           setAgentId(thread.origin.session);
+          setShowSession((n) => n + 1);
           return setAgentReveal({ tool: thread.origin.tool });
         }
         // A comment on a file outside the diff can only be shown in Code mode.
@@ -1092,6 +1105,7 @@ export default function App() {
         const fd = fileDataRef.current[thread.file]?.fd;
         const moved = thread.side === "old" && entry?.status !== "D" && fd;
         setMode("code");
+        setShowCode((n) => n + 1);
         return openCode(thread.file, moved ? newLineFor(fd, thread.endLine) : thread.endLine);
       }
       if (type === "reply") await api.reply(thread.id, action.body);
@@ -1135,15 +1149,28 @@ export default function App() {
   const goBack = useCallback(() => setStack((s) => s.slice(0, -1)), []);
   const closeOverlay = useCallback(() => setStack([]), []);
 
+  // The phone app shows a file on a screen of its own, over whatever it was
+  // opened from; it is asked to by count.
+  const showCodeAt = useCallback(
+    (file, line = 0) => {
+      setStack([]);
+      setMode("code");
+      openCode(file, line);
+      setShowCode((n) => n + 1);
+    },
+    [openCode, setMode],
+  );
+
   // Where a jump lands: in place in Code mode, and in a viewer over the diff -
   // or over Claude's request, when that is open, so Esc comes back to it.
   const goTo = useCallback(
     (file, line, left) => {
+      if (phoneRef.current && !promptRef.current) return showCodeAt(file, line);
       if (modeRef.current !== "code" || promptRef.current) return pushOverlay({ type: "file", file, line }, left);
       setStack([]);
       openCode(file, line);
     },
-    [pushOverlay, openCode],
+    [pushOverlay, openCode, showCodeAt],
   );
 
   // A path in what an agent or a comment says opens where a jump does. The
@@ -1199,9 +1226,10 @@ export default function App() {
       const at = lineOnScreen(scrollRef.current, path);
       const fd = fileDataRef.current[path]?.fd;
       const line = !at ? 0 : at.side === side || !fd ? at.line : newLineFor(fd, at.line);
+      if (phoneRef.current && side === "new") return showCodeAt(path, line);
       openOverlay({ type: "file", file: path, line, side });
     },
-    [openOverlay],
+    [openOverlay, showCodeAt],
   );
 
   // Cmd+P reads files from the working tree, like every other jump; only a file
@@ -1213,9 +1241,10 @@ export default function App() {
         return openCode(path);
       }
       const deleted = diffRef.current?.files.some((f) => f.path === path && f.status === "D");
+      if (phoneRef.current && !deleted) return showCodeAt(path);
       pushOverlay({ type: "file", file: path, side: deleted ? "old" : undefined }, { query });
     },
-    [pushOverlay, openCode],
+    [pushOverlay, openCode, showCodeAt],
   );
 
   const loadSessions = useCallback(() => {
@@ -1271,14 +1300,16 @@ export default function App() {
   // A session in a new worktree, which only a hub makes, of a repository.
   const [worktreeOpen, setWorktreeOpen] = useState(false);
   // A worktree starts from a commit; a task has no worktrees at all.
-  const newWorktree = boot.base && meta?.git && meta.head?.sha && !meta.task ?() => (setPanel(null), setWorktreeOpen(true)) : null;
+  const newWorktree = boot.base && meta?.git && meta.head?.sha && !meta.task ? () => setWorktreeOpen(true) : null;
+  // closeSession reports whether it closed: one still working is asked about.
   const closeSession = useCallback(
     async (id) => {
       const row = agent.sessions.find((x) => x.id === id);
-      if (row?.running === "dv" && row.busy && !confirm(`${agentName(row.agent)} is still working in this session. Stop it and close?`)) return;
+      if (row?.running === "dv" && row.busy && !confirm(`${agentName(row.agent)} is still working in this session. Stop it and close?`)) return false;
       await api.agentOpen(id, false).catch(() => {});
       if (id === agentId) setAgentId("");
       loadSessions();
+      return true;
     },
     [agent.sessions, agentId, setAgentId, loadSessions],
   );
@@ -1292,10 +1323,11 @@ export default function App() {
     {
       id: "new-session",
       name: "New session",
-      note: "In the Agent view · also Alt+N there",
+      note: phoneApp ? "" : "In the Agent view · also Alt+N there",
       run: () => {
         switchMode("agent");
         startSession();
+        setShowSession((n) => n + 1);
       },
     },
     newWorktree && { id: "new-worktree", name: "New worktree", note: "A session in a new worktree of this repo", run: newWorktree },
@@ -1310,8 +1342,9 @@ export default function App() {
     ...[
       ["comments", "comments", "The comments in the review"],
       ["notes", "notes", "The repository's notes, shared by its worktrees"],
-      ["ask", "Ask", "Questions about the code, answered beside it"],
-    ].map(([tab, what, note]) => {
+      // A phone has no room beside the code.
+      !phoneApp && ["ask", "Ask", "Questions about the code, answered beside it"],
+    ].filter(Boolean).map(([tab, what, note]) => {
       const shown = showComments && panelTab === tab;
       return { id: tab, name: `${shown ? "Close" : "Open"} ${what}`, note, run: () => (shown ? showPanel(false) : (setPanelTab(tab), showPanel(true))) };
     }),
@@ -1327,7 +1360,7 @@ export default function App() {
     comparing && scope.kind !== "auto" && { id: "scope-auto", name: "Show automatically", note: "Follows your work, as the page starts", run: () => setScope(AUTO) },
     pr && { id: "pr", name: `Open pull request #${pr.number}`, note: pr.title, run: () => window.open(pr.url, "_blank", "noopener") },
     meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
-    { id: "settings", name: "Open settings", note: "Also the , key", run: () => openOverlay({ type: "settings" }) },
+    { id: "settings", name: "Open settings", note: phoneApp ? "" : "Also the , key", run: () => openOverlay({ type: "settings" }) },
     {
       id: "restart",
       name: "Restart dv",
@@ -1338,7 +1371,8 @@ export default function App() {
         restartDv().catch((e) => say("Could not restart dv", e.message));
       },
     },
-    boot.base && { id: "hub", name: "Back to the hub", note: "Also Alt+H", run: () => (location.href = "/") },
+    // On a phone / opens the folder last used; ?folders is the hub's page.
+    boot.base && { id: "hub", name: "Back to the hub", note: phoneApp ? "" : "Also Alt+H", run: () => (location.href = phoneApp ? "/?folders" : "/") },
   ].filter(Boolean);
 
   // An action run from outside the Agent view, or in a session of its own,
@@ -1363,9 +1397,9 @@ export default function App() {
       }
       const openSession = (session) => {
         setPromptOpen(false);
-        setPanel(null);
         setAgentId(session);
         switchMode("agent");
+        setShowSession((n) => n + 1);
       };
       // Into the message box instead, after what is typed there, to be edited.
       if (a.where === "current" && a.draft) {
@@ -1402,7 +1436,8 @@ export default function App() {
   }, [openOverlay]);
 
   const notices = useNotices({
-    looking: mode === "agent" ? agentId : null,
+    looking: phoneApp ? (phoneSession ? agentId : null) : mode === "agent" ? agentId : null,
+    phone: phoneApp,
     asking: askShown ? askId : null,
     desktop: desktopNotices,
     go: openFolderSession,
@@ -1417,9 +1452,9 @@ export default function App() {
         setPanelTab("ask");
         return showPanel(true);
       }
-      setPanel(null);
       selectSession(id);
       switchMode("agent");
+      setShowSession((n) => n + 1);
     },
   });
   // Desktop notifications are the browser's to allow, asked when turned on.
@@ -1541,9 +1576,10 @@ export default function App() {
     },
     [addAttached, askId, setPanelTab, showPanel],
   );
+  // The Ask panel sits beside the code, which a phone has no room for.
   const attachTarget = useMemo(
-    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent, onAsk: agents[askSettings.agent]?.available ? askAbout : null }),
-    [attachChoices, attachTo, setAttachPick, newAgent, askAbout, agents, askSettings.agent],
+    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent, onAsk: !phoneApp && agents[askSettings.agent]?.available ? askAbout : null }),
+    [attachChoices, attachTo, setAttachPick, newAgent, askAbout, agents, askSettings.agent, phoneApp],
   );
   const newAsk = useCallback(async () => {
     const { id } = await api.agentCreate(askSettings.agent, true);
@@ -1591,13 +1627,12 @@ export default function App() {
       const key = "draft:" + (to || "new");
       setPref("repo", key, [readPref("repo", key, ""), noteText(note)].filter((t) => t.trim()).join("\n\n"), "");
       setBoxFocus((n) => n + 1);
-      if (phone) setPanel(null);
       if (to === "") return openAdded();
       setStack([]);
       setAgentId(to);
       switchMode("agent");
     },
-    [attachTo, phone, openAdded, setAgentId, switchMode],
+    [attachTo, openAdded, setAgentId, switchMode],
   );
   // Discarding is offered where the diff is your uncommitted work, the working
   // tree against the last commit: elsewhere it would undo something else.
@@ -1871,324 +1906,223 @@ export default function App() {
     }
   }, []);
 
-  return (
-    <AttachTarget.Provider value={attachTarget}>
-    {/* Out of the page's grid, whose rows are the header's and the rest's. */}
-    <Notices />
-    {worktreeOpen && <WorktreeSession repo={meta.repo} from={meta.head?.branch || meta.head?.sha || "HEAD"} onClose={() => setWorktreeOpen(false)} />}
-    <div className={cx("app", offline && "offline")}>
-      <Header
-        meta={meta}
-        folder={folder}
-        mode={mode}
-        onMode={switchMode}
-        scope={scope}
-        resolvedScope={diff?.scope}
-        onScope={setScope}
-        onSearch={() => openSearch()}
-        onOpenFile={() => {
-          setPanel(null);
-          openOverlay({ type: "files" });
-        }}
-        onHelp={() => openOverlay({ type: "help" })}
-        onSettings={() => openOverlay({ type: "settings" })}
-        waiting={requests.length}
-        arrived={arrived}
-        onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
-        bellOn={promptOpen}
-        update={update}
-        pr={pr}
-        onActions={() => openOverlay({ type: "actions" })}
-        comments={threads.filter((t) => !t.resolved).length}
-        commentsOn={showComments}
-        onComments={() => (phone ? setPanel((p) => (p === "comments" ? null : "comments")) : setCommentsOpen((o) => !o))}
-        sideOn={phone && panel === "side"}
-        onSide={() => setPanel((p) => (p === "side" ? null : "side"))}
-        sideRight={sideRight}
-        onNewSession={() => {
-          setPanel(null);
-          startSession();
-        }}
-        onNewWorktree={newWorktree}
-        canStart={agent.available || !!agent.codex?.available}
-      />
-
-      <div
-        className={cx("main", sideRight && "side-right", showComments && "with-comments", phone && panel === "side" && "side-open")}
-        style={{ ...(sideWidth && { "--side-w": sideWidth + "px" }), ...(commentsWidth && { "--comments-w": commentsWidth + "px" }) }}
-      >
-        {phone && <div className={cx("panel-backdrop", panel && "on")} onClick={() => setPanel(null)} />}
-        <Sidebar
-          meta={meta}
-          pr={pr}
-          right={sideRight}
-          mode={mode}
-          modes={modes}
-          onMode={switchMode}
-          attached={attachedCount}
-          uncommitted={uncommittedElsewhere}
-          files={mode === "code" ? explorer : files}
-          onOpenIgnored={listIgnored}
-          threads={threads}
-          activePath={mode === "code" ? codePath : activePath}
-          viewed={viewed}
-          onSelect={(...a) => {
-            if (phone) setPanel(null);
-            (mode === "code" ? openCode : jumpToFile)(...a);
-          }}
-          generatedCount={generatedCount}
-          hideGenerated={hideGenerated}
-          onHideGenerated={changeHideGenerated}
-          pathFilter={pathFilter}
-          onPathFilter={changePathFilter}
-          filteredOut={filteredOut}
-          hiddenGenerated={hiddenGenerated}
-          filtersPaused={filtersPaused}
-          onPauseFilters={setFiltersPaused}
-          onReset={resetReview}
-          agent={{
-            sessions: agent.sessions,
-            available: agent.available || !!agent.codex?.available,
-            // The limits of the agent on screen, or the one a new session starts with.
-            usage: agents[agentId ? agent.sessions.find((s) => s.id === agentId)?.agent || "" : newAgent]?.usage,
-            activeId: agentId,
-            added: attachedLive,
-            asking: askingSessions,
-            onSelect: (id) => {
-              if (phone) setPanel(null);
-              selectSession(id);
-            },
-            onNew: () => {
-              if (phone) setPanel(null);
-              startSession();
-            },
-            onNewWorktree: newWorktree,
-            onClose: closeSession,
-            onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
-          }}
-          onWidth={setSideWidth}
-        />
-
-        <div className="content" ref={scrollRef} onMouseOver={onMouseOver} hidden={mode !== "diff"}>
-          {mode === "diff" && findBar}
-          {error && <div className="banner error">{error}</div>}
-          {meta && !folder && diff && files.length === 0 && !error && (
-            <div className="empty-state">
-              <h2>Nothing to review</h2>
-              {filteredOut + hiddenGenerated > 0 ? (
-                <p>
-                  {filteredOut > 0
-                    ? "No changed file gets past the sidebar's filter."
-                    : "Every change here is to a generated file, and the filter hides those."}{" "}
-                  <button className="link" onClick={showAll}>
-                    Show all
-                  </button>
-                </p>
-              ) : (
-                <p>{diff.scope.desc} produced no changes. Pick another scope from the header.</p>
-              )}
-            </div>
-          )}
-          {files.map((entry) => (
-            <FileSection
-              key={entry.path}
-              entry={entry}
-              state={fileData[entry.path]}
-              onNeed={needFile}
-              view={view}
-              contextLines={contextLines}
-              wrap={wrap}
-              threads={threadsByFile.get(entry.path) || NO_THREADS}
-              collapsed={collapsed.has(entry.path)}
-              onToggleCollapse={toggleCollapse}
-              viewed={viewed.has(entry.path)}
-              onToggleViewed={toggleViewed}
-              composing={mode === "diff" && composing?.path === entry.path ? composing : null}
-              setComposing={setComposing}
-              onComment={createComment}
-              onThreadAction={onThreadAction}
-              onSymbol={onSymbol}
-              onAttach={attach}
-              onSearch={openSearch}
-              onView={viewFile}
-              onDiscard={uncommitted ? discard : null}
-              scope={scope}
-              onOpenFile={goTo}
-              reveal={reveal?.path === entry.path ? reveal.line : 0}
-              onBody={onBody.diff}
-              found={(mode === "diff" && found?.byFile.get(entry.path)) || null}
-              foundHead={(mode === "diff" && found?.heads.get(entry.path)) || null}
-              foundAt={mode === "diff" && findCur?.path === entry.path ? findCur : null}
-            />
-          ))}
-        </div>
-
-        <div className="content code-pane" ref={codeRef} onMouseOver={onMouseOver} hidden={mode !== "code"}>
-          {mode === "code" && findBar}
-          {codePath ? (
-            <CodeView
-              path={codePath}
-              entry={codeEntry}
-              fd={codeState?.fd}
-              error={codeState?.error}
-              at={(codeEntry?.status === "D" ? diff?.scope?.oldAt : diff?.scope?.newAt) || ""}
-              threads={threadsByFile.get(codePath) || NO_THREADS}
-              wrap={wrap}
-              reveal={reveal?.path === codePath ? reveal.line : 0}
-              hit={codeAt?.hit || 0}
-              composing={mode === "code" && composing?.path === codePath ? composing : null}
-              setComposing={setComposing}
-              onComment={createComment}
-              onThreadAction={onThreadAction}
-              onSymbol={onSymbol}
-              onAttach={attach}
-              onSearch={openSearch}
-              onBody={onBody.code}
-              found={(mode === "code" && found?.byFile.get(codePath)) || null}
-              foundAt={mode === "code" && findCur?.path === codePath ? findCur : null}
-              onDiff={onCodeDiff}
-              onBack={codeNav.at > 0 ? () => stepCode(-1) : null}
-              onForward={codeNav.at < codeNav.stack.length - 1 ? () => stepCode(1) : null}
-              scope={scope}
-              preview={preview}
-              onPreview={togglePreview}
-              onOpenFile={openCode}
-              media={codeEntry ? null : codeState?.media}
-            />
+  // What the page and the phone app both draw, each in its own frame.
+  const diffInner = (
+    <>
+      {mode === "diff" && findBar}
+      {error && <div className="banner error">{error}</div>}
+      {meta && !folder && diff && files.length === 0 && !error && (
+        <div className="empty-state">
+          <h2>Nothing to review</h2>
+          {filteredOut + hiddenGenerated > 0 ? (
+            <p>
+              {filteredOut > 0
+                ? "No changed file gets past the sidebar's filter."
+                : "Every change here is to a generated file, and the filter hides those."}{" "}
+              <button className="link" onClick={showAll}>
+                Show all
+              </button>
+            </p>
           ) : (
-            <div className="empty-state">
-              <h2>Pick a file</h2>
-              <p>{folder ? "The explorer lists every file in the folder." : "The explorer lists every file in the repository, with changed ones marked."}</p>
-              <span className="keys">
-                <span>
-                  <kbd>{modKey}+P</kbd> open a file
-                </span>
-                {!folder && (
-                  <span>
-                    <kbd>[</kbd> <kbd>]</kbd> next changed file
-                  </span>
-                )}
-              </span>
-            </div>
+            <p>{diff.scope.desc} produced no changes. Pick another scope from the header.</p>
           )}
         </div>
+      )}
+      {files.map((entry) => (
+        <FileSection
+          key={entry.path}
+          entry={entry}
+          state={fileData[entry.path]}
+          onNeed={needFile}
+          view={view}
+          contextLines={contextLines}
+          wrap={wrap}
+          threads={threadsByFile.get(entry.path) || NO_THREADS}
+          collapsed={collapsed.has(entry.path)}
+          onToggleCollapse={toggleCollapse}
+          viewed={viewed.has(entry.path)}
+          onToggleViewed={toggleViewed}
+          composing={mode === "diff" && composing?.path === entry.path ? composing : null}
+          setComposing={setComposing}
+          onComment={createComment}
+          onThreadAction={onThreadAction}
+          onSymbol={onSymbol}
+          onAttach={attach}
+          onSearch={openSearch}
+          onView={viewFile}
+          onDiscard={uncommitted ? discard : null}
+          scope={scope}
+          onOpenFile={goTo}
+          reveal={reveal?.path === entry.path ? reveal.line : 0}
+          onBody={onBody.diff}
+          found={(mode === "diff" && found?.byFile.get(entry.path)) || null}
+          foundHead={(mode === "diff" && found?.heads.get(entry.path)) || null}
+          foundAt={mode === "diff" && findCur?.path === entry.path ? findCur : null}
+        />
+      ))}
+    </>
+  );
 
-        {agentVisited && (
-          <AgentView
-            active={mode === "agent"}
-            id={agentId}
-            session={agent.sessions.find((x) => x.id === agentId)}
-            agents={agents}
-            newAgent={newAgent}
-            onNewAgent={setNewAgent}
-            modes={agent.modes}
-            root={meta?.root || ""}
-            view={view}
-            contextLines={contextLines}
-            wrap={wrap}
-            threads={threads}
-            attached={attachedHere}
-            onAttach={(a, to = agentId) => attach(a, to)}
-            onDetach={(key) => attachedFor(agentId, (list) => list.filter((x) => x.key !== key))}
-            onClearAttached={() => attachedFor(agentId, () => [])}
-            onRestoreAttached={(to, back) => attachedFor(to, (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list])}
-            onJump={(a) => (a.kind === "thread" ? onThreadAction({ type: "jump", thread: threads.find((t) => t.id === a.threadId) }) : goTo(a.file, a.start || 0))}
-            onComment={createComment}
-            onThreadAction={onThreadAction}
-            onSymbol={onSymbol}
-            onOpenFile={goTo}
-            requests={requests}
-            hooks={agent.hooks}
-            onHooks={pickHooks}
-            onSelect={selectSession}
-            onNew={newSession}
-            onStart={startSession}
-            onStartAdded={openAdded}
-            temporaryNew={temporaryNew}
-            onTemporaryNew={setTemporaryNew}
-            onClose={closeSession}
-            onChanged={loadSessions}
-            reveal={agentReveal}
-            boxFocus={boxFocus}
-            offline={offline}
-          />
-        )}
-        {showComments && (
-          <CommentsPanel
-            tab={panelTab}
-            onTab={setPanelTab}
-            notes={{
-              ...notes,
-              composing: newNote,
-              onComposing: setNewNote,
-              onAdd: addNote,
-              onPatch: patchNote,
-              onDelete: deleteNote,
-              onSend: sendNote,
-              paused: notesPaused,
-              onPaused: setNotesPaused,
-            }}
-            threads={threads}
-            commentsPath={meta?.commentsPath || ""}
-            onJump={(thread) => {
-              if (phone) setPanel(null);
-              onThreadAction({ type: "jump", thread });
-            }}
-            onThreadAction={onThreadAction}
-            onAttach={(thread, to) => attach({ kind: "thread", threadId: thread.id }, to)}
-            onSend={sendThreads}
-            onDelete={deleteThreads}
-            // Over the sidebar on the right, the two are one column, one width.
-            widthVar={sideRight ? "--side-w" : "--comments-w"}
-            onWidth={sideRight ? setSideWidth : setCommentsWidth}
-            onClose={() => showPanel(false)}
-            ask={
-              attachTarget.onAsk && (
-                <AgentView
-                  docked
-                  id={askId}
-                  agents={agents}
-                  newAgent={askSettings.agent}
-                  onNewAgent={() => {}}
-                  modes={agent.modes}
-                  root={meta?.root || ""}
-                  view={view}
-                  contextLines={contextLines}
-                  wrap={wrap}
-                  threads={threads}
-                  attached={attachedLive[askId || "ask"] || NO_ATTACHED}
-                  onAttach={(a, to) => attach(a, to)}
-                  onDetach={(key) => attachedFor(askId || "ask", (list) => list.filter((x) => x.key !== key))}
-                  onClearAttached={() => attachedFor(askId || "ask", () => [])}
-                  onRestoreAttached={(to, back) => attachedFor(to || "ask", (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list])}
-                  onJump={(a) => (a.kind === "thread" ? onThreadAction({ type: "jump", thread: threads.find((t) => t.id === a.threadId) }) : goTo(a.file, a.start || 0))}
-                  onComment={createComment}
-                  onThreadAction={onThreadAction}
-                  onSymbol={onSymbol}
-                  onOpenFile={goTo}
-                  requests={requests}
-                  hooks={agent.hooks}
-                  onHooks={pickHooks}
-                  onSelect={selectSession}
-                  onNew={newAsk}
-                  onStart={() => endAsk(false)}
-                  onStartAdded={openAdded}
-                  onClose={() => endAsk(false)}
-                  onChanged={loadSessions}
-                  boxFocus={askFocus}
-                  offline={offline}
-                  startAs={askSettings}
-                  sendNow={askNow}
-                  askPrompts={askSettings.prompts}
-                  onEndAsk={endAsk}
-                  onAskToAgent={askToAgent}
-                />
-              )
-            }
-          />
-        )}
-      </div>
+  const codeInner = (
+    <>
+      {mode === "code" && findBar}
+      {codePath ? (
+        <CodeView
+          path={codePath}
+          entry={codeEntry}
+          fd={codeState?.fd}
+          error={codeState?.error}
+          at={(codeEntry?.status === "D" ? diff?.scope?.oldAt : diff?.scope?.newAt) || ""}
+          threads={threadsByFile.get(codePath) || NO_THREADS}
+          wrap={wrap}
+          reveal={reveal?.path === codePath ? reveal.line : 0}
+          hit={codeAt?.hit || 0}
+          composing={mode === "code" && composing?.path === codePath ? composing : null}
+          setComposing={setComposing}
+          onComment={createComment}
+          onThreadAction={onThreadAction}
+          onSymbol={onSymbol}
+          onAttach={attach}
+          onSearch={openSearch}
+          onBody={onBody.code}
+          found={(mode === "code" && found?.byFile.get(codePath)) || null}
+          foundAt={mode === "code" && findCur?.path === codePath ? findCur : null}
+          onDiff={onCodeDiff}
+          onBack={codeNav.at > 0 ? () => stepCode(-1) : null}
+          onForward={codeNav.at < codeNav.stack.length - 1 ? () => stepCode(1) : null}
+          scope={scope}
+          preview={preview}
+          onPreview={togglePreview}
+          onOpenFile={openCode}
+          media={codeEntry ? null : codeState?.media}
+        />
+      ) : (
+        <div className="empty-state">
+          <h2>Pick a file</h2>
+          <p>{folder ? "The explorer lists every file in the folder." : "The explorer lists every file in the repository, with changed ones marked."}</p>
+          <span className="keys">
+            <span>
+              <kbd>{modKey}+P</kbd> open a file
+            </span>
+            {!folder && (
+              <span>
+                <kbd>[</kbd> <kbd>]</kbd> next changed file
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+    </>
+  );
 
+  const agentProps = {
+    id: agentId,
+    session: agent.sessions.find((x) => x.id === agentId),
+    agents,
+    newAgent,
+    onNewAgent: setNewAgent,
+    modes: agent.modes,
+    root: meta?.root || "",
+    view,
+    contextLines,
+    wrap,
+    threads,
+    attached: attachedHere,
+    onAttach: (a, to = agentId) => attach(a, to),
+    onDetach: (key) => attachedFor(agentId, (list) => list.filter((x) => x.key !== key)),
+    onClearAttached: () => attachedFor(agentId, () => []),
+    onRestoreAttached: (to, back) => attachedFor(to, (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list]),
+    onJump: (a) => (a.kind === "thread" ? onThreadAction({ type: "jump", thread: threads.find((t) => t.id === a.threadId) }) : goTo(a.file, a.start || 0)),
+    onComment: createComment,
+    onThreadAction,
+    onSymbol,
+    onOpenFile: goTo,
+    requests,
+    hooks: agent.hooks,
+    onHooks: pickHooks,
+    onSelect: selectSession,
+    onNew: newSession,
+    onStart: startSession,
+    onStartAdded: openAdded,
+    temporaryNew,
+    onTemporaryNew: setTemporaryNew,
+    onClose: closeSession,
+    onChanged: loadSessions,
+    reveal: agentReveal,
+    boxFocus,
+    offline,
+  };
+
+  const commentsProps = {
+    tab: panelTab,
+    onTab: setPanelTab,
+    notes: {
+      ...notes,
+      composing: newNote,
+      onComposing: setNewNote,
+      onAdd: addNote,
+      onPatch: patchNote,
+      onDelete: deleteNote,
+      onSend: sendNote,
+      paused: notesPaused,
+      onPaused: setNotesPaused,
+    },
+    threads,
+    commentsPath: meta?.commentsPath || "",
+    onJump: (thread) => onThreadAction({ type: "jump", thread }),
+    onThreadAction,
+    onAttach: (thread, to) => attach({ kind: "thread", threadId: thread.id }, to),
+    onSend: sendThreads,
+    onDelete: deleteThreads,
+    // Over the sidebar on the right, the two are one column, one width.
+    widthVar: sideRight ? "--side-w" : "--comments-w",
+    onWidth: sideRight ? setSideWidth : setCommentsWidth,
+    onClose: () => showPanel(false),
+    ask: attachTarget.onAsk && (
+      <AgentView
+        docked
+        id={askId}
+        agents={agents}
+        newAgent={askSettings.agent}
+        onNewAgent={() => {}}
+        modes={agent.modes}
+        root={meta?.root || ""}
+        view={view}
+        contextLines={contextLines}
+        wrap={wrap}
+        threads={threads}
+        attached={attachedLive[askId || "ask"] || NO_ATTACHED}
+        onAttach={(a, to) => attach(a, to)}
+        onDetach={(key) => attachedFor(askId || "ask", (list) => list.filter((x) => x.key !== key))}
+        onClearAttached={() => attachedFor(askId || "ask", () => [])}
+        onRestoreAttached={(to, back) => attachedFor(to || "ask", (list) => [...back.filter((a) => !list.some((x) => x.key === a.key)), ...list])}
+        onJump={(a) => (a.kind === "thread" ? onThreadAction({ type: "jump", thread: threads.find((t) => t.id === a.threadId) }) : goTo(a.file, a.start || 0))}
+        onComment={createComment}
+        onThreadAction={onThreadAction}
+        onSymbol={onSymbol}
+        onOpenFile={goTo}
+        requests={requests}
+        hooks={agent.hooks}
+        onHooks={pickHooks}
+        onSelect={selectSession}
+        onNew={newAsk}
+        onStart={() => endAsk(false)}
+        onStartAdded={openAdded}
+        onClose={() => endAsk(false)}
+        onChanged={loadSessions}
+        boxFocus={askFocus}
+        offline={offline}
+        startAs={askSettings}
+        sendNow={askNow}
+        askPrompts={askSettings.prompts}
+        onEndAsk={endAsk}
+        onAskToAgent={askToAgent}
+      />
+    ),
+  };
+
+  const overlays = (
+    <>
       {windowed.length > 0 && (
         <AgentPrompt
           requests={windowed}
@@ -2240,6 +2174,8 @@ export default function App() {
       )}
       {overlay?.type === "file" && (
         <FileViewer
+          // On a phone each one stacked is its own window, with its own Back.
+          key={phoneApp ? stack.length : undefined}
           file={overlay.file}
           line={overlay.line}
           side={overlay.side}
@@ -2276,7 +2212,8 @@ export default function App() {
           onContext={setContextLines}
           wrap={wrap}
           onWrap={setWrap}
-          phone={phone}
+          phone={phoneApp}
+          phoneApp={phoneApp}
           notices={desktopNotices}
           onNotices={pickDesktopNotices}
           hooks={agent.available ? agent.hooks : null}
@@ -2291,6 +2228,156 @@ export default function App() {
           tab={overlay.tab}
         />
       )}
+    </>
+  );
+
+  if (phoneApp) {
+    return (
+      <AttachTarget.Provider value={attachTarget}>
+        <Notices phone />
+        {worktreeOpen && <WorktreeSession repo={meta.repo} from={meta.head?.branch || meta.head?.sha || "HEAD"} onClose={() => setWorktreeOpen(false)} />}
+        <Suspense fallback={null}>
+          <Phone
+            app={{
+              meta,
+              folder,
+              mode,
+              modes,
+              onMode: switchMode,
+              offline,
+              diff,
+              files,
+              uncommitted: diff?.uncommitted || 0,
+              viewedCount: files.filter((f) => viewed.has(f.path)).length,
+              scope,
+              onScope: setScope,
+              scrollRef,
+              codeRef,
+              diffInner,
+              codeInner,
+              codePath,
+              showCode,
+              openCode,
+              explorer,
+              explorerLoading: !repoFiles,
+              listIgnored,
+              endComposing: () => setComposing(null),
+              threads,
+              openComments: threads.filter((t) => !t.resolved).length,
+              commentsOn: showComments,
+              onComments: showPanel,
+              commentsProps,
+              agent,
+              agentProps,
+              agentVisited,
+              requests,
+              elsewhere,
+              notices,
+              showSession,
+              onSessionShown: setPhoneSession,
+              selectSession,
+              startSession,
+              closeSession,
+              renameSession: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
+              openOverlay,
+              openSearch,
+              pull: () => doAction({ builtin: "pull", name: `Pull ${meta?.head?.branch || ""}` }),
+            }}
+          />
+        </Suspense>
+        {overlays}
+      </AttachTarget.Provider>
+    );
+  }
+
+  return (
+    <AttachTarget.Provider value={attachTarget}>
+    {/* Out of the page's grid, whose rows are the header's and the rest's. */}
+    <Notices />
+    {worktreeOpen && <WorktreeSession repo={meta.repo} from={meta.head?.branch || meta.head?.sha || "HEAD"} onClose={() => setWorktreeOpen(false)} />}
+    <div className={cx("app", offline && "offline")}>
+      <Header
+        meta={meta}
+        folder={folder}
+        mode={mode}
+        onMode={switchMode}
+        scope={scope}
+        resolvedScope={diff?.scope}
+        onScope={setScope}
+        onSearch={() => openSearch()}
+        onHelp={() => openOverlay({ type: "help" })}
+        onSettings={() => openOverlay({ type: "settings" })}
+        waiting={requests.length}
+        arrived={arrived}
+        onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
+        bellOn={promptOpen}
+        update={update}
+        pr={pr}
+        onActions={() => openOverlay({ type: "actions" })}
+        comments={threads.filter((t) => !t.resolved).length}
+        commentsOn={showComments}
+        onComments={() => setCommentsOpen((o) => !o)}
+      />
+
+      <div
+        className={cx("main", sideRight && "side-right", showComments && "with-comments")}
+        style={{ ...(sideWidth && { "--side-w": sideWidth + "px" }), ...(commentsWidth && { "--comments-w": commentsWidth + "px" }) }}
+      >
+        <Sidebar
+          meta={meta}
+          pr={pr}
+          right={sideRight}
+          mode={mode}
+          modes={modes}
+          onMode={switchMode}
+          attached={attachedCount}
+          uncommitted={uncommittedElsewhere}
+          files={mode === "code" ? explorer : files}
+          onOpenIgnored={listIgnored}
+          threads={threads}
+          activePath={mode === "code" ? codePath : activePath}
+          viewed={viewed}
+          onSelect={mode === "code" ? openCode : jumpToFile}
+          generatedCount={generatedCount}
+          hideGenerated={hideGenerated}
+          onHideGenerated={changeHideGenerated}
+          pathFilter={pathFilter}
+          onPathFilter={changePathFilter}
+          filteredOut={filteredOut}
+          hiddenGenerated={hiddenGenerated}
+          filtersPaused={filtersPaused}
+          onPauseFilters={setFiltersPaused}
+          onReset={resetReview}
+          agent={{
+            sessions: agent.sessions,
+            available: agent.available || !!agent.codex?.available,
+            // The limits of the agent on screen, or the one a new session starts with.
+            usage: agents[agentId ? agent.sessions.find((s) => s.id === agentId)?.agent || "" : newAgent]?.usage,
+            activeId: agentId,
+            added: attachedLive,
+            asking: askingSessions,
+            onSelect: selectSession,
+            onNew: startSession,
+            onNewWorktree: newWorktree,
+            onClose: closeSession,
+            onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
+          }}
+          onWidth={setSideWidth}
+        />
+
+        <div className="content" ref={scrollRef} onMouseOver={onMouseOver} hidden={mode !== "diff"}>
+          {diffInner}
+        </div>
+
+        <div className="content code-pane" ref={codeRef} onMouseOver={onMouseOver} hidden={mode !== "code"}>
+          {codeInner}
+        </div>
+
+        {agentVisited && <AgentView {...agentProps} active={mode === "agent"} />}
+        {showComments && <CommentsPanel {...commentsProps} />}
+      </div>
+
+      {overlays}
     </div>
     </AttachTarget.Provider>
   );

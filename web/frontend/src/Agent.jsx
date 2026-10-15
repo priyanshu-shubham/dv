@@ -4,7 +4,7 @@ import MarkdownIt from "markdown-it";
 import { codexDirectives, followupsIn } from "./directives.js";
 import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
-import { commentEvent, Request, RequestTitle } from "./AgentPrompt.jsx";
+import { commentEvent, Request, RequestTitle, saidWith } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { grow } from "./hunks.js";
 import { codeBlocks, ensureLanguage, highlightLines, langReady } from "./highlight.js";
@@ -21,6 +21,10 @@ import {
   IconTemporary,
   IconUndo, IconX,
 } from "./icons.jsx";
+import { AttachSheet, Composer as PhoneComposer, HoldSheet, JumpPad, JumpSheet, ModelSheet, ModeSheet, QueuedSheet, SessionBar } from "./phone/Session.jsx";
+import { useLongPress } from "./phone/Sheet.jsx";
+import { useBack } from "./phone/back.js";
+import { Icon as PhoneIcon } from "./phone/icons.jsx";
 
 const md = codeBlocks(codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true }))));
 // A command's output is Markdown, or lines of plain text that must stay lines.
@@ -32,13 +36,19 @@ const NO_QUEUED = [];
 const NO_COMMANDS = [];
 const NO_MODELS = [];
 const NO_PICKED = {};
+const NO_NOTE = {};
 const DOUBLE_ESC_MS = 600;
 // How long the reader goes without a key before a request takes the keys.
 const KEYS_SETTLE_MS = 1000;
 // How long after sending Esc takes the message back instead of stopping the
 // agent. dv holds a message sent to Codex mid-turn for as long (holdFor).
 const TAKE_BACK_MS = 2000;
-const UNDO_ARMS_MS = 200;
+// A phone's Undo, under the message, wants longer to be reached. Past
+// holdFor, a Codex message is taken back by rewinding, which leaves its edits.
+const PHONE_TAKE_BACK_MS = 4000;
+// Stop takes Send's place once a message goes while the agent works; a tap on
+// it this soon is the one that sent, come down twice.
+const STOP_ARMS_MS = 600;
 const UNDER_PX = 40; // the bar naming the message the view is under, and its gap
 // Claude scales down anything bigger itself; past this, the upload is only slower.
 const IMAGE_PX = 2000;
@@ -246,6 +256,8 @@ function composeMessage(text, attached, threads) {
 
 // saidAs is a message as it was typed: a command run with ! keeps its !.
 const saidAs = (it) => (it.kind === "shell" ? "!" + it.text : splitContext(it.text).text);
+// promptLine is the first line of a message of yours as drawn.
+const promptLine = (el) => el.querySelector(".agent-prompt-text:not(.dim)")?.textContent.split("\n")[0] || "(images)";
 
 const refsOf = (block) => contextEntries(block).map(({ kind, a, body }) => ({ kind, path: a.path, lines: a.lines, from: a.from, body }));
 
@@ -504,10 +516,7 @@ function ContextMeter({ context: { used, max, compact }, agent, onCompact }) {
       </span>{" "}
       {Math.round(pct)}%
       {near && (
-        <span className="agent-context-left">
-          {left}%<span className="until"> until auto-compact</span>
-          <span className="short"> left</span>
-        </span>
+        <span className="agent-context-left">{left}% until auto-compact</span>
       )}
     </>
   );
@@ -556,8 +565,12 @@ export default function AgentView({
   id, session, agents, newAgent, onNewAgent, modes: allModes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
   requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, boxFocus, offline, active = true,
-  docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent,
+  docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent, phone = null,
 }) {
+  // In the phone app: { onBack, onActions }, and the sheet open over the session.
+  const [sheet, setSheet] = useState(null);
+  const [dock, setDock] = useState(null);
+  const takeBackMs = phone ? PHONE_TAKE_BACK_MS : TAKE_BACK_MS;
   // A session shows from its latest compaction until the reader asks for what
   // came before: by session, where it is shown from then.
   const [fromBy, setFromBy] = useState({});
@@ -609,6 +622,7 @@ export default function AgentView({
   const sent = useRef(new Map());
   // The last message sent, which Esc takes back for a moment after.
   const lastSent = useRef(null);
+  const sentAt = useRef(0); // when Send was last pressed, sent or not
   const carry = useRef(null); // sent from the blank session, until its own is on screen
   const shownId = useRef(id);
   shownId.current = id;
@@ -719,10 +733,11 @@ export default function AgentView({
     const place = places.current.get(id);
     follow.current = { stick: true, anchor: null, opened: null, top: 0, back: place && { ...place } };
     setAway(false);
-    if (!readOnly && activeRef.current) focusBox();
+    if (!readOnly && activeRef.current && !phone) focusBox();
   }, [id]);
+  // A phone's keyboard would come up over the conversation just opened.
   useEffect(() => {
-    if (active && !readOnly) focusBox();
+    if (active && !readOnly && !phone) focusBox();
   }, [active]);
   // A page just opened would put the caret before the draft: it goes back where
   // it was when the page was left - a reload, or another of the hub's folders -
@@ -947,7 +962,7 @@ export default function AgentView({
     }
     const p = all[at];
     const out = p && p.getBoundingClientRect().bottom < top - UNDER_PX + 8;
-    const text = out ? p.querySelector(".agent-prompt-text:not(.dim)")?.textContent.split("\n")[0] || "(images)" : null;
+    const text = out ? promptLine(p) : null;
     setUnder((u) => (u?.text === text && u?.at === at ? u : text === null ? null : { text, at }));
   };
   const toYours = (dir) => {
@@ -1025,6 +1040,7 @@ export default function AgentView({
   const send = async (words) => {
     const typed = typeof words === "string" ? words : draft;
     if (lost) return; // the note over the box says why; the draft stays
+    sentAt.current = Date.now();
     if (uploadsHere.length) return setError("Wait for the files being added.");
     if (typed.startsWith("!")) return runShell(typed.slice(1).trim());
     // A command goes alone; what was added and the pictures wait in the box for the next message.
@@ -1137,7 +1153,7 @@ export default function AgentView({
   };
   useEffect(() => {
     if (!justSent) return;
-    const t = setTimeout(() => setJustSent(null), TAKE_BACK_MS);
+    const t = setTimeout(() => setJustSent(null), takeBackMs);
     return () => clearTimeout(t);
   }, [justSent]);
 
@@ -1205,6 +1221,20 @@ export default function AgentView({
     }
     if (back.length) putBack(back, id);
   };
+  // One of them, on a phone: back to the box, or dropped.
+  const taking = useRef(new Set()); // asked for, so a second tap asks again for nothing
+  const takeBackOne = async (q, keep) => {
+    if (taking.current.has(q.uuid)) return;
+    taking.current.add(q.uuid);
+    const r = await api.agentUnqueue(id, q.uuid).catch((e) => ({ error: e.message }));
+    taking.current.delete(q.uuid);
+    if (r.error) return setError(r.error);
+    if (!r.cancelled) return setError(`${name} has already read it.`);
+    if (keep) return putBack([q], id);
+    setPending((p) => p.filter((w) => w.uuid !== q.uuid));
+    sent.current.delete(q.uuid);
+    if (lastSent.current?.uuid === q.uuid) lastSent.current = null;
+  };
 
   // A message that started a turn a moment ago is taken back once Claude has
   // stopped and the transcript has it: the conversation goes back to before
@@ -1232,6 +1262,7 @@ export default function AgentView({
   }, [undoing, items, busy]);
 
   const interrupt = () => api.agentInterrupt(id).catch((e) => setError(e.message));
+  const tapStop = () => Date.now() - sentAt.current >= STOP_ARMS_MS && interrupt();
   // Saying no leaves the agent going, so stopping while it asks is both: no to
   // everything waiting, which lets it read again, and then the interrupt.
   const stopAsked = async () => {
@@ -1369,15 +1400,15 @@ export default function AgentView({
   const undoLast = () => {
     const s = lastSent.current;
     if (queued.length) takeBackQueued();
-    else if (s?.session === id && !s.queued && Date.now() - s.at < TAKE_BACK_MS && running === "dv") takeBack(s);
+    else if (s?.session === id && !s.queued && Date.now() - s.at < takeBackMs && running === "dv") takeBack(s);
     else return false;
     return true;
   };
-  // For a moment after sending, the send button takes the message back, as
-  // Esc does: the one way to on a phone. A tap too soon for that is the one
-  // that sent it, come down twice.
-  const tapUndo = () => {
-    if (Date.now() - (lastSent.current?.at || 0) >= UNDO_ARMS_MS) undoLast();
+  // Undo is on the message itself, which may be queued behind others.
+  const undoSent = (uuid) => {
+    const q = queued.find((w) => w.uuid === uuid);
+    if (q) takeBackOne(q, true);
+    else undoLast();
   };
   const onEscape = useCallback(() => escape.current(), []);
   useEffect(() => {
@@ -1516,7 +1547,7 @@ export default function AgentView({
   }, [ask?.id]);
   useEffect(() => {
     const a = document.activeElement;
-    if (activeRef.current && !ask && !readOnly && (!a || a === document.body)) inputRef.current?.focus({ preventScroll: true });
+    if (activeRef.current && !ask && !readOnly && !phone && (!a || a === document.body)) inputRef.current?.focus({ preventScroll: true });
   }, [ask?.id]);
   // Coming back to the window lands in the message box too, unless a field or
   // a window has the focus. Not on a touch screen, where it brings up the keyboard.
@@ -1556,7 +1587,7 @@ export default function AgentView({
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 320) + "px";
     card.style.minHeight = "";
-  }, [draft, blank, readOnly, lost]);
+  }, [draft, blank, readOnly, lost, phone && ask && drafts[ask.id]?.note]);
 
   const [dropping, setDropping] = useState(false);
   const fileRef = useRef(null);
@@ -1573,6 +1604,83 @@ export default function AgentView({
     setDraft(`/${c.name} `);
     inputRef.current?.focus();
   };
+  const pasteFiles = (e) => {
+    const files = filesIn(e.clipboardData);
+    if (!files.length) return;
+    if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+    addFiles(files);
+  };
+  // The box's parts both of its layouts draw: the commands a slash offers,
+  // what goes with the message, and what a command or ! does.
+  const commandMenu = suggestions.length > 0 && (
+    <div className="model-list up command-menu" ref={menuRef}>
+      {suggestions.map((c, i) => (
+        <button
+          key={c.name}
+          className={cx(i === pick && "on")}
+          onMouseDown={(e) => e.preventDefault()}
+          onMouseMove={() => setPick(i)}
+          onClick={() => complete(c)}
+        >
+          <span className="model-name">
+            /{c.name}
+            {c.argumentHint && <span className="command-args"> {c.argumentHint}</span>}
+          </span>
+          {c.description && <span className="model-note">{c.description}</span>}
+        </button>
+      ))}
+    </div>
+  );
+  const attachedRow = (attached.length > 0 || images.length > 0 || uploadsHere.length > 0) && (
+    <div className={cx("agent-attached", (command || shell) && "held")}>
+      {images.map((img) => (
+        <span className="agent-image-chip" key={img.key} title={img.name || "Image"}>
+          <img src={dataURL(img)} alt="" />
+          <button className="agent-chip-x" onClick={() => setImages((list) => list.filter((x) => x !== img))} title="Leave it out">
+            <IconX size={10} />
+          </button>
+        </span>
+      ))}
+      {attached.map((a) => {
+        const t = a.kind === "thread" ? threads.find((x) => x.id === a.threadId) : null;
+        if (a.kind === "thread" && !t) return null;
+        return (
+          <Chip
+            key={a.key}
+            kind={a.kind === "lines" ? "code" : a.kind === "thread" ? "comment" : a.kind === "note" ? "note" : "file"}
+            path={t ? t.file : a.file}
+            lines={t ? span(t.startLine, t.endLine) : a.kind === "lines" || a.kind === "note" ? span(a.start, a.end) : ""}
+            onClick={() => onJump(a)}
+            onRemove={() => onDetach(a.key)}
+          />
+        );
+      })}
+      {uploadsHere.map((u) => (
+        <span className="agent-chip adding" key={u.key} title={`Saving ${u.name} into the folder`}>
+          <span className="agent-chip-label">{u.name}</span>
+        </span>
+      ))}
+      {attached.length > 1 && (
+        <button className="link" onClick={onClearAttached}>
+          Clear
+        </button>
+      )}
+      {(command || shell) && <span className="agent-attached-held">Kept for your next message</span>}
+    </div>
+  );
+  const commandNote = command && !suggestions.length ? (
+    <div className="composer-command" title={command.description}>
+      <span className="composer-command-name">/{command.name}</span>
+      <span className="composer-command-note">{command.description || `A ${agentKind === "codex" ? "Codex" : "Claude Code"} command`}</span>
+    </div>
+  ) : (
+    shell && (
+      <div className="composer-command">
+        <span className="composer-command-name">!</span>
+        <span className="composer-command-note">Runs in your shell, and {name} is sent what it prints</span>
+      </div>
+    )
+  );
   const box = (
     <div className="agent-composer">
       {docked && askPrompts?.length > 0 && !ask && (
@@ -1599,62 +1707,8 @@ export default function AgentView({
           addFiles([...e.dataTransfer.files]);
         }}
       >
-        {suggestions.length > 0 && (
-          <div className="model-list up command-menu" ref={menuRef}>
-            {suggestions.map((c, i) => (
-              <button
-                key={c.name}
-                className={cx(i === pick && "on")}
-                onMouseDown={(e) => e.preventDefault()}
-                onMouseMove={() => setPick(i)}
-                onClick={() => complete(c)}
-              >
-                <span className="model-name">
-                  /{c.name}
-                  {c.argumentHint && <span className="command-args"> {c.argumentHint}</span>}
-                </span>
-                {c.description && <span className="model-note">{c.description}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-        {(attached.length > 0 || images.length > 0 || uploadsHere.length > 0) && (
-          <div className={cx("agent-attached", (command || shell) && "held")}>
-            {images.map((img) => (
-              <span className="agent-image-chip" key={img.key} title={img.name || "Image"}>
-                <img src={dataURL(img)} alt="" />
-                <button className="agent-chip-x" onClick={() => setImages((list) => list.filter((x) => x !== img))} title="Leave it out">
-                  <IconX size={10} />
-                </button>
-              </span>
-            ))}
-            {attached.map((a) => {
-              const t = a.kind === "thread" ? threads.find((x) => x.id === a.threadId) : null;
-              if (a.kind === "thread" && !t) return null;
-              return (
-                <Chip
-                  key={a.key}
-                  kind={a.kind === "lines" ? "code" : a.kind === "thread" ? "comment" : a.kind === "note" ? "note" : "file"}
-                  path={t ? t.file : a.file}
-                  lines={t ? span(t.startLine, t.endLine) : a.kind === "lines" || a.kind === "note" ? span(a.start, a.end) : ""}
-                  onClick={() => onJump(a)}
-                  onRemove={() => onDetach(a.key)}
-                />
-              );
-            })}
-            {uploadsHere.map((u) => (
-              <span className="agent-chip adding" key={u.key} title={`Saving ${u.name} into the folder`}>
-                <span className="agent-chip-label">{u.name}</span>
-              </span>
-            ))}
-            {attached.length > 1 && (
-              <button className="link" onClick={onClearAttached}>
-                Clear
-              </button>
-            )}
-            {(command || shell) && <span className="agent-attached-held">Kept for your next message</span>}
-          </div>
-        )}
+        {commandMenu}
+        {attachedRow}
         <textarea
           ref={inputRef}
           value={draft}
@@ -1663,12 +1717,7 @@ export default function AgentView({
           onChange={(e) => {
             setDraft(e.target.value);
           }}
-          onPaste={(e) => {
-            const files = filesIn(e.clipboardData);
-            if (!files.length) return;
-            if (!e.clipboardData.getData("text/plain")) e.preventDefault();
-            addFiles(files);
-          }}
+          onPaste={pasteFiles}
           onKeyDown={(e) => {
             // With nothing to select, Shift+arrows go on to step the modes.
             if (!(draft === "" && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) e.stopPropagation();
@@ -1706,18 +1755,7 @@ export default function AgentView({
             }
           }}
         />
-        {command && !suggestions.length && (
-          <div className="composer-command" title={command.description}>
-            <span className="composer-command-name">/{command.name}</span>
-            <span className="composer-command-note">{command.description || `A ${agentKind === "codex" ? "Codex" : "Claude Code"} command`}</span>
-          </div>
-        )}
-        {shell && (
-          <div className="composer-command">
-            <span className="composer-command-name">!</span>
-            <span className="composer-command-note">Runs in your shell, and {name} is sent what it prints</span>
-          </div>
-        )}
+        {commandNote}
         <div className="composer-bar">
           <AddImages
             onFiles={() => fileRef.current.click()}
@@ -1787,12 +1825,8 @@ export default function AgentView({
             </button>
           )}
           <span className="spacer" />
-          {justSent && lastSent.current?.session === id && !canSend && !lost ? (
-            <button className="composer-send" onClick={tapUndo} title="Take back what you sent (Esc)">
-              <IconUndo size={14} />
-            </button>
-          ) : busy && (running === "dv" || shellRunning) && !canSend ? (
-            <button className="composer-send stop" onClick={interrupt} title={shellRunning ? "Stop the command (Esc)" : `Stop what ${name} is doing (Esc)`}>
+          {busy && (running === "dv" || shellRunning) && !canSend ? (
+            <button className="composer-send stop" onClick={tapStop} title={shellRunning ? "Stop the command (Esc)" : `Stop what ${name} is doing (Esc)`}>
               <IconStop size={12} />
             </button>
           ) : (
@@ -1810,7 +1844,20 @@ export default function AgentView({
     </div>
   );
 
+  // The phone's ways in, where a keyboard has Esc, Up and [ ]: a message held
+  // offers its sheet, and a queued one tapped is taken back or dropped.
+  const holdPrompt = useCallback((item) => setSheet({ type: "hold", item }), []);
+  const closeSheet = useCallback(() => setSheet(null), []);
+  useEffect(closeSheet, [id]);
+  useBack(!!phone && !!peekItem, () => setPeek(null));
+  // The message just sent has Undo under it, for as long as Esc would take it back.
+  const undoable = (uuid) =>
+    uuid === justSent &&
+    !lost &&
+    (queued.some((q) => q.uuid === uuid) || (lastSent.current?.uuid === uuid && !lastSent.current.queued && running === "dv"));
+
   // A message on its way in: pictures sent from here are shown from what was sent.
+  // One queued is taken back to edit by a click, alone.
   const bubble = (w) => (
     <Prompt
       key={w.uuid}
@@ -1818,8 +1865,140 @@ export default function AgentView({
       pictures={w.pictures || sent.current.get(w.uuid)?.images}
       pending
       queued={w.queued || w.behind}
-      hint={w.queued ? "Esc or ↑ to edit" : w.uuid === justSent ? "Esc to edit" : undefined}
+      hint={w.queued && !undoable(w.uuid) ? (phone ? "Tap to edit" : "Click or Esc to edit") : undefined}
+      onUndo={undoable(w.uuid) ? () => undoSent(w.uuid) : undefined}
+      onTap={w.queued ? () => (phone ? setSheet({ type: "queued", w }) : takeBackOne(w, true)) : undefined}
     />
+  );
+
+  const noting = !!phone && !!ask && ask.tool !== "AskUserQuestion";
+  const noted = (noting && drafts[ask.id]) || NO_NOTE;
+  const full = live?.context?.max > 0 ? Math.round((live.context.used / live.context.max) * 100) : null;
+  const openThreads = phone ? threads.filter((t) => !t.resolved) : NO_THREADS;
+  // Your messages on the page, to step to from the bar's list, which marks the
+  // one the view is in.
+  const readingAt = () => {
+    const el = scrollRef.current;
+    if (!el) return -1;
+    const top = el.getBoundingClientRect().top + el.clientHeight / 3;
+    return yours().findLastIndex((p) => p.getBoundingClientRect().top <= top);
+  };
+  const toPrompt = (i) => {
+    const el = scrollRef.current;
+    const to = yours()[i];
+    if (!el || !to) return;
+    Object.assign(follow.current, { stick: false, opened: null, back: null });
+    el.scrollTop += to.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+  };
+  const sessionMenu = [
+    prompts.length > 1 && { icon: "up", label: "Jump to a message", run: () => setSheet({ type: "jump" }) },
+    !readOnly && (prompts.length > 0 || earlier) && { icon: "undo", label: "Rewind…", run: () => setRewinding({}) },
+    full !== null && !readOnly && !lost && { icon: "compress", label: `Compact (${full}% full)`, run: compactNow },
+    "-",
+    !readOnly && { icon: "timer", label: temporary ? "Keep in the list" : "Make temporary", run: toggleTemporary },
+    id && !readOnly && { icon: "pin", label: kept ? "Let it stop when idle" : "Keep running", run: toggleKept },
+    id && { icon: "x", label: "Close", run: () => onClose(id) },
+  ];
+  const phoneBox = phone && (
+    <PhoneComposer
+      name={name}
+      draft={noting ? noted.note || "" : draft}
+      onDraft={noting ? (note) => setDrafts((d) => ({ ...d, [ask.id]: { ...d[ask.id], note } })) : setDraft}
+      inputRef={inputRef}
+      onPaste={noting ? undefined : pasteFiles}
+      placeholder={busy ? `Add to what ${name} is doing` : blank ? `Ask ${name} to do something` : `Reply to ${name}`}
+      canSend={canSend}
+      onSend={send}
+      onStop={tapStop}
+      stop={busy && (running === "dv" || shellRunning) && !canSend}
+      lost={lost}
+      extras={
+        <>
+          {commandMenu}
+          {attachedRow}
+          {commandNote}
+        </>
+      }
+      model={choices.length > 0 ? String(modelLabel || "").replace(/ \(1M\)$/, "") : ""}
+      effort={EFFORT_SHORT[effort] || EFFORTS[effort] || effort}
+      mode={MODE_SHORT[mode] || modes.find((m) => m.id === mode)?.label || MODE_NAMES[mode] || mode}
+      pending={live?.pending}
+      onModel={() => setSheet({ type: "model" })}
+      onMode={() => setSheet({ type: "mode" })}
+      onAttach={() => setSheet({ type: "attach" })}
+      asking={noting}
+      said={noting ? saidWith(noted.note || "", noted.comments || []) : ""}
+      dockRef={setDock}
+      recall={[...new Set(history.slice(-8).reverse())].slice(0, 3)}
+      offered={!busy && !ask && !readOnly ? offered : []}
+      onOffer={putDraft}
+      chips={
+        temporary && (
+          <button className="p-chip small on" onClick={toggleTemporary} title="Temporary: once closed, it leaves the list">
+            <PhoneIcon name="timer" size={16} />
+          </button>
+        )
+      }
+    />
+  );
+  const phoneSheets = phone && (
+    <>
+      {sheet?.type === "hold" && (
+        <HoldSheet
+          text={saidAs(sheet.item)}
+          onRewind={!readOnly && sheet.item.uuid ? () => setRewinding({ prompt: sheet.item }) : null}
+          onAgain={!readOnly ? () => putDraft(saidAs(sheet.item)) : null}
+          onClose={closeSheet}
+        />
+      )}
+      {sheet?.type === "queued" && (
+        <QueuedSheet
+          text={sent.current.get(sheet.w.uuid)?.draft ?? splitContext(sheet.w.text).text}
+          name={name}
+          onEdit={() => takeBackOne(sheet.w, true)}
+          onDrop={() => takeBackOne(sheet.w, false)}
+          onClose={closeSheet}
+        />
+      )}
+      {sheet?.type === "jump" && <JumpSheet said={yours().map(promptLine)} at={readingAt()} onPick={toPrompt} onClose={closeSheet} />}
+      {sheet?.type === "model" && (
+        <ModelSheet
+          agents={!id && !docked && agents[""].available && agents.codex.available ? AGENT_CHOICES : null}
+          agent={agentKind}
+          onAgent={pickAgent}
+          models={choices}
+          model={offList?.id || asked?.model || ""}
+          efforts={onModel?.efforts}
+          effort={effort}
+          pending={live?.pending}
+          onPick={settings}
+          onClose={closeSheet}
+        />
+      )}
+      {sheet?.type === "mode" && (
+        <ModeSheet
+          // Named as the box names them, in full under.
+          modes={modes.map((m) => (MODE_SHORT[m.id] ? { ...m, label: MODE_SHORT[m.id], description: m.label } : m))}
+          mode={mode}
+          pending={live?.pending}
+          onPick={pickMode}
+          onClose={closeSheet}
+        />
+      )}
+      {sheet?.type === "attach" && (
+        <AttachSheet
+          onFiles={addFiles}
+          comments={openThreads.length}
+          onComments={() => openThreads.forEach((t) => onAttach({ kind: "thread", threadId: t.id }, id))}
+          onShell={() => {
+            if (!draft.startsWith("!")) setDraft("!" + draft);
+            inputRef.current?.focus();
+          }}
+          onCompact={full !== null && !readOnly && !lost ? compactNow : null}
+          onClose={closeSheet}
+        />
+      )}
+    </>
   );
 
   if (!agents[""].available && !agents.codex.available) {
@@ -1840,7 +2019,25 @@ export default function AgentView({
     <OpenCall.Provider value={setPeek}>
     <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef}>
       {!docked && <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />}
-      {id && (
+      {phone ? (
+        peekItem ? (
+          <SessionBar
+            title={toolSummary(peekItem.tool, peekItem.input, root).what}
+            sub={`${peekable(peekItem) === "agent" ? peekItem.input?.subagent_type || "Agent" : "Command"} · ${STATES[toolState(peekItem, !!live?.busy, running)]}`}
+            onBack={() => setPeek(null)}
+            menu={[]}
+          />
+        ) : (
+          <SessionBar
+            title={id ? session?.title || session?.prompt || "New session" : "New session"}
+            sub={[name, modelLabel, full !== null && `${full}% context`, live?.cost > 0 && `$${live.cost.toFixed(2)}`].filter(Boolean).join(" · ")}
+            onBack={phone.onBack}
+            onTitle={prompts.length > 1 ? () => setSheet({ type: "jump" }) : null}
+            onActions={phone.onActions}
+            menu={sessionMenu}
+          />
+        )
+      ) : id && (
         // What the session is and where it runs, its card in the list says; this
         // is what to do in it.
         <header className="agent-head">
@@ -1892,7 +2089,7 @@ export default function AgentView({
       {blank ? (
         <div className="agent-start">
           <h1 className="agent-start-title">How can I help you today?</h1>
-          {box}
+          {!phone && box}
           <div className="agent-suggestions">
             {SUGGESTIONS.map((s) => (
               <button
@@ -1908,7 +2105,9 @@ export default function AgentView({
           </div>
           {error && <div className="agent-note error">{error}</div>}
         </div>
-      ) : (
+      ) : null}
+      {blank && phoneBox}
+      {!blank && (
       <>
       {peekItem &&
         (peekAgent ? (
@@ -1959,7 +2158,8 @@ export default function AgentView({
               item={it}
               session={id}
               agent={agentKind}
-              hint={it.uuid === justSent && running === "dv" ? "Esc to edit" : undefined}
+              onHold={phone ? holdPrompt : undefined}
+              onUndo={undoable(it.uuid) ? undoSent : undefined}
               run={runs.byFirst.get(it.key)}
               folded={runs.folded.has(it.key)}
               root={root}
@@ -1988,7 +2188,8 @@ export default function AgentView({
           {busy && !ask && <Activity live={live} items={items} root={root} since={live?.shell?.since || live?.since || items.findLast((it) => it.turn)?.at} />}
           {incoming.filter((w) => w.queued || w.behind).map(bubble)}
           {/* As the terminal's guess, they are there while the box is empty. */}
-          {offered.length > 0 && !busy && !ask && !readOnly && !draft.trim() && (
+          {/* The phone's are chips over its box. */}
+          {offered.length > 0 && !phone && !busy && !ask && !readOnly && !draft.trim() && (
             <div className="agent-followups">
               {offered.map((f, i) => (
                 <button key={i} title={`Put in the message box: ${f.prompt}`} onClick={() => putDraft(f.prompt)}>
@@ -2016,6 +2217,8 @@ export default function AgentView({
                 wrap={wrap}
                 onSymbol={onSymbol}
                 onOpenFile={onOpenFile}
+                phone={!!phone}
+                dock={dock}
               />
             </div>
           )}
@@ -2028,11 +2231,14 @@ export default function AgentView({
             Loading the conversation
           </div>
         )}
-        {away && (
+        {(away || phone) && (
           <div className="agent-jump">
-            <button onClick={toLatest} title={`Scroll to the end of the conversation (${modKey}+↓)`}>
-              <IconChevronDown size={12} /> Latest
-            </button>
+            {away && (
+              <button onClick={toLatest} title={`Scroll to the end of the conversation (${modKey}+↓)`}>
+                <IconChevronDown size={12} /> Latest
+              </button>
+            )}
+            {phone && <JumpPad scrollRef={scrollRef} mine={() => yours().length} onStep={toYours} />}
           </div>
         )}
       </div>
@@ -2059,17 +2265,26 @@ export default function AgentView({
           </button>
         </div>
       ) : readOnly ? (
-        <div className="agent-readonly">
-          {agentKind === "codex"
-            ? "This session is open in a terminal. dv follows it, but only the terminal can talk to it or answer its prompts."
-            : "This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it."}
-        </div>
+        <>
+          {/* No box to answer over in a terminal's session: the answers dock alone. */}
+          {noting && (
+            <div className="p-composer">
+              <div className="p-dock" ref={setDock} />
+            </div>
+          )}
+          <div className="agent-readonly">
+            {agentKind === "codex"
+              ? "This session is open in a terminal. dv follows it, but only the terminal can talk to it or answer its prompts."
+              : "This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it."}
+          </div>
+        </>
       ) : (
-        box
+        phoneBox || box
       )}
       </>
       )}
 
+      {phoneSheets}
       {rewinding && (
         <RewindPicker
           prompts={rewindable}
@@ -2462,7 +2677,18 @@ const Item = memo(function Item(props) {
     case "prompt":
     case "command":
     case "shell":
-      return <Prompt item={item} session={props.session} hint={props.hint} canRewind={props.canRewind} onRewind={props.onRewind} onOpenFile={props.onOpenFile} />;
+      return (
+        <Prompt
+          item={item}
+          session={props.session}
+          hint={props.hint}
+          canRewind={props.canRewind}
+          onRewind={props.onRewind}
+          onOpenFile={props.onOpenFile}
+          onHold={props.onHold}
+          onUndo={props.onUndo}
+        />
+      );
     case "text":
       return <Markdown md={md} text={item.text} className="markdown agent-text" />;
     case "thinking":
@@ -2516,13 +2742,29 @@ function PeerMessage({ item }) {
 
 // Prompt is what you said, set to the right. One still on its way in is
 // pending; its pictures are the ones sent, where the transcript's are fetched.
-function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind, onOpenFile }) {
+// On a phone, onHold is a long press on it, onTap a tap, and onUndo its Undo.
+function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind, onOpenFile, onHold, onUndo, onTap }) {
   const { text, refs, via: viaApp } = useMemo(() => (item.answer ? splitSaid : splitContext)(item.text), [item.text, item.answer]);
   const via = viaApp !== "dv" && viaApp;
   const n = item.images || 0;
   const srcs = pictures ? pictures.map(dataURL) : pending ? [] : Array.from({ length: n }, (_, i) => api.agentPromptImageURL(session, item.uuid, i));
+  const press = useLongPress(() => onHold(item));
+  // Not a click that ends selecting its text, nor one on what has a click of
+  // its own in it - a chip, a picture, what a picture opens over the page.
+  const tap = (e) => e.currentTarget.contains(e.target) && !e.target.closest("a, button") && getSelection().isCollapsed && onTap();
+  const touch = onHold && !pending ? press : onTap ? { onClick: tap } : null;
   return (
-    <div className={cx("agent-prompt", (item.kind === "command" || item.kind === "shell") && "command", item.kind === "shell" && "shell", pending && "pending")}>
+    <div
+      className={cx(
+        "agent-prompt",
+        (item.kind === "command" || item.kind === "shell") && "command",
+        item.kind === "shell" && "shell",
+        pending && "pending",
+        queued && "queued",
+        onTap && "tappable",
+      )}
+      {...touch}
+    >
       {srcs.length > 0 && (
         <div className="agent-prompt-images">
           {srcs.map((src, i) => (
@@ -2543,12 +2785,24 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
         text && <div className="agent-prompt-text">{text}</div>
       )}
       <Refs refs={refs} raw={item.kind === "prompt" && CONTEXT.test(item.text) && item.text} onOpenFile={onOpenFile} />
-      {(queued || hint || via || item.answer) && (
+      {(queued || hint || via || item.answer || onUndo) && (
         <div className="agent-prompt-foot">
           {item.answer && <span>With your {item.answer}</span>}
           {via && <span title={`Sent from ${via}, where the reply was asked to be brief`}>via {via}</span>}
           {queued && <span title="Read once the step under way is done">Queued</span>}
           {hint && <span className="agent-prompt-hint">{hint}</span>}
+          {onUndo && (
+            <button
+              className="agent-undo"
+              title="Take it back to edit (Esc)"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUndo(item.uuid);
+              }}
+            >
+              Undo
+            </button>
+          )}
         </div>
       )}
       {canRewind && item.uuid && !pending && (
@@ -2644,6 +2898,10 @@ const MODE_NAMES = {
   dontAsk: "Don't ask",
   fullAccess: "Full access", // Codex's own config, without its sandbox
 };
+
+// On a phone's message box, where both pickers and Send share one line.
+const MODE_SHORT = { default: "Ask first", autoAskEdits: "Auto, ask", bypassPermissions: "Bypass" };
+const EFFORT_SHORT = { minimal: "Min", medium: "Med", xhigh: "XHigh" };
 
 // modeChange words a change of permission mode: plan mode is a place Claude
 // goes into and comes out of, the others are switched between.

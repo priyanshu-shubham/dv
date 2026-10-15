@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { usePref } from "./prefs.js";
-import { cx } from "./util.js";
+import { cx, PHONE_APP, useMedia } from "./util.js";
 import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
 import { IconAsk, IconBolt, IconPlus, IconX } from "./icons.jsx";
@@ -135,12 +135,14 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onC
     if (running[a.id]) return `Running for ${elapsed(running[a.id].started, at)} · Enter stops it`;
     return ready(a) ? describe(a, info) : "Open a session in the Agent view first";
   };
+  // A phone's keyboard would come up over the list, which is what is tapped there.
+  const phone = useMedia(PHONE_APP);
   return (
     <Modal onClose={onClose} className="palette">
       <div className="palette-input">
         <IconBolt size={15} />
         <input
-          autoFocus
+          autoFocus={!phone}
           value={q}
           placeholder="Run an action..."
           onChange={(e) => {

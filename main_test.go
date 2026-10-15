@@ -3,13 +3,18 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"dv/internal/gitx"
+	"dv/internal/notify"
+	"dv/internal/notify/webpush"
 	"dv/internal/store"
 )
 
@@ -83,5 +88,23 @@ func TestResetDeletesTheReview(t *testing.T) {
 	}
 	if len(st.Threads()) != 0 || vw.Count() != 0 {
 		t.Fatalf("after reset -y: %d threads, %d marks", len(st.Threads()), vw.Count())
+	}
+}
+
+// What installs dv as an app is served at any address it is reached at; the
+// devices it pushes to only at its own.
+func TestAppFilesAreOpenAndPushIsGuarded(t *testing.T) {
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	push := webpush.New("http://127.0.0.1:1", t.TempDir(), t.TempDir())
+	h := withNotices(http.NotFoundHandler(), notices, chatApps{push: push})
+	for path, want := range map[string]int{
+		"/manifest.webmanifest": 200, "/sw.js": 200, "/icon/192.png": 200, "/icon/badge.png": 200, "/api/notify/push": 403,
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "http://dv.example.com"+path, nil))
+		if w.Code != want {
+			t.Errorf("%s: %d, not %d", path, w.Code, want)
+		}
 	}
 }
