@@ -439,6 +439,9 @@ func usageOf(l codex.RateLimits) *Usage {
 			continue
 		}
 		limit := &Limit{Percent: w.UsedPercent}
+		if w.Minutes != nil {
+			limit.Window = *w.Minutes
+		}
 		if w.ResetsAt != nil {
 			limit.ResetsAt = time.Unix(*w.ResetsAt, 0).UTC().Format(time.RFC3339)
 		}

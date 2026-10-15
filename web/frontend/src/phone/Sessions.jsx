@@ -3,7 +3,7 @@
 // offers what else can be done to it; swiped aside, it closes.
 import { useRef, useState } from "react";
 import { AgentIcon } from "../icons.jsx";
-import { agentName, openFolderSession, cx, relTime } from "../util.js";
+import { agentName, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
 import { Row, Sheet, useLongPress } from "./Sheet.jsx";
 import { say } from "../Notices.jsx";
@@ -62,8 +62,9 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
           {plans.map((u) => (
             <span key={u.agent} className="p-limits-row">
               <AgentIcon agent={u.agent} size={14} />
-              <Limit label="5h" limit={u.limits.session} />
-              <Limit label="7d" limit={u.limits.week} />
+              {SLOTS.map(([k, m]) => (
+                <Limit key={k} limit={u.limits[k]} minutes={m} />
+              ))}
             </span>
           ))}
         </button>
@@ -71,17 +72,14 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
       {limits && (
         <Sheet title="Plan usage" onClose={() => setLimits(false)}>
           {plans.map((u) =>
-            [
-              ["session", "This five-hour window"],
-              ["week", "This week"],
-            ].map(
-              ([k, of]) =>
+            SLOTS.map(
+              ([k, m]) =>
                 u.limits[k] && (
                   <Row
                     key={u.agent + k}
                     lead={<AgentIcon agent={u.agent} size={20} />}
-                    title={`${agentName(u.agent)} · ${of}`}
-                    sub={resetsAt(u.limits[k])}
+                    title={`${agentName(u.agent)} · ${limitWindow(u.limits[k], m)[1]}`}
+                    sub={u.limits[k].resetsAt && "Resets " + resetsWhen(u.limits[k].resetsAt)}
                     trail={<Limit limit={u.limits[k]} />}
                   />
                 ),
@@ -228,26 +226,27 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
   );
 }
 
-// Limit is how much of one of the plan's usage limits is spent.
-function Limit({ label, limit }) {
+// The plan's limits, each with the window its place stands for when the agent
+// doesn't say.
+const SLOTS = [
+  ["session", 5 * 60],
+  ["week", 7 * 24 * 60],
+];
+
+// Limit is how much of one of the plan's usage limits is spent, labelled with
+// its window when given its place's.
+function Limit({ limit, minutes }) {
   if (!limit) return null;
   const pct = Math.min(100, Math.round(limit.percent));
   return (
     <span className={cx("p-limit", pct >= 90 ? "high" : pct >= 75 && "warn")}>
-      {label && <span className="p-limit-label">{label}</span>}
+      {minutes && <span className="p-limit-label">{limitWindow(limit, minutes)[0]}</span>}
       <span className="p-meter">
         <span style={{ width: `${pct}%` }} />
       </span>
       {pct}%
     </span>
   );
-}
-
-function resetsAt(limit) {
-  if (!limit.resetsAt) return "";
-  const at = new Date(limit.resetsAt);
-  const today = at.toDateString() === new Date().toDateString();
-  return "Resets " + (today ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : at.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
 }
 
 function Rename({ s, onRename, onClose }) {

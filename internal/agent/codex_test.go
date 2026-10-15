@@ -292,3 +292,17 @@ func TestInputImage(t *testing.T) {
 		t.Error("there is no second picture")
 	}
 }
+
+// A free plan's one limit, of 30 days, is in the longer place and says how
+// long it is, so it isn't shown as a week.
+func TestCodexUsageKeepsTheWindow(t *testing.T) {
+	n := func(v int64) *int64 { return &v }
+	u := usageOf(codex.RateLimits{Primary: &codex.RateWindow{UsedPercent: 12, Minutes: n(43200), ResetsAt: n(1794614400)}})
+	if u == nil || u.Session != nil || u.Week == nil || u.Week.Window != 43200 || u.Week.Percent != 12 || u.Week.ResetsAt != "2026-11-14T00:00:00Z" {
+		t.Fatalf("usage %+v", u)
+	}
+	u = usageOf(codex.RateLimits{Primary: &codex.RateWindow{UsedPercent: 3, Minutes: n(300)}, Secondary: &codex.RateWindow{UsedPercent: 9, Minutes: n(10080)}})
+	if u.Session == nil || u.Session.Window != 300 || u.Week == nil || u.Week.Window != 10080 {
+		t.Fatalf("usage %+v", u)
+	}
+}

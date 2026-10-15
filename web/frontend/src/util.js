@@ -113,6 +113,28 @@ export const PHONE_APP = `${PHONE}, ${TOUCH} and (max-height: 500px)`;
 // The hub folder the phone app was last in, which it opens on (main.jsx).
 export const PHONE_FOLDER_KEY = "dv:phone-folder";
 
+// limitWindow names a plan's usage limit, short and in full, by its window's
+// length in minutes: the agent's where it says (Codex's free plan has one of
+// 30 days), else `minutes`, the one its place in the plan has.
+export function limitWindow(limit, minutes) {
+  const m = limit.window || minutes;
+  if (m < 1440) {
+    const h = Math.round(m / 60);
+    return [`${h}h`, h === 5 ? "This five-hour window" : `This ${h}-hour window`];
+  }
+  const d = Math.round(m / 1440);
+  return [`${d}d`, d === 7 ? "This week" : d === 30 ? "This month" : `These ${d} days`];
+}
+
+// resetsWhen is when a limit starts again, as closely as is of use: the time
+// today, the day this week, else the date.
+export function resetsWhen(at) {
+  const t = new Date(at);
+  if (t.toDateString() === new Date().toDateString()) return t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (t - Date.now() < 6 * 86400e3) return t.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  return t.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
 // useMedia is whether a media query matches, as the window changes.
 export function useMedia(query) {
   const [on, setOn] = useState(() => matchMedia(query).matches);

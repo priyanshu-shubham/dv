@@ -620,6 +620,16 @@ html.phone ::-webkit-scrollbar {
   font-variant-numeric: tabular-nums;
 }
 
+/* A plan's limits share the card's row, however many it has. */
+.p-limits-row .p-limit {
+  flex: 1;
+  min-width: 0;
+}
+
+.p-limits-row .p-meter {
+  flex: 1;
+}
+
 .p-limit-label {
   color: var(--fg-3);
 }

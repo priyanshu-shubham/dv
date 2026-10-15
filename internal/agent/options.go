@@ -52,15 +52,18 @@ type Context struct {
 	Compact int `json:"compact,omitempty"`
 }
 
-// Usage is how much of a Claude plan's rate limits the account has used.
+// Usage is how much of a plan's rate limits the account has used.
 type Usage struct {
 	Session *Limit `json:"session,omitempty"` // the five-hour window
-	Week    *Limit `json:"week,omitempty"`
+	Week    *Limit `json:"week,omitempty"`    // or whatever longer one the plan has
 }
 
 type Limit struct {
 	Percent  float64 `json:"percent"`
 	ResetsAt string  `json:"resetsAt,omitempty"`
+	// Window is how long the limit's window is, in minutes, where the agent
+	// says: Codex's free plan has one of 30 days. Claude's are as named.
+	Window int64 `json:"window,omitempty"`
 }
 
 // Aliases, for when Claude Code could not be asked: each is the latest of its
@@ -386,7 +389,7 @@ func usageFrom(raw json.RawMessage) *Usage {
 		if w == nil || w.Utilization == nil {
 			return nil
 		}
-		return &Limit{*w.Utilization, w.ResetsAt}
+		return &Limit{Percent: *w.Utilization, ResetsAt: w.ResetsAt}
 	}
 	return &Usage{limit(u.Limits.Session), limit(u.Limits.Week)}
 }

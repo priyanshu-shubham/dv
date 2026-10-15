@@ -13,7 +13,7 @@ import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachTarget } from "./Threads.jsx";
-import { agentName, cx, duration, isTyping, LRM, modKey, relTime, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
+import { agentName, cx, duration, isTyping, limitWindow, LRM, modKey, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
@@ -4071,23 +4071,19 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
           {sessions.length} session{sessions.length === 1 ? "" : "s"}
         </span>
         <span className="spacer" />
-        {usage && <PlanLimit label="5h" of="This five-hour window" limit={usage.session} />}
-        {usage && <PlanLimit label="7d" of="This week" limit={usage.week} />}
+        {usage && <PlanLimit limit={usage.session} minutes={5 * 60} />}
+        {usage && <PlanLimit limit={usage.week} minutes={7 * 24 * 60} />}
       </div>
     </>
   );
 }
 
-// PlanLimit is how much of one of a Claude plan's usage limits is spent.
-function PlanLimit({ label, of, limit }) {
+// PlanLimit is how much of one of a plan's usage limits is spent.
+function PlanLimit({ limit, minutes }) {
   if (!limit) return null;
+  const [label, of] = limitWindow(limit, minutes);
   const pct = Math.min(100, limit.percent);
-  const resets = limit.resetsAt && new Date(limit.resetsAt);
-  const when =
-    resets &&
-    (resets.toDateString() === new Date().toDateString()
-      ? resets.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : resets.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
+  const when = limit.resetsAt && resetsWhen(limit.resetsAt);
   return (
     <span className={cx("plan-limit", pct >= 90 ? "high" : pct >= 75 && "warn")} title={`${of}: ${Math.round(limit.percent)}% of the plan's usage${when ? `, resets ${when}` : ""}`}>
       {/* Elements, not bare text: with the bar hidden, text would run together. */}
