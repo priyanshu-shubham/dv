@@ -41,6 +41,15 @@ type Push struct {
 	sealed string // the key, as last read
 	vapid  *vapid // and opened
 	tokens map[string]token
+	last   map[string]sent // by endpoint
+}
+
+// sent is how the last message to a device went, for its Settings to say: a
+// notification that never shows was either not sent or held by the device.
+type sent struct {
+	At    time.Time `json:"at"`
+	Title string    `json:"title"`
+	Error string    `json:"error,omitempty"`
 }
 
 // New readies the provider of a dv at self, keeping its devices in dir and
@@ -49,7 +58,7 @@ func New(self, dir, keyDir string) *Push {
 	return &Push{
 		self: self, dir: dir, keyDir: keyDir,
 		http:  &http.Client{Timeout: 15 * time.Second},
-		queue: make(chan notify.Notice, 100), tokens: map[string]token{},
+		queue: make(chan notify.Notice, 100), tokens: map[string]token{}, last: map[string]sent{},
 	}
 }
 
@@ -73,6 +82,12 @@ func (p *Push) Send(n notify.Notice) {
 }
 
 func (p *Push) Settle(n notify.Notice) {}
+
+// Eager: a device's notifications are what the reader looks for once dv is
+// out of sight, and its service worker holds one back while a page is in front.
+func (p *Push) Eager() {}
+
+var _ notify.Eager = (*Push)(nil)
 
 func (p *Push) send(ctx context.Context, n notify.Notice) {
 	m := messageOf(n)
@@ -154,7 +169,19 @@ var errGone = errors.New("The device's push service no longer has its subscripti
 
 // push sends m to d now. A subscription its push service has dropped is
 // forgotten.
-func (p *Push) push(ctx context.Context, d Device, m message) error {
+func (p *Push) push(ctx context.Context, d Device, m message) (err error) {
+	defer func() {
+		if ctx.Err() != nil {
+			return
+		}
+		s := sent{At: time.Now(), Title: m.Title}
+		if err != nil {
+			s.Error = err.Error()
+		}
+		p.mu.Lock()
+		p.last[d.Endpoint] = s
+		p.mu.Unlock()
+	}()
 	v, err := p.key(false)
 	if err != nil {
 		return err
@@ -177,18 +204,19 @@ func (p *Push) push(ctx context.Context, d Device, m message) error {
 	if err != nil {
 		return err
 	}
-	// What waits on the reader keeps a day and wakes the device; a turn's end
-	// is old news in an hour.
-	ttl, urgency := time.Hour, "normal"
+	// Each wakes the device: at normal urgency a phone asleep is told when it
+	// next wakes, which is when the reader would have looked anyway. What waits
+	// on the reader keeps a day; a turn's end is old news in an hour.
+	ttl := time.Hour
 	if m.Kind == notify.Ask {
-		ttl, urgency = 24*time.Hour, "high"
+		ttl = 24 * time.Hour
 	}
 	sum := sha256.Sum256([]byte(m.ID))
 	req.Header.Set("Authorization", signed)
 	req.Header.Set("Content-Encoding", "aes128gcm")
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("TTL", strconv.Itoa(int(ttl.Seconds())))
-	req.Header.Set("Urgency", urgency)
+	req.Header.Set("Urgency", "high")
 	req.Header.Set("Topic", b64.EncodeToString(sum[:16]))
 	resp, err := p.http.Do(req)
 	if err != nil {

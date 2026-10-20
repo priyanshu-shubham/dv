@@ -16,14 +16,15 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((pages) => {
       // A page in front of the reader tells of it itself. Chrome lets a push
-      // go unshown only then.
-      if (pages.some((p) => p.focused && p.visibilityState === "visible")) return;
+      // go unshown only then. A test is asked for to be seen.
+      if (n.id !== "dv-test" && pages.some((p) => p.focused && p.visibilityState === "visible")) return;
       return self.registration.showNotification(n.title || "dv", {
         body: n.body || "",
         tag: n.id,
         data: { url: n.url || "/", session: n.session, folder: n.folder },
-        icon: "/icon/192.png",
-        badge: "/icon/badge.png",
+        // dv puts both before this file as data (HandleWorker).
+        icon: ICON,
+        badge: BADGE,
         // Without a tag, renotify throws.
         renotify: n.kind === "ask" && !!n.id,
       });

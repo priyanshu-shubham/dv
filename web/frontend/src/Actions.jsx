@@ -222,7 +222,9 @@ export function AskSettings() {
         <Setting label="Agent" value={ask.agent} onPick={(agent) => edit({ agent, model: "", effort: "", mode: modeFor(agent, ask.mode) })} choices={[["", "Claude"], ["codex", "Codex"]]} />
       )}
       <div className="settings-row">
-        <div className="settings-text">Model</div>
+        <div className="settings-text">
+          <div>Model</div>
+        </div>
         <Picker
           label={model?.label || ask.model || "Default"}
           choices={models.map((m) => ({ id: m.id, label: m.label, description: m.description }))}
@@ -398,7 +400,9 @@ function ActionForm({ action, info, onSave, onCancel }) {
             <Setting label="Agent" value={a.agent} onPick={(agent) => edit({ agent, model: "", effort: "", modelLabel: "", mode: modeFor(agent, a.mode) })} choices={[["", "Claude"], ["codex", "Codex"]]} />
           )}
           <div className="settings-row">
-            <div className="settings-text">Model</div>
+            <div className="settings-text">
+              <div>Model</div>
+            </div>
             <Picker
               label={model?.label || a.model || "Default"}
               choices={models.map((m) => ({ id: m.id, label: m.label, description: m.description }))}

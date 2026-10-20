@@ -298,9 +298,9 @@ func TestPush(t *testing.T) {
 		t.Fatal("the phone was dropped")
 	}
 
-	// A turn's end keeps an hour, and wakes no one.
+	// A turn's end keeps an hour, and wakes a phone asleep as well.
 	p.Send(notify.Notice{ID: "d1", Kind: notify.Done, Session: "s1", Title: "Claude finished"})
-	if m := await(t, got); m.header.Get("TTL") != "3600" || m.header.Get("Urgency") != "normal" {
+	if m := await(t, got); m.header.Get("TTL") != "3600" || m.header.Get("Urgency") != "high" {
 		t.Fatalf("TTL %s, Urgency %s", m.header.Get("TTL"), m.header.Get("Urgency"))
 	}
 }
@@ -360,6 +360,9 @@ func TestAPI(t *testing.T) {
 	want := `{"id":"dv-test","kind":"done","title":"dv","body":"Notifications reach this device.","url":"/"}`
 	if read := phone.read(t, await(t, got).body); string(read) != want {
 		t.Fatalf("the phone read\n%s", read)
+	}
+	if _, st := call("GET", asked, ""); st["last"] == nil || st["last"].(map[string]any)["title"] != "dv" || st["last"].(map[string]any)["error"] != nil {
+		t.Fatalf("last sent: %v", st)
 	}
 
 	if code, _ := call("DELETE", "/api/notify/push", `{"endpoint":"`+endpoint+`"}`); code != 204 {

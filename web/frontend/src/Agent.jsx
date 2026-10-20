@@ -13,18 +13,19 @@ import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachTarget } from "./Threads.jsx";
-import { agentName, cx, duration, isTyping, limitWindow, LRM, modKey, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useMedia } from "./util.js";
+import { agentName, cx, duration, isTyping, limitWindow, LOST_MS, LRM, modKey, PHONE_APP, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useLasting, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChevron, IconChevronDown, IconChevronUp, IconFile, IconForward, IconNewSession, IconPin, IconPlus, IconReply, IconStop,
+  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconNewSession, IconPin, IconPlus, IconReply, IconStop,
   IconTemporary,
   IconUndo, IconX,
 } from "./icons.jsx";
-import { AttachSheet, Composer as PhoneComposer, HoldSheet, JumpPad, JumpSheet, ModelSheet, ModeSheet, QueuedSheet, SessionBar } from "./phone/Session.jsx";
+import { AttachSheet, Composer as PhoneComposer, HoldSheet, JumpPad, JumpSheet, Marks, ModelSheet, ModeSheet, QueuedSheet, SessionBar } from "./phone/Session.jsx";
 import { useLongPress } from "./phone/Sheet.jsx";
 import { useBack } from "./phone/back.js";
 import { Icon as PhoneIcon } from "./phone/icons.jsx";
+import { Photo } from "./phone/Photo.jsx";
 
 const md = codeBlocks(codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true }))));
 // A command's output is Markdown, or lines of plain text that must stay lines.
@@ -564,7 +565,7 @@ function prettyModel(id) {
 export default function AgentView({
   id, session, agents, newAgent, onNewAgent, modes: allModes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
-  requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, onChanged, reveal, boxFocus, offline, active = true,
+  requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, task = false, onChanged, reveal, boxFocus, offline, active = true,
   docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent, phone = null,
 }) {
   // In the phone app: { onBack, onActions }, and the sheet open over the session.
@@ -591,6 +592,7 @@ export default function AgentView({
   const activeRef = useRef(active);
   activeRef.current = active && !docked;
   const lost = offline || dropped;
+  const saidLost = useLasting(lost, LOST_MS);
   const [draft, setDraft] = usePref("repo", "draft:" + (id || (docked ? "ask" : "new")), "");
   // The slash commands the agent takes, asked for on coming to the view and
   // again on starting to type one, which is when a new skill would be wanted.
@@ -1366,6 +1368,18 @@ export default function AgentView({
     }
   };
 
+  // Editing a message is rewinding the conversation alone to before it, the
+  // message coming back to change. Steady, for the memoised rows.
+  const editRef = useRef();
+  editRef.current = (prompt) => rewind(prompt, { conversation: true, code: false });
+  const editPrompt = useCallback((prompt) => editRef.current(prompt), []);
+  // editedSince is whether a turn after the message changed files, which an
+  // edit leaves as they are with the agent no longer knowing it did.
+  const editedSince = (prompt) => {
+    const i = items.findIndex((it) => it.key === prompt.key);
+    return i >= 0 && items.slice(i + 1).some((it) => it.kind === "tool" && it.result?.edited);
+  };
+
   // Esc twice picks a message to rewind to, as in the terminal. Once, it takes
   // back what is queued, or a message sent a moment ago; otherwise, while
   // Claude works, it stops it.
@@ -1713,7 +1727,7 @@ export default function AgentView({
           ref={inputRef}
           value={draft}
           rows={blank ? 2 : 1}
-          placeholder={busy ? `Add to what ${name} is doing` : blank ? `Ask ${name} to do something in this repository` : `Reply to ${name}`}
+          placeholder={busy ? `Add to what ${name} is doing` : blank ? (task ? `Ask ${name} anything` : `Ask ${name} to do something in this repository`) : `Reply to ${name}`}
           onChange={(e) => {
             setDraft(e.target.value);
           }}
@@ -1929,11 +1943,11 @@ export default function AgentView({
       asking={noting}
       said={noting ? saidWith(noted.note || "", noted.comments || []) : ""}
       dockRef={setDock}
-      recall={[...new Set(history.slice(-8).reverse())].slice(0, 3)}
       offered={!busy && !ask && !readOnly ? offered : []}
       onOffer={putDraft}
       chips={
-        temporary && (
+        // A session's bar marks it; a new one's is how it will start.
+        temporary && !id && (
           <button className="p-chip small on" onClick={toggleTemporary} title="Temporary: once closed, it leaves the list">
             <PhoneIcon name="timer" size={16} />
           </button>
@@ -1946,6 +1960,8 @@ export default function AgentView({
       {sheet?.type === "hold" && (
         <HoldSheet
           text={saidAs(sheet.item)}
+          onEdit={!readOnly && sheet.item.uuid ? () => editPrompt(sheet.item) : null}
+          edited={editedSince(sheet.item)}
           onRewind={!readOnly && sheet.item.uuid ? () => setRewinding({ prompt: sheet.item }) : null}
           onAgain={!readOnly ? () => putDraft(saidAs(sheet.item)) : null}
           onClose={closeSheet}
@@ -2030,7 +2046,15 @@ export default function AgentView({
         ) : (
           <SessionBar
             title={id ? session?.title || session?.prompt || "New session" : "New session"}
-            sub={[name, modelLabel, full !== null && `${full}% context`, live?.cost > 0 && `$${live.cost.toFixed(2)}`].filter(Boolean).join(" · ")}
+            sub={
+              // The model says the agent; it gives way, never the numbers.
+              <>
+                <Marks s={id && session} />
+                <span className="p-sub-what">{modelLabel || name}</span>
+                {full !== null && <span className="p-sub-stat">{full}% context</span>}
+                {live?.cost > 0 && <span className="p-sub-stat">${live.cost.toFixed(2)}</span>}
+              </>
+            }
             onBack={phone.onBack}
             onTitle={prompts.length > 1 ? () => setSheet({ type: "jump" }) : null}
             onActions={phone.onActions}
@@ -2090,19 +2114,22 @@ export default function AgentView({
         <div className="agent-start">
           <h1 className="agent-start-title">How can I help you today?</h1>
           {!phone && box}
-          <div className="agent-suggestions">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setDraft(s);
-                  inputRef.current?.focus();
-                }}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+          {/* A task has no project for them to be about. */}
+          {!task && (
+            <div className="agent-suggestions">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    setDraft(s);
+                    inputRef.current?.focus();
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
           {error && <div className="agent-note error">{error}</div>}
         </div>
       ) : null}
@@ -2172,6 +2199,7 @@ export default function AgentView({
               threads={byTool.get(it.toolId) || NO_THREADS}
               canRewind={!readOnly}
               onRewind={setRewinding}
+              onEdit={phone ? undefined : editPrompt}
               onAttach={readOnly ? null : onAttach}
               onComment={onComment}
               onThreadAction={onThreadAction}
@@ -2246,7 +2274,7 @@ export default function AgentView({
       {atWork.length > 0 && (
         <AtWork calls={atWork} open={peekItem?.toolId} last={!!peekItem} root={root} onOpen={(call) => setPeek(peekItem?.toolId === call ? null : call)} />
       )}
-      {lost && id && (
+      {saidLost && id && (
         <div className="agent-readonly agent-lost">
           Lost the connection to dv. Is it still running? The page picks up again as soon as dv is back
           {readOnly ? "." : "; until then, a message waits in the box."}
@@ -2684,6 +2712,7 @@ const Item = memo(function Item(props) {
           hint={props.hint}
           canRewind={props.canRewind}
           onRewind={props.onRewind}
+          onEdit={props.onEdit}
           onOpenFile={props.onOpenFile}
           onHold={props.onHold}
           onUndo={props.onUndo}
@@ -2743,7 +2772,7 @@ function PeerMessage({ item }) {
 // Prompt is what you said, set to the right. One still on its way in is
 // pending; its pictures are the ones sent, where the transcript's are fetched.
 // On a phone, onHold is a long press on it, onTap a tap, and onUndo its Undo.
-function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind, onOpenFile, onHold, onUndo, onTap }) {
+function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onRewind, onEdit, onOpenFile, onHold, onUndo, onTap }) {
   const { text, refs, via: viaApp } = useMemo(() => (item.answer ? splitSaid : splitContext)(item.text), [item.text, item.answer]);
   const via = viaApp !== "dv" && viaApp;
   const n = item.images || 0;
@@ -2806,9 +2835,16 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
         </div>
       )}
       {canRewind && item.uuid && !pending && (
-        <button className="ghost agent-rewind" onClick={() => onRewind({ prompt: item })} title="Rewind to before this message (Esc Esc)">
-          <IconUndo size={12} />
-        </button>
+        <span className="agent-rewind">
+          {onEdit && (
+            <button className="ghost" onClick={() => onEdit(item)} title="Edit: the conversation goes back to before this message, which comes back to change. Files changed since stay as they are.">
+              <IconEdit size={12} />
+            </button>
+          )}
+          <button className="ghost" onClick={() => onRewind({ prompt: item })} title="Rewind to before this message (Esc Esc)">
+            <IconUndo size={12} />
+          </button>
+        </span>
       )}
     </div>
   );
@@ -3332,14 +3368,29 @@ function inRepo(path, root) {
 }
 
 // ToolImage is a picture Claude was shown, under its line once that is opened.
+// Until it is in, its place is held by a spinner: .loading also keeps a
+// scrolled-up reader's place while it grows.
 function ToolImage({ src, detail = {}, name }) {
   const [zoom, setZoom] = useState(false);
+  const [state, setState] = useState("loading");
+  const phone = useMedia(PHONE_APP);
+  if (state === "failed") return <div className="agent-image failed">The picture could not be loaded</div>;
   return (
     <>
-      <button className="agent-image" onClick={() => setZoom(true)} title="See it full size">
-        <img src={src} alt="" loading="lazy" width={detail.width || undefined} height={detail.height || undefined} />
+      <button className={cx("agent-image", state === "loading" && "loading")} onClick={() => setZoom(true)} title="See it full size">
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          width={detail.width || undefined}
+          height={detail.height || undefined}
+          onLoad={() => setState("shown")}
+          onError={() => setState("failed")}
+        />
+        {state === "loading" && <span className="spinner" />}
       </button>
-      {zoom && (
+      {zoom && phone && <Photo src={src} name={name} onClose={() => setZoom(false)} />}
+      {zoom && !phone && (
         <Modal wide centred className="image-view" onClose={() => setZoom(false)}>
           <div className="viewer-head">
             <span className="path">{name}</span>
@@ -3952,7 +4003,7 @@ function SessionID({ id }) {
 // SessionList is the sidebar in Agent mode: sessions open in dv, then the rest
 // of the repository's, newest first. asking is the set of sessions with a
 // prompt or question waiting on the reader.
-export function SessionList({ sessions, available, usage, asking, activeId, added = {}, onSelect, onNew, onNewWorktree, onClose, onRename }) {
+export function SessionList({ sessions, available, usage, asking, activeId, added = {}, onSelect, onNew, onNewWorktree, onNewTask, onClose, onRename }) {
   const [filter, setFilter] = useState("");
   // The card is where the session on screen is named, so it is kept in sight.
   const listRef = useRef(null);
@@ -4055,6 +4106,11 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
         {onNewWorktree && (
           <button className="ghost" onClick={onNewWorktree} title="New session in a worktree" disabled={!available}>
             <IconBranch size={13} />
+          </button>
+        )}
+        {onNewTask && (
+          <button className="ghost" onClick={onNewTask} title="New task: a session with no project, in a folder deleted when you close it" disabled={!available}>
+            <IconChat size={13} />
           </button>
         )}
       </div>

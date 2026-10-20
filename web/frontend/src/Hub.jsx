@@ -9,6 +9,7 @@ import { enableBack } from "./phone/back.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { setTabIcon, tabDot } from "./favicon.js";
 import { PRChip } from "./Header.jsx";
+import { startTask } from "./tasks.js";
 
 const POLL_MS = 2000;
 const BUSY_POLL_MS = 700;
@@ -198,7 +199,7 @@ export default function Hub() {
     dismiss: (j) => act(api.hubDismissJob(j.id)),
     error: setError,
     // Straight to the Agent view, as a task is something to ask for.
-    newTask: () => api.hubNewTask().then((f) => openFolderSession(f.slug, ""), (e) => setError(e.message)),
+    newTask: () => startTask().catch((e) => setError(e.message)),
     closeTask: (f) => {
       const n = f.open?.sessions;
       const also = n ? `, stops ${sessions(n)} dv runs there` : "";

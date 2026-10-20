@@ -118,6 +118,49 @@ func TestATurnsEndIsSeenByUsingDv(t *testing.T) {
 	}
 }
 
+// eager is a device's own notifications.
+type eager struct{ phone }
+
+func (*eager) Eager() {}
+
+func TestADeviceHearsAtOnceWithNoPageInFront(t *testing.T) {
+	c, clk, chat, f := setup()
+	dev := &eager{}
+	c.Add(dev)
+	f.Raise(Notice{ID: "a", Kind: Ask})
+	if !slices.Equal(dev.sent, []string{"a"}) || len(chat.sent) != 0 {
+		t.Fatalf("with no page in front: device %v, chat %v", dev.sent, chat.sent)
+	}
+	_, stop := c.Watch("tab")
+	defer stop()
+	c.Report("tab", true, false, 0)
+	f.Raise(Notice{ID: "b", Kind: Ask})
+	if len(dev.sent) != 1 {
+		t.Fatalf("sent with the reader at a page: %v", dev.sent)
+	}
+	clk.pass(time.Minute)
+	c.step()
+	if !slices.Equal(dev.sent, []string{"a", "b"}) || !slices.Equal(chat.sent, []string{"a", "b"}) {
+		t.Fatalf("after a minute unused: device %v, chat %v", dev.sent, chat.sent)
+	}
+	f.Settle("a", "Answered in dv")
+	if !slices.Equal(dev.settled, []string{"a: Answered in dv"}) || !slices.Equal(chat.settled, dev.settled) {
+		t.Fatalf("settled: device %v, chat %v", dev.settled, chat.settled)
+	}
+}
+
+func TestADeviceHearsOfASeenTurnsEnd(t *testing.T) {
+	c, clk, chat, f := setup()
+	dev := &eager{}
+	c.Add(dev)
+	f.Raise(Notice{ID: "d", Kind: Done})
+	clk.pass(5 * time.Second)
+	c.Report("tab", true, true, 0)
+	if !slices.Equal(dev.settled, []string{"d: "}) || len(chat.settled) != 0 {
+		t.Fatalf("seen: device settled %v, chat %v", dev.settled, chat.settled)
+	}
+}
+
 func TestRightAwayWhenAsked(t *testing.T) {
 	clk := &clock{time.Unix(1_000_000, 0)}
 	c := newCenter(func() time.Duration { return 0 }, clk.now)

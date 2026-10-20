@@ -36,6 +36,25 @@ export function SessionBar({ title, sub, onBack, onTitle, onActions, menu }) {
   );
 }
 
+// Marks are a session's temporary and kept-running marks, as its row in the
+// list and its bar show them.
+export function Marks({ s }) {
+  return (
+    <>
+      {s?.temporary && (
+        <span className="p-flag" role="img" aria-label="Temporary" title="Temporary: it leaves the list once closed">
+          <Icon name="timer" size={14} />
+        </span>
+      )}
+      {s?.kept && (
+        <span className="p-flag" role="img" aria-label="Kept running" title="Kept running: not stopped when idle, and started with dv">
+          <Icon name="pin" size={14} />
+        </span>
+      )}
+    </>
+  );
+}
+
 // JumpPad steps between your own messages, showing while the reader scrolls
 // the conversation and for a moment after - not when the page scrolls it.
 export function JumpPad({ scrollRef, mine, onStep }) {
@@ -100,12 +119,20 @@ export function JumpSheet({ said, at, onPick, onClose }) {
 }
 
 // HoldSheet is what a long-press on your message offers.
-export function HoldSheet({ text, onRewind, onAgain, onClose }) {
+export function HoldSheet({ text, onEdit, edited, onRewind, onAgain, onClose }) {
   return (
     <Sheet onClose={onClose}>
       <div className="p-preview">{text || "(images)"}</div>
+      {onEdit && (
+        <Row
+          icon="edit"
+          title="Edit"
+          sub={edited ? "The conversation goes back to before it; files changed since stay as they are" : "The conversation goes back to before it, and it comes back to change"}
+          onClick={() => (onClose(), onEdit())}
+        />
+      )}
       {onRewind && <Row icon="undo" title="Rewind to before this…" onClick={() => (onClose(), onRewind())} />}
-      {text && onAgain && <Row icon="edit" title="Use again" sub="Into the message box, the conversation as it is" onClick={() => (onClose(), onAgain())} />}
+      {text && onAgain && <Row icon="pull" title="Use again" sub="Into the message box, the conversation as it is" onClick={() => (onClose(), onAgain())} />}
       {text && <Row icon="copy" title="Copy" onClick={() => (onClose(), copy(text))} />}
     </Sheet>
   );
@@ -136,10 +163,8 @@ function copy(text) {
 export function Composer({
   name, draft, onDraft, inputRef, onPaste, placeholder, canSend, onSend, onStop, stop, lost,
   extras, model, effort, mode, pending, onModel, onMode, onAttach,
-  asking, said, dockRef, recall, offered, onOffer, chips,
+  asking, said, dockRef, offered, onOffer, chips,
 }) {
-  const [focused, setFocused] = useState(false);
-  const recalling = focused && !draft && !asking && recall.length > 0;
   // What floats over the conversation - the bar for selected text - sits above the box.
   const ref = useRef(null);
   useEffect(() => {
@@ -154,27 +179,14 @@ export function Composer({
   }, []);
   return (
     <div className="p-composer" ref={ref}>
-      {recalling ? (
-        <div className="p-chips" onMouseDown={(e) => e.preventDefault()}>
-          <Icon name="undo" size={18} className="p-chips-lead" />
-          {recall.map((t, i) => (
-            <button key={i} className="p-chip" onClick={() => onDraft(t)}>
-              <span className="p-chip-text">{t}</span>
+      {!asking && !draft && offered.length > 0 && (
+        <div className="p-chips">
+          {offered.map((f, i) => (
+            <button key={i} className="p-chip" onClick={() => onOffer(f.prompt)}>
+              <span className="p-chip-text">{f.label}</span>
             </button>
           ))}
         </div>
-      ) : (
-        !asking &&
-        !draft &&
-        offered.length > 0 && (
-          <div className="p-chips">
-            {offered.map((f, i) => (
-              <button key={i} className="p-chip" onClick={() => onOffer(f.prompt)}>
-                <span className="p-chip-text">{f.label}</span>
-              </button>
-            ))}
-          </div>
-        )
       )}
       <div className="p-dock" ref={dockRef} hidden={!asking} />
       <div className="p-box">
@@ -192,8 +204,6 @@ export function Composer({
             placeholder={asking ? `Add a note for ${name} (optional)` : placeholder}
             onChange={(e) => onDraft(e.target.value)}
             onPaste={onPaste}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
         </div>
         {asking ? (

@@ -206,6 +206,27 @@ html.phone ::-webkit-scrollbar {
   text-overflow: ellipsis;
 }
 
+.p-flag {
+  flex: none;
+  display: inline-flex;
+  align-self: center;
+  color: var(--fg-2);
+}
+
+.p-sub-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-sub-stat {
+  flex: none;
+}
+
+.p-sub-stat::before {
+  content: "· ";
+}
+
 .p-title.path .p-title-main {
   display: block;
   font: 500 15px / 1.3 var(--font-mono);
@@ -689,11 +710,6 @@ html.phone ::-webkit-scrollbar {
 .p-chips.wrap {
   flex-wrap: wrap;
   padding: 4px 24px 12px;
-}
-
-.p-chips-lead {
-  flex: none;
-  color: var(--fg-3);
 }
 
 .p-chip {
@@ -1332,6 +1348,19 @@ html.phone .agent-log {
   padding-bottom: 24px;
 }
 
+/* The diff ends at its last file, as a list does: the desktop's room after
+   it is for keys that put the last change at the top. */
+html.phone .content::after {
+  height: 24px;
+}
+
+/* A call's card says whose it is; set in past the call's dot as well, it
+   would be left too narrow to read. */
+html.phone .agent-tool-body,
+html.phone .agent-image {
+  margin-left: 0;
+}
+
 html.phone .agent-text {
   font-size: 15px;
   line-height: 1.55;
@@ -1566,11 +1595,12 @@ html.phone .p-comments .sidebar-modes {
 
 html.phone .p-comments .sidebar-modes > .seg {
   flex: 1;
+  gap: 0;
   padding: 0;
   overflow: hidden;
+  border: 1px solid var(--border-strong);
   border-radius: 20px;
   background: none;
-  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 html.phone .p-comments .sidebar-modes > .seg > button {
@@ -1887,8 +1917,92 @@ html.phone .p-box textarea:focus-visible {
   box-shadow: none;
 }
 
-/* Settings is a screen of its own, as Android's are: its sections a row of
-   chips under the title, each setting its words over its choices. */
+/* A picture has the whole screen, black but for what shows through as it is
+   dragged away. */
+html.phone .backdrop:has(> .modal.photo) {
+  padding: 0;
+  background: none;
+}
+
+html.phone .modal.photo {
+  height: 100%;
+  max-height: none;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  animation: p-photo-in 0.2s var(--m-ease);
+}
+
+@keyframes p-photo-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.p-photo {
+  --fade: 1;
+  position: relative;
+  height: 100%;
+  background: rgba(0, 0, 0, var(--fade));
+}
+
+.p-photo.eased {
+  transition: background-color 0.25s var(--m-ease);
+}
+
+.p-photo-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.p-photo-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  user-select: none;
+}
+
+.p-photo-stage .spinner {
+  position: absolute;
+}
+
+.p-photo-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--m-bar-h);
+  padding: 0 16px 0 4px;
+  background: linear-gradient(rgba(0, 0, 0, 0.6), transparent);
+  opacity: var(--fade);
+  transition: opacity 0.2s;
+}
+
+.p-photo-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.p-photo-bar .p-icon {
+  color: #fff;
+}
+
+.p-photo-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Settings is a screen of its own, as Android's are: the app's bar, its
+   sections a row of chips under it, each setting its words over its choices,
+   and one kind of field and two of button on every tab. */
 html.phone .backdrop:has(> .modal.settings) {
   align-items: stretch;
   padding: 0;
@@ -1903,29 +2017,16 @@ html.phone .backdrop.centred > .modal.settings {
   animation: none;
 }
 
-html.phone .settings .viewer-head {
-  min-height: var(--m-bar-h);
-  padding: 0 4px 0 20px;
-}
-
-html.phone .settings .viewer-head .path {
-  font: 400 22px / 1.3 var(--font-ui);
-}
-
-html.phone .settings .viewer-head .ghost {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-}
-
 html.phone .settings-tabs {
   padding: 4px 16px 8px;
 }
 
 html.phone .settings-tabs > .seg {
+  display: flex;
   flex-wrap: nowrap;
   gap: 8px;
   padding: 0;
+  overflow-x: auto;
   background: none;
   scrollbar-width: none;
 }
@@ -1952,9 +2053,110 @@ html.phone .settings-body {
   padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
 }
 
-html.phone .settings-text > div:first-child {
+html.phone .settings-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+html.phone .settings-text {
+  flex: none;
+}
+
+html.phone .settings-text > div:first-child,
+html.phone .settings .hub-field > span:first-child {
   color: var(--fg);
   font-size: 16px;
+}
+
+html.phone .settings .hub-field {
+  gap: 6px;
+}
+
+/* Android's outlined fields; the model picker is one that opens a list. */
+html.phone .settings-body input,
+html.phone .settings-body textarea,
+html.phone .settings-row > .model-menu > .mini {
+  height: 48px;
+  margin: 0;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  font-size: 16px;
+}
+
+html.phone .settings-body textarea {
+  height: auto;
+  padding: 12px 16px;
+  font-size: 14px;
+}
+
+html.phone .settings-body input:focus,
+html.phone .settings-body textarea:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+html.phone .settings-row > input,
+html.phone .settings-row > .model-menu {
+  flex: none;
+  margin-left: 0;
+}
+
+html.phone .settings-row > .model-menu > .mini {
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 12px;
+}
+
+/* Filled for what a row is there to do, outlined for the rest, each as wide
+   as its words. */
+html.phone .settings-actions,
+html.phone .action-form-foot {
+  gap: 8px;
+  margin-left: 0;
+}
+
+html.phone .settings-body .primary,
+html.phone .settings-body .btn,
+html.phone .settings-body .mini:not(.model-menu > .mini) {
+  flex: none;
+  gap: 8px;
+  height: 40px;
+  padding: 0 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background: none;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html.phone .settings-body .primary {
+  border-color: transparent;
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+html.phone .settings-body .primary:disabled {
+  background: var(--bg-active);
+  color: var(--fg-4);
+}
+
+html.phone .settings-body .mini:has(svg) {
+  padding-left: 16px;
+}
+
+html.phone .ask-prompt-row {
+  gap: 4px;
+}
+
+html.phone .ask-prompt-row .ghost {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
 }
 
 html.phone .settings-note {
@@ -1962,16 +2164,25 @@ html.phone .settings-note {
   color: var(--fg-2);
 }
 
+html.phone .settings-note.error {
+  color: var(--m-error);
+}
+
+/* A border, not an inset shadow, which a picked end would paint over; no gap,
+   which would leave a sliver between a picked one and its neighbour. */
 html.phone .settings-row > .seg {
-  margin-top: 4px;
+  display: flex;
+  gap: 0;
+  margin: 0;
   padding: 0;
   overflow: hidden;
+  border: 1px solid var(--border-strong);
   border-radius: 20px;
   background: none;
-  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 html.phone .settings-row > .seg > button {
+  flex: 1 1 auto;
   height: 40px;
   border-radius: 0;
   color: var(--fg);
@@ -1989,6 +2200,7 @@ html.phone .settings-row > .seg > button.on {
 
 /* ---- Notices, as Android's snackbars ---- */
 
+/* Not selectable: sonner won't swipe away a notice with text selected in it. */
 html.phone .notice {
   width: 100%;
   padding: 12px 40px 12px 14px;
@@ -1997,6 +2209,8 @@ html.phone .notice {
   box-shadow: var(--shadow-pop);
   color: #303030;
   font-size: 14px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 html.phone .notice .notice-detail,

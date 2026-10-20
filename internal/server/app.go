@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	_ "embed"
+	"encoding/base64"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -35,8 +37,17 @@ func HandleManifest(w http.ResponseWriter, r *http.Request) {
 func HandleWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(serviceWorker)
+	w.Write(worker())
 }
+
+// worker is the service worker with its notifications' pictures in it. As
+// addresses they would be fetched as each shows, past whatever guards dv: a
+// login Cloudflare Access may have let lapse by the time a phone is woken,
+// which leaves Android's own generic icon in their place.
+var worker = sync.OnceValue(func() []byte {
+	png := func(name string) string { return "data:image/png;base64," + base64.StdEncoding.EncodeToString(icons()[name]) }
+	return fmt.Appendf(nil, "const ICON = %q;\nconst BADGE = %q;\n\n%s", png("192.png"), png("badge.png"), serviceWorker)
+})
 
 // HandleIcon serves /icon/{name}: 192.png, 512.png, maskable-512.png, and
 // badge.png, the white glyph Android shows in the status bar, by its alpha.

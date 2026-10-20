@@ -2,7 +2,7 @@
 // page they are: a toast for a session not on screen, and a desktop
 // notification as well while the page is not in front of them, if they allowed
 // it. dv decides what to tell and when (internal/notify); the page shows it.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
@@ -11,6 +11,10 @@ import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
 import { cx, PHONE_APP, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
+// A request is two pulses, a turn's end a tick.
+const ASK_BUZZ = [40, 80, 40];
+const DONE_BUZZ = 25;
+const FRESH_MS = 10000;
 
 // Below the header, clear of the message box. Outside the page, which an
 // overlay makes inert, so a notice can still be acted on over one. In the phone
@@ -26,6 +30,8 @@ export function Notices({ phone }) {
         mobileOffset={{ bottom: 92, left: 12, right: 12 }}
         gap={8}
         visibleToasts={3}
+        // Sideways, as Android's go; sonner's own is only towards the corner it is in.
+        swipeDirections={["left", "right", "bottom"]}
         toastOptions={{ unstyled: true }}
       />
     ) : (
@@ -83,24 +89,35 @@ function restartedOn(was, now) {
 }
 
 // On a phone a tap anywhere on a notice does what its action marked opens
-// does, and that action's button goes.
-function Notice({ id, kind, agent, title, detail, last, actions }) {
+// does, and that action's button goes. Else a click on one cut short shows it
+// whole, and keeps it until it is dismissed.
+function Notice(props) {
+  const { id, kind, agent, title, detail, last, actions, open } = props;
   const phone = useMedia(PHONE_APP);
   const opener = phone && actions?.find((a) => a.opens);
   const shown = opener ? actions.filter((a) => a !== opener) : actions;
   const down = useRef(null);
+  const ref = useRef(null);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const lines = ref.current.querySelectorAll(".notice-detail, .notice-last");
+    setCut(!open && [...lines].some((el) => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1));
+  }, [detail, last, open]);
   const onClick = (e) => {
     // Swiping a notice away ends in a click as well.
     const d = down.current;
     if (e.target.closest("button") || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
-    toast.dismiss(id);
-    opener.run();
+    if (opener) {
+      toast.dismiss(id);
+      opener.run();
+    } else toast.custom((t) => <Notice {...props} id={t} open />, { id, duration: Infinity });
   };
   return (
     <div
-      className={cx("notice", kind, opener && "opens")}
+      ref={ref}
+      className={cx("notice", kind, (opener || cut) && "opens", open && "open")}
       onPointerDown={(e) => (down.current = { x: e.clientX, y: e.clientY })}
-      onClick={opener ? onClick : undefined}
+      onClick={opener || cut ? onClick : undefined}
     >
       <span className="notice-icon">{kind === "done" ? <IconCheck size={13} /> : <AgentIcon agent={agent} size={13} />}</span>
       <div className="notice-body">
@@ -204,12 +221,13 @@ function usePresence() {
 // window, open goes to one of its sessions, and go to a session in another of
 // the hub's folders. In the phone app a request is answered in its session,
 // so that is where its notice goes. It returns the notices open.
-export function useNotices({ looking, asking: askOpen, desktop, review, open, go, phone }) {
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go, phone, buzz }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
   const toasted = useRef(new Map()); // kinds, by notice
   const told = useRef(new Map()); // desktop notifications, by notice
+  const buzzed = useRef(new Set());
   const now = useRef();
   now.current = { desktop, review, open, go };
 
@@ -239,6 +257,15 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
         else if (!own) location.href = `/${n.folder}/`;
       };
       const onScreen = own && !!n.session && (n.session === looking || n.session === askOpen);
+
+      // A phone buzzes for what an agent says as it comes: a request even on
+      // screen, where it asks over the box; a turn's end where it isn't seen.
+      // What came while dv was away its notification told of already.
+      if (buzz && !buzzed.current.has(n.id)) {
+        buzzed.current.add(n.id);
+        const fresh = !document.hidden && Date.now() - Date.parse(n.at) < FRESH_MS;
+        if (fresh && (asking || !onScreen)) navigator.vibrate?.(asking ? ASK_BUZZ : DONE_BUZZ);
+      }
 
       if (n.loud && !told.current.has(n.id)) {
         const shown = inFront() ? null : notify(n.id, asking ? n.title : `${n.title}: ${where}`, asking ? `in ${where}` : oneLine(n.body), goThere);
@@ -296,7 +323,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
         return null;
       }
     }
-  }, [notices, looking, askOpen, phone]);
+  }, [notices, looking, askOpen, phone, buzz]);
 
   return notices;
 }

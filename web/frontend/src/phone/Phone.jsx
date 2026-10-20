@@ -6,7 +6,7 @@ import AgentView from "../Agent.jsx";
 import { CommentsPanel } from "../Sidebar.jsx";
 import { api } from "../api.js";
 import { boot, slug } from "../boot.js";
-import { cx, PHONE_FOLDER_KEY } from "../util.js";
+import { cx, LOST_MS, PHONE_FOLDER_KEY, useLasting } from "../util.js";
 import { enableBack, useBack } from "./back.js";
 import { Icon } from "./icons.jsx";
 import { AUTO, PRESETS } from "../Header.jsx";
@@ -15,6 +15,8 @@ import Sessions from "./Sessions.jsx";
 import Files from "./Files.jsx";
 import { usePush } from "./push.js";
 import { endPicking } from "./Pick.jsx";
+import { say } from "../Notices.jsx";
+import { closeTask, startTask } from "../tasks.js";
 
 const TABS = [
   { id: "agent", label: "Agent", icon: "spark" },
@@ -86,7 +88,12 @@ export default function Phone({ app }) {
     setInCode(false);
     setInSession(true);
   }, [app.showSession]);
-  useBack(inSession, () => setInSession(false));
+  // A task left before anything was said or made in it is not kept.
+  const leaveSession = () => {
+    if (meta?.task && !app.agent.sessions.length && !app.uncommitted) closeTask().catch(() => setInSession(false));
+    else setInSession(false);
+  };
+  useBack(inSession, leaveSession);
   // Put away, the session stays drawn while its screen slides out.
   const [leaving, setLeaving] = useState(false);
   useEffect(() => {
@@ -162,18 +169,21 @@ export default function Phone({ app }) {
   const title = meta?.repo || slug || "dv";
   const branch = meta?.head?.branch || (meta?.head?.sha || "").slice(0, 7);
   const changed = app.uncommitted;
+  const offline = useLasting(app.offline, LOST_MS);
 
   return (
-    <div className={cx("p-app", app.offline && "offline")}>
+    <div className={cx("p-app", offline && "offline")}>
       <header className="p-bar">
         <button className="p-title" onClick={() => (boot.base ? setSheet("folders") : null)} disabled={!boot.base}>
           <span className="p-title-main">
             {title}
             {boot.base && <Icon name="drop" size={20} />}
           </span>
-          {(branch || meta?.git === false) && (
+          {(meta?.task || branch || meta?.git === false) && (
             <span className="p-title-sub">
-              {branch ? (
+              {meta?.task ? (
+                "Task · deleted when you close it"
+              ) : branch ? (
                 <>
                   <Icon name="branch" size={14} />
                   {branch}
@@ -303,7 +313,7 @@ export default function Phone({ app }) {
             {...app.agentProps}
             active={inSession || leaving}
             phone={{
-              onBack: () => setInSession(false),
+              onBack: leaveSession,
               onActions: () => app.openOverlay({ type: "actions" }),
             }}
             onClose={async (id) => (await app.closeSession(id)) && setInSession(false)}
@@ -318,11 +328,12 @@ export default function Phone({ app }) {
           onClose={() => setSheet(null)}
           items={[
             { icon: "settings", label: "Settings", run: () => app.openOverlay({ type: "settings" }) },
-            meta?.git && !app.folder && { icon: "branch", label: "Switch branch", run: () => app.openOverlay({ type: "branch" }) },
+            meta?.git && !app.folder && !meta.task && { icon: "branch", label: "Switch branch", run: () => app.openOverlay({ type: "branch" }) },
             meta?.remote && { icon: "pull", label: `Pull ${branch}`, run: () => app.pull() },
             { icon: "file", label: "Open a file", run: () => app.openOverlay({ type: "files" }) },
             boot.base && "-",
             boot.base && { icon: "home", label: "All folders", run: () => (location.href = "/?folders") },
+            app.closeTask && { icon: "x", label: "Close task", run: app.closeTask },
           ]}
         />
       )}
@@ -348,6 +359,12 @@ function Folders({ elsewhere, here, onClose }) {
         </button>
       }
     >
+      <Row
+        icon="plus"
+        title="New task"
+        sub="A session with no project, in a folder deleted when you close it"
+        onClick={() => startTask().catch((e) => say("Could not start a task", e.message))}
+      />
       {list === null && <div className="p-empty">Loading…</div>}
       {list?.map((f) => {
         const n = f.slug === slug ? here : asks.get(f.slug) || 0;

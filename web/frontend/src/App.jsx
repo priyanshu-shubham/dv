@@ -26,6 +26,7 @@ import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, mo
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
+import { closeTask, startTask } from "./tasks.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
@@ -1301,6 +1302,16 @@ export default function App() {
   const [worktreeOpen, setWorktreeOpen] = useState(false);
   // A worktree starts from a commit; a task has no worktrees at all.
   const newWorktree = boot.base && meta?.git && meta.head?.sha && !meta.task ? () => setWorktreeOpen(true) : null;
+  // endTask closes this page's task, every session in it stopping, asking
+  // first if that would lose work.
+  const endTask = useCallback(async () => {
+    const working = agent.sessions.filter((s) => s.running === "dv" && s.busy).length;
+    const made = diff?.uncommitted || 0;
+    const lost = [made > 0 && `the ${made} file${made === 1 ? "" : "s"} in it`, meta?.head?.sha && "its commits"].filter(Boolean);
+    const stops = working ? `${working === 1 ? "A session still working stops" : `${working} sessions still working stop`}, and its folder` : "Its folder";
+    if ((lost.length || working) && !confirm(`Close this task? ${stops} is deleted${lost.length ? `, with ${lost.join(" and ")}` : ""}.`)) return;
+    await closeTask().catch((e) => say("Could not close the task", e.message));
+  }, [agent.sessions, diff?.uncommitted, meta?.head?.sha]);
   // closeSession reports whether it closed: one still working is asked about.
   const closeSession = useCallback(
     async (id) => {
@@ -1335,9 +1346,10 @@ export default function App() {
     boot.base && {
       id: "new-task",
       name: "New task",
-      note: "A session in a new folder, deleted when you close it",
-      run: () => api.hubNewTask().then((f) => openFolderSession(f.slug, ""), (e) => say("Could not start a task", e.message)),
+      note: "A session with no project, in a folder deleted when you close it",
+      run: () => startTask().catch((e) => say("Could not start a task", e.message)),
     },
+    meta?.task && { id: "close-task", name: "Close task", note: "Its sessions stop, and its folder is deleted", run: endTask },
     // Open, each closes the panel, as the header's button does; else it turns to them.
     ...[
       ["comments", "comments", "The comments in the review"],
@@ -1438,6 +1450,7 @@ export default function App() {
   const notices = useNotices({
     looking: phoneApp ? (phoneSession ? agentId : null) : mode === "agent" ? agentId : null,
     phone: phoneApp,
+    buzz: phoneApp && settings.noticeHaptics !== false,
     asking: askShown ? askId : null,
     desktop: desktopNotices,
     go: openFolderSession,
@@ -2047,6 +2060,7 @@ export default function App() {
     temporaryNew,
     onTemporaryNew: setTemporaryNew,
     onClose: closeSession,
+    task: !!meta?.task,
     onChanged: loadSessions,
     reveal: agentReveal,
     boxFocus,
@@ -2278,6 +2292,7 @@ export default function App() {
               selectSession,
               startSession,
               closeSession,
+              closeTask: meta?.task ? endTask : null,
               renameSession: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
               openOverlay,
               openSearch,
@@ -2317,6 +2332,7 @@ export default function App() {
         comments={threads.filter((t) => !t.resolved).length}
         commentsOn={showComments}
         onComments={() => setCommentsOpen((o) => !o)}
+        onCloseTask={meta?.task ? endTask : null}
       />
 
       <div
@@ -2359,6 +2375,7 @@ export default function App() {
             onSelect: selectSession,
             onNew: startSession,
             onNewWorktree: newWorktree,
+            onNewTask: boot.base ? () => startTask().catch((e) => say("Could not start a task", e.message)) : null,
             onClose: closeSession,
             onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
           }}

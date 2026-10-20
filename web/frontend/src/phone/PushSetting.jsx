@@ -3,16 +3,31 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { say } from "../Notices.jsx";
-import { cx } from "../util.js";
+import { cx, relTime } from "../util.js";
 import { current, pushable, subscribe, unsubscribe } from "./push.js";
+
+const TEST_AFTER = 10;
 
 export function PushSetting() {
   const [on, setOn] = useState(null); // null until known
+  const [last, setLast] = useState(null); // how dv's last message to this phone went
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
+  const look = () =>
     current()
-      .then((sub) => (sub ? api.pushStatus(sub.endpoint).then((st) => !!st.subscribed) : false))
-      .then(setOn, () => setOn(false));
+      .then((sub) => (sub ? api.pushStatus(sub.endpoint) : {}))
+      .then(
+        (st) => {
+          setOn(!!st.subscribed);
+          setLast(st.last || null);
+        },
+        () => setOn(false),
+      );
+  // Coming back to it, as after locking the phone for a test, it reads again.
+  useEffect(() => {
+    look();
+    const back = () => !document.hidden && look();
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
   }, []);
   const pick = async (want) => {
     if (want === on || busy) return;
@@ -27,10 +42,11 @@ export function PushSetting() {
       setBusy(false);
     }
   };
+  // Late enough to lock the phone first, which is what a test is for.
   const test = async () => {
     try {
-      await api.pushTest((await current())?.endpoint);
-      say("Sent", "Lock the phone or leave dv to see it: dv in front shows notices itself.");
+      await api.pushTest((await current())?.endpoint, TEST_AFTER);
+      say("Lock the phone now", `A test notification comes in ${TEST_AFTER} seconds.`);
     } catch (e) {
       say("Could not send one", e.message);
     }
@@ -52,6 +68,11 @@ export function PushSetting() {
             </>
           )}
         </div>
+        {on && last && (
+          <div className={cx("settings-note", last.error && "error")}>
+            {last.error ? `The last one, ${relTime(last.at)}, failed: ${last.error}` : `Last sent ${relTime(last.at)}: “${last.title}”`}
+          </div>
+        )}
       </div>
       <span className="seg">
         {[

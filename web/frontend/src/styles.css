@@ -481,6 +481,15 @@ a.link:hover {
   }
 }
 
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* ---------- top bar ---------- */
 
 /* The repository in the middle, held there by equal sides; how the page is
@@ -564,6 +573,11 @@ a.logo.to-hub:hover > svg {
   text-overflow: ellipsis;
   color: var(--fg);
   font-weight: 600;
+}
+
+/* A task's name has no branch beside it to share the room with. */
+.topbar-title .repo:has(+ .mini) {
+  max-width: none;
 }
 
 .topbar .headref,
@@ -3942,70 +3956,6 @@ mark {
   font-size: var(--fs-xs);
 }
 
-/* On a phone each setting is its words over its choices, which share the width
-   as one control and take the finger-sized height. */
-@media (max-width: 760px) {
-  .settings-body {
-    gap: 14px;
-    padding: 8px 16px 20px;
-  }
-
-  .settings-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .settings-text {
-    flex: none;
-  }
-
-  .settings-row > .seg {
-    display: flex;
-    margin-left: 0;
-    padding: 2px;
-    border-radius: var(--r-md);
-    background: var(--bg-input);
-  }
-
-  .settings-row > .seg > button {
-    flex: 1 1 auto;
-    height: 36px;
-  }
-
-  .settings-row > input {
-    flex: none;
-    height: 36px;
-    margin-left: 0;
-  }
-
-  .settings-actions {
-    margin-left: 0;
-  }
-
-  .settings-actions > button {
-    flex: 1 1 auto;
-    height: 36px;
-  }
-
-  /* Six tabs are two rows of three, rather than a row scrolled sideways. */
-  .settings-tabs {
-    padding: 8px 16px 4px;
-  }
-
-  .settings-tabs > .seg {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2px;
-    padding: 2px;
-    border-radius: var(--r-md);
-    background: var(--bg-input);
-  }
-
-  .settings-tabs > .seg > button {
-    height: 34px;
-  }
-}
-
 kbd {
   display: inline-block;
   height: 18px;
@@ -5018,11 +4968,13 @@ button.ghost.agent-context {
   position: absolute;
   top: 4px;
   right: calc(100% + 4px);
+  display: flex;
+  gap: 2px;
   visibility: hidden;
 }
 
 .agent-prompt:hover .agent-rewind,
-.agent-rewind:focus-visible {
+.agent-rewind:has(:focus-visible) {
   visibility: visible;
 }
 
@@ -5864,6 +5816,31 @@ button.ghost.agent-context {
   height: auto;
 }
 
+.agent-image.loading {
+  position: relative;
+  min-width: 160px;
+  min-height: 120px;
+  background: var(--bg-panel);
+  cursor: progress;
+}
+
+.agent-image.loading img {
+  opacity: 0;
+}
+
+.agent-image .spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+.agent-image.failed {
+  padding: 8px 12px;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  cursor: default;
+}
+
 /* As wide as the picture, up to the wide modal's width. */
 .modal.image-view {
   width: fit-content;
@@ -6634,6 +6611,10 @@ button.ghost.composer-add {
   font: var(--fs-sm) / 1.4 var(--font-ui);
 }
 
+.notice.opens {
+  cursor: pointer;
+}
+
 /* Shaded over its own fill: the hover tokens are see-through. */
 .notice.opens:active {
   background-image: linear-gradient(var(--bg-active), var(--bg-active));
@@ -6687,6 +6668,18 @@ button.ghost.composer-add {
   font-size: var(--fs-xs);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.notice.open .notice-detail {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.notice.open .notice-last {
+  display: block;
+  max-height: 50vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 
 .notice-actions {

@@ -16,6 +16,7 @@ import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
 import { Picker } from "./Picker.jsx";
 import { useBack } from "./phone/back.js";
 import { PushSetting } from "./phone/PushSetting.jsx";
+import { SessionBar } from "./phone/Session.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -789,6 +790,11 @@ export function SettingsOverlay({
   tab: opening = "appearance",
 }) {
   const [tab, setTab] = useState(opening);
+  // On a phone the tabs are a row scrolled sideways, which keeps the open one in it.
+  const tabsRef = useRef(null);
+  useEffect(() => {
+    tabsRef.current.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tab]);
   const tabs = [
     ["appearance", "Appearance"],
     ["diff", "Diff"],
@@ -800,15 +806,19 @@ export function SettingsOverlay({
   ];
   return (
     <Modal onClose={onClose} centred className="settings">
-      <div className="viewer-head">
-        <span className="path">Settings</span>
-        <span className="spacer" />
-        <button className="ghost" onClick={onClose}>
-          <IconX size={13} />
-        </button>
-      </div>
+      {phoneApp ? (
+        <SessionBar title="Settings" onBack={onClose} menu={[]} />
+      ) : (
+        <div className="viewer-head">
+          <span className="path">Settings</span>
+          <span className="spacer" />
+          <button className="ghost" onClick={onClose}>
+            <IconX size={13} />
+          </button>
+        </div>
+      )}
       <div className="settings-tabs">
-        <span className="seg" role="tablist">
+        <span className="seg" role="tablist" ref={tabsRef}>
           {tabs.map(([id, name]) => {
             // The Settings button's dot, on the tab the update is in.
             const dot = id === "server" && update;
@@ -881,7 +891,16 @@ export function SettingsOverlay({
         {tab === "notifications" && (
           <>
             {phoneApp ? (
-              <PushSetting />
+              <>
+                <PushSetting />
+                <Setting
+                  label="Vibrate in dv"
+                  note="A buzz when an agent asks for you or finishes while dv is open: two for a request, one for a finished turn."
+                  value={settings.noticeHaptics !== false}
+                  onPick={(on) => onChange({ noticeHaptics: on ? undefined : false })}
+                  choices={OFF_ON}
+                />
+              </>
             ) : (
               <Setting
                 label="Desktop notifications"

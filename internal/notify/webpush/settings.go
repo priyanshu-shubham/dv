@@ -1,12 +1,15 @@
 package webpush
 
 import (
+	"cmp"
+	"context"
 	"crypto/ecdh"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -16,10 +19,12 @@ type status struct {
 	Key        string `json:"key"`     // the VAPID public key, the browser's applicationServerKey
 	Devices    int    `json:"devices"` // this dv's
 	Subscribed *bool  `json:"subscribed,omitempty"`
+	Last       *sent  `json:"last,omitempty"`
 }
 
 // HandleStatus says the key, making it the first time, and how many devices
-// this dv sends to; given ?endpoint=, whether that one is among them.
+// this dv sends to; given ?endpoint=, whether that one is among them, and how
+// the last message to it went since dv started.
 func (p *Push) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	v, err := p.key(true)
 	if err != nil {
@@ -30,6 +35,11 @@ func (p *Push) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	if endpoint := r.URL.Query().Get("endpoint"); endpoint != "" {
 		_, ok := p.device(endpoint)
 		st.Subscribed = &ok
+		p.mu.Lock()
+		if s, ok := p.last[endpoint]; ok {
+			st.Last = &s
+		}
+		p.mu.Unlock()
 	}
 	writeJSON(w, http.StatusOK, st)
 }
@@ -99,11 +109,13 @@ func (p *Push) HandleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleTest sends a notification to a device now: { endpoint }, which this
-// dv sends to. What its push service says to it is the answer.
+// HandleTest sends a notification to a device: { endpoint, after }, which this
+// dv sends to. Now, what its push service says to it is the answer; after
+// seconds, for the phone to be locked by then, its status says.
 func (p *Push) HandleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Endpoint string `json:"endpoint"`
+		After    int    `json:"after"`
 	}
 	json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req)
 	d, ok := p.device(req.Endpoint)
@@ -112,6 +124,16 @@ func (p *Push) HandleTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := message{ID: "dv-test", Kind: "done", Title: "dv", Body: "Notifications reach this device.", URL: "/"}
+	if req.After > 0 {
+		go func() {
+			time.Sleep(time.Duration(min(req.After, 60)) * time.Second)
+			if err := p.push(context.Background(), d, m); err != nil {
+				fmt.Fprintf(os.Stderr, "dv: could not send a test notice to %s: %v\n", cmp.Or(d.Name, "a device"), err)
+			}
+		}()
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	if err := p.push(r.Context(), d, m); err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return

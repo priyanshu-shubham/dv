@@ -27,12 +27,19 @@ const REOPEN_MS = 3000;
 // dv may have restarted meanwhile. The browser retries a dropped connection
 // itself, but gives up for good on an error answered in dv's place - a
 // tunnel's 502 while dv is down - which reopen retries, for the streams a page
-// keeps for as long as it is open.
+// keeps for as long as it is open. A page shown again, as a phone is unlocked,
+// or back online reconnects at once rather than at the browser's next retry.
 function stream(url, onMessage, onError, reopen) {
   let es;
   let timer = 0;
   let opened = false;
   let stopped = false;
+  const again = () => {
+    if (document.hidden || stopped || es.readyState === EventSource.OPEN) return;
+    clearTimeout(timer);
+    es.close();
+    open();
+  };
   const open = () => {
     es = new EventSource(url);
     es.onmessage = onMessage;
@@ -46,10 +53,14 @@ function stream(url, onMessage, onError, reopen) {
     };
   };
   open();
+  document.addEventListener("visibilitychange", again);
+  window.addEventListener("online", again);
   return () => {
     stopped = true;
     clearTimeout(timer);
     es.close();
+    document.removeEventListener("visibilitychange", again);
+    window.removeEventListener("online", again);
   };
 }
 
@@ -297,7 +308,9 @@ export const api = {
   // as at dv while it is open and says so through presence: { page, focused,
   // input, ago }, ago in milliseconds since they last used it.
   notices: (page, on) => follow(`/api/notify?page=${page}`, on, null, "", true),
-  presence: (report) => req("/api/notify/presence", { method: "POST", body: JSON.stringify(report) }, ""),
+  // keepalive: the report a phone being locked makes is to arrive, not to be
+  // cancelled as the page is put away.
+  presence: (report) => req("/api/notify/presence", { method: "POST", body: JSON.stringify(report), keepalive: true }, ""),
   // telegram: { bot, chat, connect, origin, sending, sender }, {} with no bot
   // set up. Links in its messages go to the page's address as it sets up or tests.
   telegram: () => req("/api/notify/telegram", {}, ""),
@@ -316,7 +329,8 @@ export const api = {
   pushStatus: (endpoint) => req("/api/notify/push" + (endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ""), {}, ""),
   pushSubscribe: (sub) => req("/api/notify/push", { method: "POST", body: JSON.stringify(sub) }, ""),
   pushUnsubscribe: (endpoint) => req("/api/notify/push", { method: "DELETE", body: JSON.stringify({ endpoint }) }, ""),
-  pushTest: (endpoint) => req("/api/notify/push/test", { method: "POST", body: JSON.stringify({ endpoint }) }, ""),
+  // pushTest sends this device a notification, after seconds if given.
+  pushTest: (endpoint, after = 0) => req("/api/notify/push/test", { method: "POST", body: JSON.stringify({ endpoint, after }) }, ""),
 
   // The hub's own. hubFolders: { folders, jobs, cloneInto, prefs }, prefs the
   // user's settings' version; with details, each git folder has its remote and
@@ -342,7 +356,7 @@ export const api = {
     req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
   // A task is a folder the hub makes, deleted when closed.
   hubNewTask: (name = "") => req("/api/hub/tasks", { method: "POST", body: JSON.stringify({ name }) }, ""),
-  hubCloseTask: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/discard`, { method: "POST", body: "{}" }),
+  hubCloseTask: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/discard`, { method: "POST", body: "{}" }, ""),
   // hubDirs: { path, place, parent, parentPlace, git, dirs: [{ name, git }], more }.
   // hubActivity follows every folder open in the hub: { folders: [{ slug,
   // name, sessions, requests }] }.

@@ -135,6 +135,29 @@ export function resetsWhen(at) {
   return t.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+// useLasting is whether on has stayed on for ms of the page being seen: a
+// connection that a locked phone or a dv restart drops has LOST_MS to come
+// back before the page says it is lost.
+export const LOST_MS = 4000;
+export function useLasting(on, ms) {
+  const [lasted, setLasted] = useState(false);
+  useEffect(() => {
+    if (!on) return setLasted(false);
+    let timer = 0;
+    const arm = () => {
+      clearTimeout(timer);
+      if (!document.hidden) timer = setTimeout(() => setLasted(true), ms);
+    };
+    arm();
+    document.addEventListener("visibilitychange", arm);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", arm);
+    };
+  }, [on, ms]);
+  return on && lasted;
+}
+
 // useMedia is whether a media query matches, as the window changes.
 export function useMedia(query) {
   const [on, setOn] = useState(() => matchMedia(query).matches);

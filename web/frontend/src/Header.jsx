@@ -158,7 +158,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, update, pr, onActions,
+  comments, commentsOn, onComments, update, pr, onActions, onCloseTask,
 }) {
   const agent = mode === "agent";
   return (
@@ -178,8 +178,14 @@ export default function Header({
         <span className="repo" title={meta?.root}>
           {meta?.repo}
         </span>
-        {(meta?.head?.branch || meta?.head?.sha) && <HeadRef meta={meta} />}
+        {/* A task's branch is only its folder's git, made to show a diff. */}
+        {!onCloseTask && (meta?.head?.branch || meta?.head?.sha) && <HeadRef meta={meta} />}
         <PRChip pr={pr} />
+        {onCloseTask && (
+          <button className="mini" onClick={onCloseTask} title="Every session in this task stops, and its folder is deleted">
+            Close task
+          </button>
+        )}
       </div>
 
       <div className="topbar-right">

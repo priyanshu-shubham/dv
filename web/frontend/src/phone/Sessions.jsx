@@ -6,6 +6,7 @@ import { AgentIcon } from "../icons.jsx";
 import { agentName, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
 import { Row, Sheet, useLongPress } from "./Sheet.jsx";
+import { Marks } from "./Session.jsx";
 import { say } from "../Notices.jsx";
 
 const isOpen = (s) => s.open || s.running === "dv";
@@ -213,6 +214,7 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
         <span className="p-row-body">
           <span className="p-row-top">
             <span className="p-row-title">{s.title || s.prompt || "New session"}</span>
+            <Marks s={s} />
             <span className="p-when">{when}</span>
           </span>
           <span className="p-row-sub clamp2">

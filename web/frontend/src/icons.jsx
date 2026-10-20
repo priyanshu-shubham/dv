@@ -50,7 +50,8 @@ export const IconSpark = svg(<path d="M8 1.5l1.5 4L13.5 7 9.5 8.5 8 12.5 6.5 8.5
 export const IconBolt = svg(<path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z" />, { stroke: true });
 export const IconKeyboard = svg(<><rect x="1.5" y="4" width="13" height="8" rx="1.5" /><path d="M4.5 7h.01M7 7h.01M9.5 7h.01M12 7h.01M5 9.5h6" /></>, { stroke: true });
 export const IconWrap = svg(<path d="M3 4h9a2 2 0 0 1 0 4H6M8 6l-2 2 2 2M3 12h6" />, { stroke: true });
-export const IconPin = svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { stroke: true });
+export const IconChat = svg(<path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z" />, { stroke: true });
+export const IconPin =svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { stroke: true });
 export const IconArrowUp = svg(<path d="M8 13V3.5M3.5 8L8 3.5 12.5 8" />, { stroke: true });
 export const IconStop = svg(<rect x="4" y="4" width="8" height="8" rx="1.5" />);
 export const IconUndo = svg(<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2v3.5H6" />, { stroke: true });

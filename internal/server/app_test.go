@@ -94,4 +94,10 @@ func TestWorker(t *testing.T) {
 	if !strings.Contains(body, `"push"`) || !strings.Contains(body, `"notificationclick"`) || strings.Contains(body, `"fetch"`) {
 		t.Fatalf("sw.js:\n%s", body)
 	}
+	// Its pictures are in it, as nothing past a login can be fetched for them.
+	for _, name := range []string{"ICON", "BADGE"} {
+		if !strings.Contains(body, "const "+name+` = "data:image/png;base64,`) {
+			t.Fatalf("no %s in sw.js", name)
+		}
+	}
 }

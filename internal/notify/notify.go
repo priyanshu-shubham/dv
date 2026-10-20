@@ -1,6 +1,7 @@
 // Package notify tells the reader what the agents want and have done, wherever
 // the reader is: in dv's open pages at once, and through providers - a chat
-// app on their phone - once they have gone a while without using dv. It knows
+// app on their phone - once they have gone a while without using dv, or the
+// phone's own notifications as soon as no page of dv's is in front of them. It knows
 // nothing of Claude Code or of any app: folders raise notices and settle them,
 // and providers carry them.
 package notify
@@ -48,7 +49,8 @@ type Notice struct {
 	// Outcome is how it was settled, for a provider to say.
 	Outcome string `json:"-"`
 
-	sent bool
+	sent  bool
+	early bool // sent to the Eager providers alone
 }
 
 // A Provider carries notices away from dv's pages. Both calls return at once,
@@ -56,6 +58,15 @@ type Notice struct {
 type Provider interface {
 	Send(n Notice)
 	Settle(n Notice) // n.Outcome says how
+}
+
+// An Eager provider is sent a notice that came with no page of dv's in front
+// of the reader at once, rather than once they have gone a while without
+// using dv: a device's own notifications, looked for as soon as dv is out of
+// sight, where a chat app's would only repeat a desktop's.
+type Eager interface {
+	Provider
+	Eager()
 }
 
 // A page stops counting as on screen when it has not said so for this long:
@@ -211,8 +222,8 @@ func (c *Center) settle(id, outcome string) {
 	c.changed()
 	providers := c.providers
 	c.mu.Unlock()
-	if n.sent {
-		for _, p := range providers {
+	for _, p := range providers {
+		if _, eager := p.(Eager); n.sent || n.early && eager {
 			p.Settle(*n)
 		}
 	}
@@ -304,12 +315,14 @@ func (c *Center) Notices() []Notice {
 // step sends on each notice the reader has had long enough to see in a page:
 // after without using dv, counted from the notice or from their last use of
 // dv, whichever came later. A session the reader is talking to from a
-// provider has its notices sent at once, until its turn ends.
+// provider has its notices sent at once, until its turn ends. One that came
+// loud, with no page in front of the reader, goes to the Eager providers at
+// once.
 func (c *Center) step() {
 	after := c.after()
 	c.mu.Lock()
 	now := c.now()
-	var send []Notice
+	var send, early []Notice
 	for _, n := range c.notices {
 		from := n.At
 		if c.input.After(from) {
@@ -322,6 +335,9 @@ func (c *Center) step() {
 			if talking && n.Kind == Done {
 				delete(c.talking, key(n.Folder, n.Session))
 			}
+		} else if !n.sent && !n.early && n.Loud {
+			n.early = true
+			early = append(early, *n)
 		}
 	}
 	if len(send) > 0 {
@@ -334,9 +350,17 @@ func (c *Center) step() {
 	}
 	providers := c.providers
 	c.mu.Unlock()
-	for _, n := range send {
-		for _, p := range providers {
-			p.Send(n)
+	for _, p := range providers {
+		_, eager := p.(Eager)
+		for _, n := range send {
+			if !(n.early && eager) {
+				p.Send(n)
+			}
+		}
+		if eager {
+			for _, n := range early {
+				p.Send(n)
+			}
 		}
 	}
 }
