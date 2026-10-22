@@ -41,6 +41,25 @@ func PromptSuggestions(user *store.Prefs) func() bool {
 	}
 }
 
+// CloseIdleAfter reads how long an open session may go without a message
+// before it moves to Recent: the setting closeIdleAfter, in seconds, a day
+// unless set and never at 0.
+func CloseIdleAfter(user *store.Prefs) func() time.Duration {
+	return func() time.Duration {
+		if user == nil {
+			return 0
+		}
+		var s struct {
+			After *int `json:"closeIdleAfter"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		if s.After == nil {
+			return 24 * time.Hour
+		}
+		return time.Duration(*s.After) * time.Second
+	}
+}
+
 // ChatDefaults reads where a session begun from a chat app starts when its
 // message does not say: the settings chatFolder and chatWorktree.
 func ChatDefaults(user *store.Prefs) func() notify.Defaults {

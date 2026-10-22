@@ -1060,6 +1060,47 @@ func TestATemporarySessionLeavesTheListOnceClosed(t *testing.T) {
 	}
 }
 
+func TestAnIdleSessionMovesToRecent(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "") // no claude to start
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	now := time.Now()
+	for id, ago := range map[string]time.Duration{"old": 3 * time.Hour, "new": time.Minute, "pinned": 3 * time.Hour} {
+		path := filepath.Join(dir, id+".jsonl")
+		os.WriteFile(path, []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+		os.Chtimes(path, now.Add(-ago), now.Add(-ago))
+	}
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	for _, id := range []string{"old", "new"} {
+		m.SetOpen(id, true)
+	}
+	m.SetKept("pinned", true) // fails to start here, but is kept and open
+	open := func() (ids []string) {
+		for _, s := range m.Sessions() {
+			if s.Open {
+				ids = append(ids, s.ID)
+			}
+		}
+		slices.Sort(ids)
+		return ids
+	}
+
+	m.closeIdle(now) // never, unless set
+	m.CloseIdle = func() time.Duration { return 0 }
+	m.closeIdle(now)
+	if got := open(); !slices.Equal(got, []string{"new", "old", "pinned"}) {
+		t.Fatalf("closed with the setting off: %v", got)
+	}
+	m.CloseIdle = func() time.Duration { return time.Hour }
+	m.closeIdle(now)
+	if got := open(); !slices.Equal(got, []string{"new", "pinned"}) {
+		t.Fatalf("after an hour idle: %v", got)
+	}
+}
+
 func TestAKeptSessionIsKeptUntilClosed(t *testing.T) {
 	root, cfg := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)

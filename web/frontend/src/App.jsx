@@ -12,7 +12,8 @@ import { BranchPalette } from "./Branches.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
-import { Notices, say, useHubActivity, useNotices } from "./Notices.jsx";
+import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
+import { pushable, subscribe, usePush } from "./phone/push.js";
 import { AttachTarget } from "./Threads.jsx";
 import { noteText } from "./Notes.jsx";
 import { compareTreePaths, sortTreePaths } from "./tree.js";
@@ -202,6 +203,7 @@ export default function App() {
   // answered in a window over the page opened from one or from the bell.
   const { requests, sessions: activity } = useAgentEvents();
   const elsewhere = useHubActivity();
+  useAppBadge(requests.length + waitingIn(elsewhere));
   // Sessions dv runs that are at work, here or in the hub's other folders: a restart stops them.
   const working = [activity, ...(elsewhere || []).map((f) => f.sessions)].flat().filter((s) => s?.busy && s.running === "dv").length;
   // What the conversation on screen asks, it asks in place: the Agent view's, and the Ask panel's.
@@ -1451,8 +1453,9 @@ export default function App() {
     looking: phoneApp ? (phoneSession ? agentId : null) : mode === "agent" ? agentId : null,
     phone: phoneApp,
     buzz: phoneApp && settings.noticeHaptics !== false,
+    sound: !phoneApp && settings.noticeSound !== false,
     asking: askShown ? askId : null,
-    desktop: desktopNotices,
+    desktop: desktopNotices && !pushable,
     go: openFolderSession,
     review: (id) => {
       setPromptFocus(id);
@@ -1489,6 +1492,27 @@ export default function App() {
     },
     [setDesktopNotices],
   );
+  // A computer's notifications come by push where its browser takes it, as a
+  // phone's do, so with dv closed too. One turned on before is moved over,
+  // its permission given already. A click on one opens its session here.
+  usePush(phoneApp ? null : notices);
+  useEffect(() => {
+    if (phoneApp || !pushable || !desktopNotices || Notification.permission !== "granted") return;
+    subscribe().then(() => setDesktopNotices(false), () => {});
+  }, []);
+  const openNotified = useRef();
+  openNotified.current = (id) => {
+    selectSession(id);
+    switchMode("agent");
+    setShowSession((n) => n + 1);
+  };
+  useEffect(() => {
+    const sw = navigator.serviceWorker;
+    if (phoneApp || !sw) return;
+    const onMessage = (e) => e.data?.type === "dv:open" && e.data.session && openNotified.current(e.data.session);
+    sw.addEventListener("message", onMessage);
+    return () => sw.removeEventListener("message", onMessage);
+  }, [phoneApp]);
 
   const dot = tabDot(notices);
   // The waiting note trails so a narrow tab still shows which repository it

@@ -15,6 +15,9 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((pages) => {
+      // With no page open to count them, a request marks the installed app's
+      // icon; a page opened counts them exactly.
+      if (n.kind === "ask" && !pages.length) self.navigator.setAppBadge?.().catch(() => {});
       // A page in front of the reader tells of it itself. Chrome lets a push
       // go unshown only then. A test is asked for to be seen.
       if (n.id !== "dv-test" && pages.some((p) => p.focused && p.visibilityState === "visible")) return;

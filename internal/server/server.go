@@ -133,6 +133,7 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 		stopNotices: func() {},
 	}
 	s.agent.Suggests = PromptSuggestions(user)
+	s.agent.CloseIdle = CloseIdleAfter(user)
 	if notices != nil {
 		notices.Serve(talk{s})
 		ctx, cancel := context.WithCancel(context.Background())

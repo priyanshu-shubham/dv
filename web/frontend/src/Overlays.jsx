@@ -16,7 +16,9 @@ import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
 import { Picker } from "./Picker.jsx";
 import { useBack } from "./phone/back.js";
 import { PushSetting } from "./phone/PushSetting.jsx";
+import { pushable } from "./phone/push.js";
 import { SessionBar } from "./phone/Session.jsx";
+import { chime } from "./Notices.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -892,7 +894,7 @@ export function SettingsOverlay({
           <>
             {phoneApp ? (
               <>
-                <PushSetting />
+                <PushSetting phone />
                 <Setting
                   label="Vibrate in dv"
                   note="A buzz when an agent asks for you or finishes while dv is open: two for a request, one for a finished turn."
@@ -901,7 +903,10 @@ export function SettingsOverlay({
                   choices={OFF_ON}
                 />
               </>
+            ) : pushable ? (
+              <PushSetting />
             ) : (
+              // Without push, the page tells of them itself, while it is open.
               <Setting
                 label="Desktop notifications"
                 note={
@@ -911,6 +916,18 @@ export function SettingsOverlay({
                 }
                 value={!!notices}
                 onPick={onNotices}
+                choices={OFF_ON}
+              />
+            )}
+            {!phoneApp && (
+              <Setting
+                label="Sound in dv"
+                note="A short chime when an agent asks for you while dv is in front of you. Out of sight, the notification has your system's sound."
+                value={settings.noticeSound !== false}
+                onPick={(on) => {
+                  onChange({ noticeSound: on ? undefined : false });
+                  if (on) chime();
+                }}
                 choices={OFF_ON}
               />
             )}
@@ -941,6 +958,13 @@ export function SettingsOverlay({
               value={settings.promptSuggestions !== false}
               onPick={(on) => onChange({ promptSuggestions: on ? undefined : false })}
               choices={OFF_ON}
+            />
+            <Setting
+              label="Move idle sessions to Recent"
+              note="An open session with no message for this long moves to Recent, as closing it would, and carries on when you next write to it. One kept running, or still at work, stays open."
+              value={settings.closeIdleAfter ?? DAY}
+              onPick={(v) => onChange({ closeIdleAfter: v === DAY ? undefined : v })}
+              choices={CLOSE_IDLE}
             />
             <Setting
               label="Sessions opened by adding start temporary"
@@ -1038,6 +1062,13 @@ export function WorktreeSession({ repo, from, onClose }) {
     </Modal>
   );
 }
+
+const DAY = 24 * 60 * 60;
+const CLOSE_IDLE = [
+  [DAY, "After a day"],
+  [7 * DAY, "After a week"],
+  [0, "Never"],
+];
 
 const SEND_AFTER = [
   [0, "Right away"],

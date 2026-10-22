@@ -1,6 +1,6 @@
-// Notifications on a phone: dv's service worker shows what dv pushes, so
-// they come with dv closed. A notice settled elsewhere - answered on the
-// computer - leaves the phone's shade once dv is opened.
+// Notifications on a phone or a computer: dv's service worker shows what dv
+// pushes, so they come with dv closed. A notice settled elsewhere - answered
+// on the other - leaves the device's list once dv is opened there.
 import { useEffect } from "react";
 import { api } from "../api.js";
 
@@ -64,15 +64,18 @@ export async function unsubscribe() {
 }
 
 // Chrome's user agent says only "K" for an Android phone's model; it gives the
-// real one when asked.
+// real one when asked. A computer is its browser on its system.
 async function deviceName() {
-  const model = await navigator.userAgentData?.getHighEntropyValues(["model"]).then(
+  const ua = navigator.userAgentData;
+  const model = await ua?.getHighEntropyValues(["model"]).then(
     (v) => v.model,
     () => "",
   );
   if (model) return model;
   const m = navigator.userAgent.match(/Android [\d.]+; ([^;)]+)/);
-  return m && m[1].trim() !== "K" ? m[1].trim() : /Android/.test(navigator.userAgent) ? "Android phone" : navigator.platform || "This device";
+  if (m) return m[1].trim() !== "K" ? m[1].trim() : "Android phone";
+  const browser = ua?.brands?.find((b) => !/Not.?A.?Brand|Chromium/i.test(b.brand))?.brand.replace(/^Google /, "");
+  return [browser, ua?.platform].filter(Boolean).join(" on ") || navigator.platform || "This device";
 }
 
 function fromB64(s) {

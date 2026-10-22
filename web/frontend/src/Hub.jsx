@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { Modal, SettingsOverlay, useUpdate } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
-import { Notices, useHubActivity, useNotices } from "./Notices.jsx";
+import { Notices, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { enableBack } from "./phone/back.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
@@ -84,7 +84,8 @@ export default function Hub() {
 
   // What the folders are doing, for the sessions at work in them.
   const elsewhere = useHubActivity();
-  const dot = tabDot(useNotices({ desktop: notices, go: openFolderSession }));
+  useAppBadge(waitingIn(elsewhere));
+  const dot = tabDot(useNotices({ desktop: notices, go: openFolderSession, sound: !phoneApp && settings.noticeSound !== false }));
   const update = useUpdate(settings.updateCheck === false);
   useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
 

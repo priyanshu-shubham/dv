@@ -1,5 +1,6 @@
-// PushSetting is Settings' row for this phone's notifications, which come
-// through dv's service worker: with dv closed, and the phone locked.
+// PushSetting is Settings' row for this device's notifications, which come
+// through dv's service worker: with dv closed, a phone locked or a computer's
+// dv window shut while its browser runs.
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { say } from "../Notices.jsx";
@@ -8,9 +9,24 @@ import { current, pushable, subscribe, unsubscribe } from "./push.js";
 
 const TEST_AFTER = 10;
 
-export function PushSetting() {
+// What the row says on a phone, and on a computer.
+const WORDS = {
+  phone: {
+    label: "Notifications on this phone",
+    note: "When an agent asks or finishes and dv isn't in front of you, even with the phone locked. Tapping one opens its session.",
+    cannot: "This browser can't receive them here: they need https, as Cloudflare gives dv.",
+  },
+  desktop: {
+    label: "Desktop notifications",
+    note: "When an agent asks or finishes and dv isn't in front of you, even with dv's window closed while the browser runs. Clicking one opens its session.",
+    cannot: "This browser can't receive them here: they need https, or localhost.",
+  },
+};
+
+export function PushSetting({ phone = false }) {
+  const words = WORDS[phone ? "phone" : "desktop"];
   const [on, setOn] = useState(null); // null until known
-  const [last, setLast] = useState(null); // how dv's last message to this phone went
+  const [last, setLast] = useState(null); // how dv's last message to this device went
   const [busy, setBusy] = useState(false);
   const look = () =>
     current()
@@ -42,11 +58,13 @@ export function PushSetting() {
       setBusy(false);
     }
   };
-  // Late enough to lock the phone first, which is what a test is for.
+  // On a phone, late enough to lock it first, which is what a test is for. A
+  // test shows even over dv, so a computer has it at once.
   const test = async () => {
     try {
-      await api.pushTest((await current())?.endpoint, TEST_AFTER);
-      say("Lock the phone now", `A test notification comes in ${TEST_AFTER} seconds.`);
+      await api.pushTest((await current())?.endpoint, phone ? TEST_AFTER : 0);
+      if (phone) say("Lock the phone now", `A test notification comes in ${TEST_AFTER} seconds.`);
+      setTimeout(look, phone ? 0 : 1500);
     } catch (e) {
       say("Could not send one", e.message);
     }
@@ -54,11 +72,9 @@ export function PushSetting() {
   return (
     <div className="settings-row">
       <div className="settings-text">
-        <div>Notifications on this phone</div>
+        <div>{words.label}</div>
         <div className="settings-note">
-          {pushable
-            ? "When an agent asks or finishes and dv isn't in front of you, even with the phone locked. Tapping one opens its session."
-            : "This browser can't receive them here: they need https, as Cloudflare gives dv."}
+          {pushable ? words.note : words.cannot}
           {on && (
             <>
               {" "}

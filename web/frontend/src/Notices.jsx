@@ -16,6 +16,29 @@ const ASK_BUZZ = [40, 80, 40];
 const DONE_BUZZ = 25;
 const FRESH_MS = 10000;
 
+// chime is two soft rising notes, made here rather than fetched. A browser
+// lets a page sound only once it has been used, which a page in front has.
+let audio;
+export function chime() {
+  try {
+    audio ||= new AudioContext();
+    audio.resume();
+    const t = audio.currentTime;
+    [880, 1175].forEach((hz, i) => {
+      const at = t + i * 0.12;
+      const tone = audio.createOscillator();
+      const level = audio.createGain();
+      tone.frequency.value = hz;
+      level.gain.setValueAtTime(0, at);
+      level.gain.linearRampToValueAtTime(0.08, at + 0.02);
+      level.gain.exponentialRampToValueAtTime(0.0001, at + 0.35);
+      tone.connect(level).connect(audio.destination);
+      tone.start(at);
+      tone.stop(at + 0.4);
+    });
+  } catch {}
+}
+
 // Below the header, clear of the message box. Outside the page, which an
 // overlay makes inert, so a notice can still be acted on over one. In the phone
 // app they are Android's snackbars, at the foot over the tabs.
@@ -163,6 +186,18 @@ export function useHubActivity() {
   return folders;
 }
 
+// waitingIn counts the requests waiting on the reader in folders' activity.
+export const waitingIn = (folders) => (folders || []).reduce((n, f) => n + (f.requests?.length || 0), 0);
+
+// useAppBadge puts n on an installed dv's icon - in the taskbar, the dock, a
+// phone's launcher - and takes it off at none. A browser tab has none to mark.
+export function useAppBadge(n) {
+  useEffect(() => {
+    if (!navigator.setAppBadge) return;
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+  }, [n]);
+}
+
 // This page, to dv's notices, for as long as it is open.
 const PAGE = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
@@ -221,13 +256,13 @@ function usePresence() {
 // window, open goes to one of its sessions, and go to a session in another of
 // the hub's folders. In the phone app a request is answered in its session,
 // so that is where its notice goes. It returns the notices open.
-export function useNotices({ looking, asking: askOpen, desktop, review, open, go, phone, buzz }) {
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go, phone, buzz, sound }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
   const toasted = useRef(new Map()); // kinds, by notice
   const told = useRef(new Map()); // desktop notifications, by notice
-  const buzzed = useRef(new Set());
+  const alerted = useRef(new Set()); // buzzed or chimed for, once each
   const now = useRef();
   now.current = { desktop, review, open, go };
 
@@ -260,11 +295,14 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
 
       // A phone buzzes for what an agent says as it comes: a request even on
       // screen, where it asks over the box; a turn's end where it isn't seen.
-      // What came while dv was away its notification told of already.
-      if (buzz && !buzzed.current.has(n.id)) {
-        buzzed.current.add(n.id);
+      // A desktop chimes for a request while it is in front, where the
+      // system's notification, with its own sound, is not shown. What came
+      // while dv was away its notification told of already.
+      if ((buzz || sound) && !alerted.current.has(n.id)) {
+        alerted.current.add(n.id);
         const fresh = !document.hidden && Date.now() - Date.parse(n.at) < FRESH_MS;
-        if (fresh && (asking || !onScreen)) navigator.vibrate?.(asking ? ASK_BUZZ : DONE_BUZZ);
+        if (fresh && buzz && (asking || !onScreen)) navigator.vibrate?.(asking ? ASK_BUZZ : DONE_BUZZ);
+        if (fresh && sound && asking && inFront()) chime();
       }
 
       if (n.loud && !told.current.has(n.id)) {
@@ -323,7 +361,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
         return null;
       }
     }
-  }, [notices, looking, askOpen, phone, buzz]);
+  }, [notices, looking, askOpen, phone, buzz, sound]);
 
   return notices;
 }

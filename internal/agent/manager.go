@@ -39,6 +39,9 @@ type Manager struct {
 	// turn, a setting a session takes up the next time it starts. Set once,
 	// before the first session starts.
 	Suggests func() bool
+	// CloseIdle is how long an open session may go without a message before
+	// it moves to Recent; 0 is never. Set once, as Suggests is.
+	CloseIdle func() time.Duration
 
 	mu      sync.Mutex
 	procs   map[string]*proc
@@ -1228,8 +1231,15 @@ func (m *Manager) Close() {
 // It resumes on the next message, so all that goes is a process.
 const idleFor = 30 * time.Minute
 
+// closeEvery is how often the open sessions are looked over for CloseIdle.
+const closeEvery = 10
+
 func (m *Manager) reap() {
-	for range time.Tick(time.Minute) {
+	for tick := 1; ; tick++ {
+		time.Sleep(time.Minute)
+		if tick%closeEvery == 0 {
+			m.closeIdle(time.Now())
+		}
 		kept := m.saved.KeptIDs()
 		m.mu.Lock()
 		var idle []*proc
@@ -1245,6 +1255,25 @@ func (m *Manager) reap() {
 			p.stop()
 		}
 		m.codex.reap(idleFor, kept)
+	}
+}
+
+// closeIdle moves to Recent each open session with no message for longer
+// than CloseIdle says, as closing it would, so a list kept on a phone, where
+// nothing is closed by hand, holds what is current. One kept running, at
+// work, or running at all - in dv or a terminal - stays.
+func (m *Manager) closeIdle(now time.Time) {
+	after := time.Duration(0)
+	if m.CloseIdle != nil {
+		after = m.CloseIdle()
+	}
+	if after <= 0 {
+		return
+	}
+	for _, s := range m.Sessions() {
+		if s.Open && !s.Kept && !s.Busy && s.Running == "" && !s.Updated.IsZero() && now.Sub(s.Updated) > after {
+			m.SetOpen(s.ID, false)
+		}
 	}
 }
 

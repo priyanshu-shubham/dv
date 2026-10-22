@@ -30,7 +30,9 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
 
   const here = sessions.filter((s) => !asking.has(s.id));
   const working = here.filter((s) => s.busy && isOpen(s));
-  const open = here.filter((s) => isOpen(s) && !s.busy);
+  // Last written first, as a chat app's are; those at work hold still, or two
+  // writing at once would trade places.
+  const open = here.filter((s) => isOpen(s) && !s.busy).sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated));
   const recent = here.filter((s) => !isOpen(s));
 
   const row = (s, { req, folder, name } = {}) => (
