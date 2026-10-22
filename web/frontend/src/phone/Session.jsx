@@ -243,8 +243,9 @@ export function Composer({
 }
 
 // ModelSheet picks the model and how hard it thinks; for a session not yet
-// started, the agent too.
-export function ModelSheet({ agents, agent, onAgent, models, model, efforts, effort, pending, onPick, onClose }) {
+// started, the agent too. A model can be added by the name /model takes.
+export function ModelSheet({ agents, agent, onAgent, models, model, efforts, effort, pending, onPick, onAdd, onDrop, onClose }) {
+  const [adding, setAdding] = useState(null); // the name being typed; null shows the row that asks for one
   return (
     <Sheet title="Model" onClose={onClose}>
       {agents && (
@@ -258,20 +259,59 @@ export function ModelSheet({ agents, agent, onAgent, models, model, efforts, eff
         </div>
       )}
       {pending && <div className="p-note">Changes take effect from the next turn.</div>}
-      {models.map((m) => (
-        <Choice
-          key={m.id}
-          title={
-            <>
-              {m.label}
-              {m.tag && <span className="p-tag">{m.tag}</span>}
-            </>
-          }
-          sub={m.description}
-          on={m.id === model}
-          onClick={() => (onPick({ model: m.id }), onClose())}
-        />
-      ))}
+      {models.map((m) => {
+        const choice = (
+          <Choice
+            key={m.id}
+            title={
+              <>
+                {m.label}
+                {m.tag && <span className="p-tag">{m.tag}</span>}
+              </>
+            }
+            sub={m.description}
+            on={m.id === model}
+            onClick={() => (onPick({ model: m.id }), onClose())}
+          />
+        );
+        return m.added ? (
+          <div key={m.id} className="p-added">
+            {choice}
+            <button className="p-icon small" onClick={() => onDrop(m.id)} aria-label={`Take ${m.label} off the list`}>
+              <Icon name="x" size={20} />
+            </button>
+          </div>
+        ) : (
+          choice
+        );
+      })}
+      {adding === null ? (
+        <Row className="p-add-row" icon="plus" title="Add a model" onClick={() => setAdding("")} />
+      ) : (
+        <form
+          className="p-inline-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!adding.trim()) return;
+            onAdd(adding.trim());
+            onClose();
+          }}
+        >
+          <input
+            className="p-field mono"
+            value={adding}
+            placeholder="Name, as for /model"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            autoFocus
+            onChange={(e) => setAdding(e.target.value)}
+          />
+          <button className="p-btn tonal" type="submit" disabled={!adding.trim()}>
+            Add
+          </button>
+        </form>
+      )}
       {efforts?.length > 0 && (
         <>
           <div className="p-sub-label">Effort</div>

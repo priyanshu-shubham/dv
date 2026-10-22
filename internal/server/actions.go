@@ -124,7 +124,7 @@ func (s *Server) startFor(a actionRun) (string, error) {
 // been asked, which a server just started has not; until then the picks,
 // made from that list in the page, are trusted.
 func (s *Server) picks(session, model, effort string) (*string, *string) {
-	models := s.agent.OptionsFor(session).Models
+	models := s.modelsFor(session)
 	known := len(models) > 0
 	i := slices.IndexFunc(models, func(m agent.Model) bool { return m.ID == model })
 	var m, e *string

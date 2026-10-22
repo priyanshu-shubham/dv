@@ -207,6 +207,8 @@ export const api = {
   agentSessions: () => req("/api/agent/sessions"),
   // agentCommands is the slash commands an agent's sessions take: { commands: [{ name, description, argumentHint }] }.
   agentCommands: (agent = "") => req(`/api/agent/commands${agent ? `?agent=${agent}` : ""}`),
+  // agentModel puts a model on the agent's list, as /model names it, or takes one put there off.
+  agentModel: (agent, model, add) => req("/api/agent/models", { method: "POST", body: JSON.stringify({ agent, model, add }) }),
 
   // agentCreate makes a session to send a first message to; nothing runs yet.
   // agent is "codex", or "" for Claude Code. ask makes it the Ask panel's,

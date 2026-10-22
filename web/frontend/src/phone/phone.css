@@ -834,6 +834,23 @@ html.phone ::-webkit-scrollbar {
   margin: 0;
 }
 
+.p-added {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+
+.p-added > .p-choice {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0 8px 24px;
+}
+
+/* As wide as the radios above, so its words line up with the models'. */
+.p-add-row > .p-row-icon {
+  width: 20px;
+}
+
 .p-seg {
   display: flex;
   margin: 4px 24px 12px;

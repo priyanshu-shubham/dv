@@ -49,14 +49,14 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 		"available": agent.Available(),
 		"hooks":     hooks,
 		"sessions":  s.agent.Sessions(),
-		"models":    opts.Models,
+		"models":    s.withAdded("", opts.Models),
 		"modes":     agentModes,
 		"mode":      opts.Mode,
 		"usage":     s.agent.Usage(),
 	}
 	if agent.CodexAvailable() {
 		c := s.agent.CodexOptions()
-		out["codex"] = map[string]any{"available": true, "models": c.Models, "mode": c.Mode, "usage": s.agent.CodexUsage()}
+		out["codex"] = map[string]any{"available": true, "models": s.withAdded("codex", c.Models), "mode": c.Mode, "usage": s.agent.CodexUsage()}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -431,7 +431,7 @@ func (s *Server) handleAgentSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	models := s.agent.OptionsFor(id).Models
+	models := s.modelsFor(id)
 	// Any model's effort levels, since the model may change in the same breath.
 	efforts := map[string]bool{}
 	for _, m := range models {

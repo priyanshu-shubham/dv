@@ -1497,13 +1497,32 @@ export default function AgentView({
   const modelChoices = useMemo(
     // "" is the model the user's settings start on; Claude Code's "default" is the one it recommends.
     () =>
-      models.map((c) => ({
-        ...c,
-        label: (/^claude-/.test(c.model) && prettyModel(c.model)) || c.label,
-        tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "",
-      })),
+      models.map((c) => {
+        const label = (/^claude-/.test(c.model) && prettyModel(c.model)) || c.label;
+        return {
+          ...c,
+          label,
+          // One the user added is named as they typed it too, where the name reads otherwise.
+          description: c.added && label !== c.id ? c.id : c.description,
+          tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "",
+        };
+      }),
     [models],
   );
+  // Added, a model is also picked, as /model would move the session to it.
+  const addModel = async (name) => {
+    const on = models.find((c) => c.id === name || c.model === name);
+    if (!on) {
+      try {
+        await api.agentModel(agentKind, name, true);
+      } catch (e) {
+        return setError(e.message);
+      }
+      onChanged();
+    }
+    settings({ model: on?.id ?? name });
+  };
+  const dropModel = (name) => api.agentModel(agentKind, name, false).then(onChanged, (e) => setError(e.message));
   // Claude's ids read as names; Codex's are named by its own list.
   const nameOf = (model) => (/^claude-/.test(model || "") ? prettyModel(model) : modelChoices.find((m) => sameModel(m.model, model))?.label || model);
   // Claude Code offers only the latest of each kind. A session put on an older
@@ -1798,6 +1817,8 @@ export default function AgentView({
               effort={effort}
               pending={live?.pending}
               onPick={(patch) => settings(patch)}
+              onAdd={addModel}
+              onDrop={dropModel}
             />
           )}
           <Picker
@@ -1988,6 +2009,8 @@ export default function AgentView({
           effort={effort}
           pending={live?.pending}
           onPick={settings}
+          onAdd={addModel}
+          onDrop={dropModel}
           onClose={closeSheet}
         />
       )}
@@ -3818,30 +3841,75 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
 }
 
 // ModelPicker is the model and how hard it thinks, in one menu, as the
-// terminal's /model has them. onPick is given { model } or { effort }.
-function ModelPicker({ label, models, model, efforts, effort, pending, onPick }) {
+// terminal's /model has them. onPick is given { model } or { effort }; onAdd
+// and onDrop a model's name, to put on the list as /model takes it or take
+// off again.
+function ModelPicker({ label, models, model, efforts, effort, pending, onPick, onAdd, onDrop }) {
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(null); // the name being typed; null shows the row that asks for one
   const ref = useDismiss(open, () => setOpen(false));
   const room = useRoom(open, ref);
   const levels = useMemo(() => [...new Set(models.map((m) => m.efforts?.join(" ")).filter(Boolean))], [models]);
   return (
     <div className="model-menu" ref={ref}>
-      <button className="mini composer-pick" onClick={() => setOpen((o) => !o)} title={pending ? "Model and effort, from the next turn" : "Model and effort"}>
+      <button
+        className="mini composer-pick"
+        onClick={() => (setOpen((o) => !o), setAdding(null))}
+        title={pending ? "Model and effort, from the next turn" : "Model and effort"}
+      >
         {label}
         {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
         <IconChevronDown size={10} />
       </button>
       {open && (
         <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          {models.map((c) => (
-            <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
+          {models.map((c) => {
+            const row = (
+              <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
+                <span className="model-name">
+                  {c.label}
+                  {c.tag && <span className="model-tag">{c.tag}</span>}
+                </span>
+                {c.description && <span className="model-note">{c.description}</span>}
+              </button>
+            );
+            return c.added ? (
+              <div key={c.id} className="model-added">
+                {row}
+                <button className="model-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
+                  <IconX size={10} />
+                </button>
+              </div>
+            ) : (
+              row
+            );
+          })}
+          {adding === null ? (
+            <button className="model-add-row" onClick={() => setAdding("")}>
               <span className="model-name">
-                {c.label}
-                {c.tag && <span className="model-tag">{c.tag}</span>}
+                <IconPlus size={10} />
+                Add a model…
               </span>
-              {c.description && <span className="model-note">{c.description}</span>}
             </button>
-          ))}
+          ) : (
+            <input
+              className="model-add"
+              value={adding}
+              placeholder="Name, as for /model"
+              title="It stays on the list for every session."
+              spellCheck={false}
+              autoFocus
+              onChange={(e) => setAdding(e.target.value)}
+              onBlur={() => adding.trim() || setAdding(null)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Escape") setAdding(null);
+                if (e.key !== "Enter" || !adding.trim()) return;
+                onAdd(adding.trim());
+                setAdding(null);
+              }}
+            />
+          )}
           {levels.length > 0 && (
             <div className="model-efforts" title="How hard the model thinks before answering">
               <span>Effort</span>

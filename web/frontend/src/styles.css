@@ -4339,6 +4339,47 @@ body.resizing * {
   color: var(--fg-3);
 }
 
+.model-added {
+  position: relative;
+}
+
+.model-added > button:first-child {
+  padding-right: 24px;
+}
+
+.model-list .model-drop {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  width: auto;
+  padding: 3px;
+  color: var(--fg-3);
+  opacity: 0;
+}
+
+.model-added:hover .model-drop,
+.model-list .model-drop:focus-visible {
+  opacity: 1;
+}
+
+.model-list .model-drop:hover {
+  color: var(--fg);
+}
+
+.model-add-row .model-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+  color: var(--fg-2);
+}
+
+.model-add {
+  width: calc(100% - 8px);
+  margin: 4px;
+  font: var(--fs-xs) var(--font-mono);
+}
+
 /* Working: a thinking orb (thinking-orbs), whose motion is the kind of work. */
 .orb {
   flex: none;

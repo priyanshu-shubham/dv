@@ -119,7 +119,7 @@ func (t talk) Reply(session string) string { return t.s.agent.Reply(session) }
 func (t talk) Setup(session string) notify.Setup {
 	s := notify.Setup{Agent: t.s.agent.AgentOf(session)}
 	s.Model, s.Effort = t.s.agent.Picked(session)
-	for _, m := range t.s.agent.OptionsFor(session).Models {
+	for _, m := range t.s.modelsFor(session) {
 		s.Models = append(s.Models, notify.Model{ID: m.ID, Label: m.Label, Effort: m.Effort, Efforts: m.Efforts})
 	}
 	return s
