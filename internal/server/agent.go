@@ -219,9 +219,15 @@ func streamUpdates(w http.ResponseWriter, r *http.Request, sub *agent.Sub, updat
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
+	quiet := time.NewTicker(KeepAlive)
+	defer quiet.Stop()
 	for {
 		select {
 		case <-sub.Changed:
+		case <-quiet.C:
+			fmt.Fprint(w, ": \n\n")
+			flusher.Flush()
+			continue
 		case <-r.Context().Done():
 			return
 		}

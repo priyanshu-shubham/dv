@@ -45,6 +45,11 @@ type proc struct {
 	// suggests says whether to have Claude Code guess the next message after
 	// each turn; read at each start.
 	suggests func() bool
+	// instructions is what dv adds to Claude Code's system prompt; read at each
+	// start, since a resume does not keep it.
+	instructions func() string
+	// unasked says whether AutoAskEdits leaves an edit to the file to auto mode.
+	unasked func(path string) bool
 	// picked keeps a model chosen with /model, which Claude Code keeps "for
 	// this session only": this process, not the next.
 	picked func(model, effort string)
@@ -141,6 +146,11 @@ func (p *proc) args() []string {
 	}
 	if p.suggests != nil && p.suggests() {
 		args = append(args, "--prompt-suggestions")
+	}
+	if p.instructions != nil {
+		if s := p.instructions(); s != "" {
+			args = append(args, "--append-system-prompt", s)
+		}
 	}
 	// The name other sessions send to. A headless resume does not take back the
 	// one the transcript keeps, as the terminal does, so it is passed again.
@@ -703,7 +713,7 @@ func (p *proc) control(id string, raw json.RawMessage) {
 			p.mu.Lock()
 			ask := p.mode == AutoAskEdits
 			p.mu.Unlock()
-			if ask {
+			if ask && !(p.unasked != nil && p.unasked(editedPath(hook.Input))) {
 				out = map[string]any{"hookSpecificOutput": map[string]any{
 					"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "Auto, ask before edits",
 				}}

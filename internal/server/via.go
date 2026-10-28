@@ -54,12 +54,13 @@ func viaNote(via string) string {
 
 // editsNote tells the agent AutoAskEdits began or ended. The rules stand
 // against auto mode's own advice to edit through the shell, where no hook
-// can put the change to the user.
+// can put the change to the user - except where a look first would add
+// nothing, and what the command did still shows in the diff.
 func editsNote(asking bool) string {
 	if !asking {
 		return `<mode ended="` + agent.AutoAskEdits + `">dv's edit rules are lifted.</mode>`
 	}
-	return `<mode name="` + agent.AutoAskEdits + `">Until dv says otherwise, the user reviews each edit as a diff: make small edits, one per message, only with Edit, Write or NotebookEdit, never the shell, whatever auto mode suggests. Don't make a rejected edit another way.</mode>`
+	return `<mode name="` + agent.AutoAskEdits + `">Until dv says otherwise, the user reviews each edit to the project as a diff before it lands: write changes to its code with Edit, Write or NotebookEdit, small ones, one per message, whatever auto mode suggests. The shell is fine where that review would add nothing: files outside the project, such as temporary ones, and mechanical changes across many files, such as a rename or move, a formatter, a code generator or a scripted refactor - say what such a command changed. Don't make a rejected edit another way.</mode>`
 }
 
 // withContext adds part to the block of context the page ends a message with,

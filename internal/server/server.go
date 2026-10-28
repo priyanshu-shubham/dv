@@ -86,6 +86,7 @@ type Server struct {
 	actionsMu sync.Mutex
 	actions   map[string]ranAction   // by session, until its turn is done
 	commands  map[string]*ranCommand // by action, while it runs
+	ran       map[string]*ranCommand // by action, its latest run, for its output
 	closing   bool
 
 	task bool // a hub's one-off task, which has no worktrees
@@ -133,7 +134,9 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 		stopNotices: func() {},
 	}
 	s.agent.Suggests = PromptSuggestions(user)
+	s.agent.Instructions = AgentInstructions(user)
 	s.agent.CloseIdle = CloseIdleAfter(user)
+	s.agent.Unasked = UnaskedEdits(user)
 	if notices != nil {
 		notices.Serve(talk{s})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -263,6 +266,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/file", s.handleFile)
 	mux.HandleFunc("GET /api/media", s.handleMedia)
+	mux.HandleFunc("GET /api/view/{path...}", Guarded(s.handleView))
 	mux.HandleFunc("GET /api/files", s.handleFiles)
 	mux.HandleFunc("GET /api/tree", s.handleTree)
 
@@ -288,6 +292,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/actions/run", Guarded(s.handleRunAction))
 	mux.HandleFunc("GET /api/actions/running", Guarded(s.handleCommands))
 	mux.HandleFunc("POST /api/actions/{id}/stop", Guarded(s.handleStopCommand))
+	mux.HandleFunc("GET /api/actions/{id}/output", Guarded(s.handleCommandOutput))
 	mux.HandleFunc("GET /api/pr", Guarded(s.handlePR))
 	mux.HandleFunc("POST /api/discard", Guarded(s.handleDiscard))
 
@@ -300,6 +305,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/update", Guarded(HandleUpdateInstall))
 
 	mux.HandleFunc("GET /api/symbols", s.handleSymbols)
+	mux.HandleFunc("POST /api/symbols", s.handleResolveDraft)
 	mux.HandleFunc("GET /api/symbols/status", s.handleSymbolStatus)
 	mux.HandleFunc("POST /api/symbols/refresh", s.handleSymbolRefresh)
 	mux.HandleFunc("GET /api/search", s.handleSearch)

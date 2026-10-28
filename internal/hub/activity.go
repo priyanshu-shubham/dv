@@ -33,6 +33,8 @@ func (h *Hub) handleActivity(w http.ResponseWriter, r *http.Request) {
 	}
 	tick := time.NewTicker(activityTick)
 	defer tick.Stop()
+	quiet := time.NewTicker(server.KeepAlive)
+	defer quiet.Stop()
 	sent := ""
 	for {
 		folders := []folderLive{}
@@ -52,6 +54,9 @@ func (h *Hub) handleActivity(w http.ResponseWriter, r *http.Request) {
 		}
 		select {
 		case <-tick.C:
+		case <-quiet.C:
+			fmt.Fprint(w, ": \n\n")
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}

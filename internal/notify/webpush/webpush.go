@@ -107,6 +107,7 @@ type message struct {
 	URL     string `json:"url"`
 	Folder  string `json:"folder,omitempty"`
 	Session string `json:"session,omitempty"`
+	Action  string `json:"action,omitempty"`
 }
 
 // A message is held well inside the 4 KB a push service carries, as a
@@ -117,7 +118,8 @@ const (
 )
 
 // messageOf is a notice as a notification: its session's title over a line
-// of what it says, opening the session in its folder's page.
+// of what it says, opening the session, or a command's output, in its
+// folder's page.
 func messageOf(n notify.Notice) message {
 	path := "/"
 	if n.Folder != "" {
@@ -125,6 +127,8 @@ func messageOf(n notify.Notice) message {
 	}
 	if n.Session != "" {
 		path += "?session=" + url.QueryEscape(n.Session)
+	} else if n.Action != "" {
+		path += "?output=" + url.QueryEscape(n.Action)
 	}
 	body := clip(n.Where, titleChars)
 	if line := excerpt(n.Body, n.Format); line != "" && body != "" {
@@ -132,7 +136,7 @@ func messageOf(n notify.Notice) message {
 	} else if line != "" {
 		body = line
 	}
-	return message{ID: n.ID, Kind: n.Kind, Title: clip(n.Title, titleChars), Body: body, URL: path, Folder: n.Folder, Session: n.Session}
+	return message{ID: n.ID, Kind: n.Kind, Title: clip(n.Title, titleChars), Body: body, URL: path, Folder: n.Folder, Session: n.Session, Action: n.Action}
 }
 
 // excerpt is the start of a body, on one line; Markdown's marks are dropped,

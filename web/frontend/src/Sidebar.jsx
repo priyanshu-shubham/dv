@@ -2,7 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { cx, isTyping, listFilter, LRM, statusLabel, statusLetter } from "./util.js";
 import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tree.js";
 import { AttachButton, ThreadList } from "./Threads.jsx";
-import { Notes, openNotes } from "./Notes.jsx";
+import { Notes, openNotes, Pad } from "./Notes.jsx";
 import { SessionList } from "./Agent.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
@@ -362,9 +362,10 @@ export default function Sidebar({
 
 // CommentsPanel is every comment in the review, at the page's right in any
 // mode, opened and closed from the header, which counts them; its switch
-// turns it to the repository's notes. Its width is dragged from its left edge.
+// turns it to the repository's notes or the reader's pad. Its width is dragged
+// from its left edge.
 // ask is the Ask tab's view, where the page has one.
-export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth, onClose, ask }) {
+export function CommentsPanel({ tab, onTab, padFocus, notes, threads, commentsPath, onJump, onThreadAction, onAttach, onSend, onDelete, widthVar, onWidth, onClose, ask }) {
   if (tab === "ask" && !ask) tab = "comments";
   const open = threads.filter((t) => !t.resolved).length;
   const toDo = openNotes(notes.notes);
@@ -428,6 +429,9 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
             Notes
             {toDo > 0 && <span className="seg-count">{toDo}</span>}
           </button>
+          <button className={cx(tab === "pad" && "on")} aria-pressed={tab === "pad"} onClick={() => onTab("pad")} title="Your scratch pad, the same in every folder and on every device">
+            Pad
+          </button>
           {ask && (
             <button className={cx(tab === "ask" && "on")} aria-pressed={tab === "ask"} onClick={() => onTab("ask")} title="Questions about the code you are reading, answered here">
               Ask
@@ -440,6 +444,7 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
       </div>
       {tab === "ask" && ask}
       {tab === "notes" && <Notes {...notes} />}
+      {tab === "pad" && <Pad focus={padFocus} />}
       {tab === "comments" && threads.length > 0 && onSend && (
         <div className="comment-picks">
           <label className="pick-all" title={all ? "Take the ticks off" : "Tick them all"}>
@@ -481,7 +486,7 @@ export function CommentsPanel({ tab, onTab, notes, threads, commentsPath, onJump
           )}
         </div>
       )}
-      {tab !== "ask" && (
+      {(tab === "comments" || tab === "notes") && (
         <div className="sidebar-foot">
           <span className="saved-to" title={savedTo}>
             saved to {savedTo}

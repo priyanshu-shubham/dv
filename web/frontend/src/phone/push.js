@@ -22,7 +22,11 @@ export function usePush(notices) {
     registration()
       .then((r) => r?.getNotifications())
       .then((shown) => {
-        for (const n of shown || []) if (n.tag && !open.has(n.tag)) n.close();
+        // One shown before notifications were tagged by session has its notice's id as its tag.
+        for (const n of shown || []) {
+          const id = n.data?.id ?? n.tag;
+          if (id && !open.has(id)) n.close();
+        }
       })
       .catch(() => {});
   }, [notices]);

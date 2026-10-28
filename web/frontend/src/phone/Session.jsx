@@ -5,13 +5,16 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "../util.js";
 import { say } from "../Notices.jsx";
+import { Pad } from "../Notes.jsx";
 import { Icon } from "./icons.jsx";
 import { Choice, Menu, Row, Sheet } from "./Sheet.jsx";
 
 // SessionBar names the session, with what runs it and how full it is under;
-// the name opens the list of your messages to jump to.
-export function SessionBar({ title, sub, onBack, onTitle, onActions, menu }) {
+// the name opens the list of your messages to jump to. pad offers the pad,
+// in a sheet over the conversation.
+export function SessionBar({ title, sub, onBack, onTitle, onActions, pad, menu }) {
   const [open, setOpen] = useState(false);
+  const [padOpen, setPadOpen] = useState(false);
   return (
     <header className="p-bar">
       <button className="p-icon" onClick={onBack} aria-label="Back">
@@ -21,6 +24,11 @@ export function SessionBar({ title, sub, onBack, onTitle, onActions, menu }) {
         <span className="p-title-main">{title}</span>
         {sub && <span className="p-title-sub">{sub}</span>}
       </button>
+      {pad && (
+        <button className="p-icon" onClick={() => setPadOpen(true)} aria-label="Pad">
+          <Icon name="note" />
+        </button>
+      )}
       {onActions && (
         <button className="p-icon" onClick={onActions} aria-label="Actions">
           <Icon name="bolt" />
@@ -32,6 +40,11 @@ export function SessionBar({ title, sub, onBack, onTitle, onActions, menu }) {
         </button>
       )}
       {open && <Menu items={menu} onClose={() => setOpen(false)} />}
+      {padOpen && (
+        <Sheet title="Pad" className="p-pad-sheet" onClose={() => setPadOpen(false)}>
+          <Pad />
+        </Sheet>
+      )}
     </header>
   );
 }
@@ -329,13 +342,31 @@ export function ModelSheet({ agents, agent, onAgent, models, model, efforts, eff
   );
 }
 
-export function ModeSheet({ modes, mode, pending, onPick, onClose }) {
+export function ModeSheet({ modes, mode, pending, onPick, gear, onClose }) {
+  const [setting, setSetting] = useState(false);
+  if (setting) {
+    return (
+      <Sheet title={gear.title} className="p-unasked-sheet" onClose={onClose}>
+        {gear.panel}
+      </Sheet>
+    );
+  }
   return (
     <Sheet title="Permission mode" onClose={onClose}>
       {pending && <div className="p-note">Changes take effect from the next turn.</div>}
-      {modes.map((m) => (
-        <Choice key={m.id} title={m.label} sub={m.description} on={m.id === mode} onClick={() => (onPick(m.id), onClose())} />
-      ))}
+      {modes.map((m) => {
+        const choice = <Choice key={m.id} title={m.label} sub={m.description} on={m.id === mode} onClick={() => (onPick(m.id), onClose())} />;
+        return m.id === gear?.id ? (
+          <div key={m.id} className="p-added">
+            {choice}
+            <button className="p-icon small" onClick={() => setSetting(true)} aria-label={gear.title}>
+              <Icon name="settings" size={20} />
+            </button>
+          </div>
+        ) : (
+          choice
+        );
+      })}
     </Sheet>
   );
 }

@@ -94,9 +94,12 @@ export const api = {
   switchTo: ({ branch, create = false, track = "" }) => req("/api/switch", { method: "POST", body: JSON.stringify({ branch, create, track }) }),
   // runAction sends an action's prompt, to its session or a new one: { session }.
   runAction: (action) => req("/api/actions/run", { method: "POST", body: JSON.stringify(action) }),
-  // actionsRunning: { running: [{ id, name, started }] }, the command actions under way.
+  // actionsRunning: { running: [{ id, name, started }], ran: [id] }, the command
+  // actions under way, and those whose output is kept.
   actionsRunning: () => req("/api/actions/running"),
   stopAction: (id) => req(`/api/actions/${encodeURIComponent(id)}/stop`, { method: "POST", body: "{}" }),
+  // actionOutput: { name, command, title, running, output, cut }, of the command's latest run.
+  actionOutput: (id) => req(`/api/actions/${encodeURIComponent(id)}/output`),
   // pr: { pr }, the checked-out branch's pull request or null.
   pr: () => req("/api/pr"),
   // discard puts files back as the last commit has them.
@@ -120,6 +123,10 @@ export const api = {
     if (side) p.set("side", side);
     return req(`/api/file?${p}`);
   },
+
+  // viewURL serves a file from anywhere on disk: an absolute path, or one from
+  // ~. A page's own relative URLs resolve beside it.
+  viewURL: (path) => `${base}/api/view/${path.replace(/^[\\/]+/, "").split(/[\\/]/).map(encodeURIComponent).join("/")}`,
 
   // mediaURL serves an image, video or sound off the scope's new side, or its
   // old one. stamp is the version to show, so a changed file is fetched again.
@@ -181,8 +188,12 @@ export const api = {
   symbols: (q, from = "", limit = 60) =>
     req(`/api/symbols?${new URLSearchParams({ q, from, limit: String(limit) })}`),
 
-  resolveSymbol: (name, from = "") =>
-    req(`/api/symbols?${new URLSearchParams({ name, from })}`),
+  // draft: { path, text }, a file as an edit not yet made would leave it,
+  // read in place of the one on disk.
+  resolveSymbol: (name, from = "", draft) =>
+    draft
+      ? req("/api/symbols", { method: "POST", body: JSON.stringify({ name, from, draft }) })
+      : req(`/api/symbols?${new URLSearchParams({ name, from })}`),
 
   refreshSymbols: () => req("/api/symbols/refresh", { method: "POST" }),
 

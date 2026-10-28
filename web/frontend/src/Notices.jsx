@@ -8,7 +8,7 @@ import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { cx, PHONE_APP, useMedia } from "./util.js";
+import { cx, OUTPUT_KEY, PHONE_APP, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 // A request is two pulses, a turn's end a tick.
@@ -111,14 +111,14 @@ function restartedOn(was, now) {
   return now.version === "dev" ? "Still the same build." : `Still ${named(now.version)}.`;
 }
 
-// On a phone a tap anywhere on a notice does what its action marked opens
-// does, and that action's button goes. Else a click on one cut short shows it
+// A click anywhere on a notice does what its action marked opens does; on a
+// phone that action's button goes. Else a click on one cut short shows it
 // whole, and keeps it until it is dismissed.
 function Notice(props) {
   const { id, kind, agent, title, detail, last, actions, open } = props;
   const phone = useMedia(PHONE_APP);
-  const opener = phone && actions?.find((a) => a.opens);
-  const shown = opener ? actions.filter((a) => a !== opener) : actions;
+  const opener = actions?.find((a) => a.opens);
+  const shown = phone && opener ? actions.filter((a) => a !== opener) : actions;
   const down = useRef(null);
   const ref = useRef(null);
   const [cut, setCut] = useState(false);
@@ -253,10 +253,11 @@ function usePresence() {
 // notification for one dv marks loud, if the page is not in front of the
 // reader. looking is the session on screen in the Agent view, asking the Ask
 // panel's when it shows; review opens a request of this page's folder in its
-// window, open goes to one of its sessions, and go to a session in another of
-// the hub's folders. In the phone app a request is answered in its session,
-// so that is where its notice goes. It returns the notices open.
-export function useNotices({ looking, asking: askOpen, desktop, review, open, go, phone, buzz, sound }) {
+// window, open goes to one of its sessions, go to a session in another of
+// the hub's folders, and output shows a command action's. In the phone app a
+// request is answered in its session, so that is where its notice goes. It
+// returns the notices open.
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go, output, phone, buzz, sound }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
@@ -264,7 +265,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
   const told = useRef(new Map()); // desktop notifications, by notice
   const alerted = useRef(new Set()); // buzzed or chimed for, once each
   const now = useRef();
-  now.current = { desktop, review, open, go };
+  now.current = { desktop, review, open, go, output };
 
   useEffect(() => {
     const ids = new Set(notices.map((n) => n.id));
@@ -286,10 +287,14 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
       const asking = n.kind === "ask";
       const session = n.where || (asking ? "a new session" : "A session");
       const where = own ? session : `${n.place}: ${session}`;
-      // A command an action ran has no session, only its folder to go to.
+      // A command an action ran has no session, only its output in its folder.
       const goThere = () => {
         if (n.session) own ? now.current.open(n.session) : now.current.go(n.folder, n.session);
-        else if (!own) location.href = `/${n.folder}/`;
+        else if (own) n.action && now.current.output(n.action);
+        else {
+          if (n.action) sessionStorage.setItem(OUTPUT_KEY, n.action);
+          location.href = `/${n.folder}/`;
+        }
       };
       const onScreen = own && !!n.session && (n.session === looking || n.session === askOpen);
 
@@ -321,7 +326,9 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
       if (onScreen) continue;
       const actions = !n.session
         ? own
-          ? []
+          ? n.action
+            ? [{ label: "Output", opens: true, run: goThere }]
+            : []
           : [{ label: "Open folder", opens: true, run: goThere }]
         : !asking
         ? [{ label: "Open session", opens: true, run: goThere }]

@@ -7,7 +7,7 @@ import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
-import { ActionsPalette, ActionsSettings, AskSettings, runAction, useAskSettings } from "./Actions.jsx";
+import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction, useAskSettings } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
@@ -23,7 +23,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, PHONE_APP, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, OUTPUT_KEY, PHONE_APP, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
@@ -136,6 +136,12 @@ export default function App() {
   const [askFocus, setAskFocus] = useState(0);
   const [askSettings] = useAskSettings();
   const askShown = showComments && panelTab === "ask";
+  // The pad has a button of its own, so the comments' one turns back to the tab before it.
+  const padShown = showComments && panelTab === "pad";
+  const panelBefore = useRef("comments");
+  if (panelTab !== "pad") panelBefore.current = panelTab;
+  const [padFocus, setPadFocus] = useState(0);
+  const padFrom = useRef(null);
   const [notes, setNotes] = useState({ notes: [], path: "" });
   const [newNote, setNewNote] = useState(false);
 
@@ -1134,7 +1140,10 @@ export default function App() {
   const lastSearch = useRef(null);
   const keepSearch = useCallback((o, { query, opts, place }) => {
     const same = query === o.query;
-    lastSearch.current = { type: "search", query, opts, place, from: o.from, seed: same ? o.seed : undefined, source: same ? o.source : undefined };
+    lastSearch.current = {
+      type: "search", query, opts, place, from: o.from,
+      seed: same ? o.seed : undefined, source: same ? o.source : undefined, draft: same ? o.draft : undefined,
+    };
   }, []);
   const openSearch = useCallback(
     (query) => {
@@ -1165,9 +1174,11 @@ export default function App() {
   );
 
   // Where a jump lands: in place in Code mode, and in a viewer over the diff -
-  // or over Claude's request, when that is open, so Esc comes back to it.
+  // or over Claude's request, when that is open, so Esc comes back to it. One
+  // into an edit not yet made, a draft, only a viewer can show.
   const goTo = useCallback(
-    (file, line, left) => {
+    (file, line, left, draft) => {
+      if (draft) return pushOverlay({ type: "file", file, line, draft }, left);
       if (phoneRef.current && !promptRef.current) return showCodeAt(file, line);
       if (modeRef.current !== "code" || promptRef.current) return pushOverlay({ type: "file", file, line }, left);
       setStack([]);
@@ -1201,15 +1212,17 @@ export default function App() {
   // Cmd/Ctrl+clicking an identifier resolves it to definitions, ranked by how
   // close each one is to the file it was clicked in. One opens straight away;
   // otherwise the search comes up with the candidates over the word's uses.
+  // Clicked in an edit waiting on an answer, draft is { path, fd }, the file
+  // as the edit would leave it, whose definitions are found there.
   const onSymbol = useCallback(
-    async (name, from = "", leftAt = 0) => {
+    async (name, from = "", leftAt = 0, draft) => {
       const left = leftAt ? { scroll: leftAt } : null;
       const search = { type: "search", query: name, from, opts: { caseSens: true, wholeWord: true } };
       try {
-        const r = await api.resolveSymbol(name, from);
+        const r = await api.resolveSymbol(name, from, draft && { path: draft.path, text: draft.fd.newLines.join("\n") });
         const defs = r.defs || [];
-        if (defs.length === 1) goTo(defs[0].file, defs[0].line, left);
-        else pushOverlay({ ...search, seed: defs, source: r.source }, left);
+        if (defs.length === 1) goTo(defs[0].file, defs[0].line, left, defs[0].draft && draft);
+        else pushOverlay({ ...search, seed: defs, source: r.source, draft }, left);
       } catch {
         pushOverlay(search, left);
       }
@@ -1356,11 +1369,13 @@ export default function App() {
     ...[
       ["comments", "comments", "The comments in the review"],
       ["notes", "notes", "The repository's notes, shared by its worktrees"],
+      ["pad", "pad", `Your scratch pad, the same in every folder${phoneApp ? "" : " · also Alt+P"}`],
       // A phone has no room beside the code.
       !phoneApp && ["ask", "Ask", "Questions about the code, answered beside it"],
     ].filter(Boolean).map(([tab, what, note]) => {
       const shown = showComments && panelTab === tab;
-      return { id: tab, name: `${shown ? "Close" : "Open"} ${what}`, note, run: () => (shown ? showPanel(false) : (setPanelTab(tab), showPanel(true))) };
+      const open = () => (tab === "pad" ? openPad() : (setPanelTab(tab), showPanel(true)));
+      return { id: tab, name: `${shown ? "Close" : "Open"} ${what}`, note, run: () => (shown ? showPanel(false) : open()) };
     }),
     { id: "new-note", name: "New note", note: "For later, on the repository's list", run: () => (setPanelTab("notes"), setNewNote(true), showPanel(true)) },
     ...(comparing
@@ -1404,7 +1419,10 @@ export default function App() {
       }
       if (a.kind === "command") {
         runAction(a).then(
-          () => say(`${a.name} started`, "You are told how it ends; Alt+A lists it while it runs."),
+          () =>
+            say(`${a.name} started`, "You are told how it ends; Alt+A lists it while it runs.", [
+              { label: "Output", opens: true, run: () => openOverlay({ type: "output", id: a.id }) },
+            ]),
           (e) => say(`Could not run ${a.name}`, e.message),
         );
         return;
@@ -1432,7 +1450,7 @@ export default function App() {
         (e) => say(`Could not run ${a.name}`, e.message),
       );
     },
-    [agentId, mode, closeOverlay, loadSessions, setAgentId, switchMode],
+    [agentId, mode, closeOverlay, openOverlay, loadSessions, setAgentId, switchMode],
   );
   // Alt+A lists the actions, from the message box too; Cmd/Ctrl+Shift+P as
   // well, where the browser leaves it to the page.
@@ -1448,7 +1466,65 @@ export default function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openOverlay]);
+  // Going to a file and searching work from a text box too, by the platform's
+  // own modifier only: on a Mac, Ctrl+P and Ctrl+K move the caret there. A
+  // comment's box seeds its search itself.
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (!isTyping(t) || e.altKey || (isMac ? !e.metaKey : !e.ctrlKey)) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      if (isSearchKey(e)) {
+        if (t.closest(".composer")) return;
+        e.preventDefault();
+        openSearch(searchSeed(typeof t.selectionStart === "number" ? t.value.slice(t.selectionStart, t.selectionEnd) : ""));
+      } else if (!e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        openOverlay({ type: "files" });
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [openOverlay, openSearch]);
 
+  // Leaving the pad puts the reader back in the box they were typing in, the
+  // message box mostly.
+  const openPad = useCallback(() => {
+    padFrom.current = isTyping(document.activeElement) ? document.activeElement : null;
+    setPanelTab("pad");
+    showPanel(true);
+    setPadFocus((n) => n + 1);
+  }, [setPanelTab, showPanel]);
+  const leavePad = useCallback(() => {
+    showPanel(false);
+    if (padFrom.current?.isConnected) padFrom.current.focus();
+    padFrom.current = null;
+  }, [showPanel]);
+  // Alt+P, from the message box too, goes to the pad, and from it back.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code !== "KeyP" || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      if (padShown && e.target.closest?.(".pad")) leavePad();
+      else openPad();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [padShown, openPad, leavePad]);
+
+  // A notice's session, from its toast or a notification clicked.
+  const openNoticed = (id) => {
+    setPromptOpen(false);
+    // The Ask panel's conversation is in the panel, not the list.
+    if (id === askId) {
+      setPanelTab("ask");
+      return showPanel(true);
+    }
+    selectSession(id);
+    switchMode("agent");
+    setShowSession((n) => n + 1);
+  };
   const notices = useNotices({
     looking: phoneApp ? (phoneSession ? agentId : null) : mode === "agent" ? agentId : null,
     phone: phoneApp,
@@ -1461,18 +1537,15 @@ export default function App() {
       setPromptFocus(id);
       setPromptOpen(true);
     },
-    open: (id) => {
-      setPromptOpen(false);
-      // The Ask panel's conversation is in the panel, not the list.
-      if (id === askId) {
-        setPanelTab("ask");
-        return showPanel(true);
-      }
-      selectSession(id);
-      switchMode("agent");
-      setShowSession((n) => n + 1);
-    },
+    open: openNoticed,
+    output: (id) => openOverlay({ type: "output", id }),
   });
+  // A command's notification that opened the page shows its output.
+  useEffect(() => {
+    const id = sessionStorage.getItem(OUTPUT_KEY);
+    sessionStorage.removeItem(OUTPUT_KEY);
+    if (id) openOverlay({ type: "output", id });
+  }, []);
   // Desktop notifications are the browser's to allow, asked when turned on.
   // Hooks are asked after with the sessions, but Settings opens in any mode.
   const setHooks = useCallback((hooks) => setAgent((a) => ({ ...a, hooks })), []);
@@ -1501,18 +1574,19 @@ export default function App() {
     subscribe().then(() => setDesktopNotices(false), () => {});
   }, []);
   const openNotified = useRef();
-  openNotified.current = (id) => {
-    selectSession(id);
-    switchMode("agent");
-    setShowSession((n) => n + 1);
-  };
+  openNotified.current = openNoticed;
+  // The phone app opens a session's screen itself.
   useEffect(() => {
     const sw = navigator.serviceWorker;
-    if (phoneApp || !sw) return;
-    const onMessage = (e) => e.data?.type === "dv:open" && e.data.session && openNotified.current(e.data.session);
+    if (!sw) return;
+    const onMessage = (e) => {
+      if (e.data?.type !== "dv:open") return;
+      if (e.data.action) openOverlay({ type: "output", id: e.data.action });
+      else if (e.data.session && !phoneApp) openNotified.current(e.data.session);
+    };
     sw.addEventListener("message", onMessage);
     return () => sw.removeEventListener("message", onMessage);
-  }, [phoneApp]);
+  }, [phoneApp, openOverlay]);
 
   const dot = tabDot(notices);
   // The waiting note trails so a narrow tab still shows which repository it
@@ -2094,6 +2168,7 @@ export default function App() {
   const commentsProps = {
     tab: panelTab,
     onTab: setPanelTab,
+    padFocus,
     notes: {
       ...notes,
       composing: newNote,
@@ -2197,6 +2272,7 @@ export default function App() {
           initialQuery={overlay.query || ""}
           seed={overlay.seed}
           source={overlay.source}
+          draft={overlay.draft}
           from={overlay.from || activePath}
           opts={overlay.opts}
           place={overlay.place}
@@ -2204,9 +2280,14 @@ export default function App() {
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
           onLeave={(left) => keepSearch(overlay, left)}
-          onOpen={({ file, line }, { query, opts, place }) =>
+          onOpen={({ file, line, draft }, { query, opts, place }) =>
             // Kept for the way back. The seed answered the query it came with, not an edited one.
-            goTo(file, line, query === overlay.query ? { opts, place } : { query, opts, place, seed: undefined, source: undefined })
+            goTo(
+              file,
+              line,
+              query === overlay.query ? { opts, place } : { query, opts, place, seed: undefined, source: undefined, draft: undefined },
+              draft && overlay.draft,
+            )
           }
         />
       )}
@@ -2217,14 +2298,15 @@ export default function App() {
           file={overlay.file}
           line={overlay.line}
           side={overlay.side}
+          draft={overlay.draft}
           scope={scope}
           scroll={overlay.scroll || 0}
           onClose={closeOverlay}
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
           onSymbol={onSymbol}
-          threads={threadsByFile.get(overlay.file) || NO_THREADS}
-          changes={fileData[overlay.file]?.fd}
+          threads={overlay.draft ? NO_THREADS : threadsByFile.get(overlay.file) || NO_THREADS}
+          changes={overlay.draft ? overlay.draft.fd : fileData[overlay.file]?.fd}
           wrap={wrap}
           preview={preview}
           onPreview={setPreview}
@@ -2237,8 +2319,17 @@ export default function App() {
       )}
       {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
       {overlay?.type === "actions" && (
-        <ActionsPalette meta={meta} session={agentId} extra={pageActions} onRun={doAction} onEdit={() => openOverlay({ type: "settings", tab: "actions" })} onClose={closeOverlay} />
+        <ActionsPalette
+          meta={meta}
+          session={agentId}
+          extra={pageActions}
+          onRun={doAction}
+          onEdit={() => openOverlay({ type: "settings", tab: "actions" })}
+          onOutput={(id) => openOverlay({ type: "output", id })}
+          onClose={closeOverlay}
+        />
       )}
+      {overlay?.type === "output" && <CommandOutput id={overlay.id} onClose={closeOverlay} />}
       {overlay?.type === "branch" && <BranchPalette meta={meta} onDone={(msg) => (closeOverlay(), say(msg))} onClose={closeOverlay} />}
       {overlay?.type === "settings" && (
         <SettingsOverlay
@@ -2354,8 +2445,10 @@ export default function App() {
         pr={pr}
         onActions={() => openOverlay({ type: "actions" })}
         comments={threads.filter((t) => !t.resolved).length}
-        commentsOn={showComments}
-        onComments={() => setCommentsOpen((o) => !o)}
+        commentsOn={showComments && !padShown}
+        onComments={() => (padShown ? setPanelTab(panelBefore.current) : setCommentsOpen((o) => !o))}
+        padOn={padShown}
+        onPad={() => (padShown ? leavePad() : openPad())}
         onCloseTask={meta?.task ? endTask : null}
       />
 

@@ -154,12 +154,12 @@ export function linkPaths(md) {
 
 // Markdown draws text with md, drawn again as the paths it could link change
 // and as grammars for its code blocks load.
-export function Markdown({ md, text, className }) {
+export function Markdown({ md, text, className, env }) {
   usePathsVersion();
   useGrammarsVersion();
   const ref = useRef(null);
   useLayoutEffect(() => drawDiagrams(ref.current));
-  return createElement("div", { ref, className, onClick: copyCode, dangerouslySetInnerHTML: { __html: md.render(text || "") } });
+  return createElement("div", { ref, className, onClick: copyCode, dangerouslySetInnerHTML: { __html: md.render(text || "", { ...env }) } });
 }
 
 // copyCode answers the copy button codeBlocks puts on a code block. The mark

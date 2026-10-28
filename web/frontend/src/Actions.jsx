@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { usePref } from "./prefs.js";
 import { cx, PHONE_APP, useMedia } from "./util.js";
@@ -97,11 +97,16 @@ export function runAction(a, session) {
 }
 
 // useRunning follows the command actions under way, by id, while the list is
-// open, with the time it was when they were last looked at.
+// open, with the time it was when they were last looked at, and those whose
+// output dv keeps.
 function useRunning() {
-  const [state, setState] = useState({ running: {}, at: Date.now() });
+  const [state, setState] = useState({ running: {}, ran: new Set(), at: Date.now() });
   const look = useCallback(
-    () => api.actionsRunning().then((d) => setState({ running: Object.fromEntries(d.running.map((r) => [r.id, r])), at: Date.now() }), () => {}),
+    () =>
+      api.actionsRunning().then(
+        (d) => setState({ running: Object.fromEntries(d.running.map((r) => [r.id, r])), ran: new Set(d.ran), at: Date.now() }),
+        () => {},
+      ),
     [],
   );
   useEffect(() => {
@@ -119,11 +124,11 @@ function elapsed(from, at) {
 
 // ActionsPalette is Alt+A: the actions, found by name, run with Enter. One for
 // the current session waits for there to be one; Enter on a command running
-// stops it.
-export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onClose }) {
+// stops it. A command that has run offers its output.
+export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onOutput, onClose }) {
   const { all } = useActions();
   const info = useAgentChoices();
-  const { running, at, look } = useRunning();
+  const { running, ran, at, look } = useRunning();
   const [q, setQ] = useState("");
   const shown = [...all, ...builtIns(meta), ...extra].filter((a) => a.name.toLowerCase().includes(q.trim().toLowerCase()));
   const rows = [...shown, EDIT];
@@ -154,22 +159,105 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onC
       </div>
       <div className="palette-list" ref={listRef}>
         {shown.map((a, i) => (
-          <button
-            key={(a.scope || "") + a.id}
-            className={cx("palette-row", "action-row", i === sel && "on", !ready(a) && "unready", running[a.id] && "running")}
-            onMouseMove={() => setSel(i)}
-            onClick={() => pick(a)}
-            title={a.kind === "command" ? a.command : a.prompt}
-          >
-            <span className="sym">{a.name}</span>
-            <span className="dim">{note(a)}</span>
-          </button>
+          <div className="action-line" key={(a.scope || "") + a.id}>
+            <button
+              className={cx("palette-row", "action-row", i === sel && "on", !ready(a) && "unready", running[a.id] && "running")}
+              onMouseMove={() => setSel(i)}
+              onClick={() => pick(a)}
+              title={a.kind === "command" ? a.command : a.prompt}
+            >
+              <span className="sym">{a.name}</span>
+              <span className="dim">{note(a)}</span>
+            </button>
+            {a.kind === "command" && ran.has(a.id) && (
+              <button className="ghost action-output" onMouseMove={() => setSel(i)} onClick={() => onOutput(a.id)}>
+                Output
+              </button>
+            )}
+          </div>
         ))}
         {shown.length === 0 && <div className="empty">{all.length ? "No actions match." : "No actions yet: a prompt or a command you keep here, to run in a click."}</div>}
         <button className={cx("palette-row", "action-edit", sel === shown.length && "on")} onMouseMove={() => setSel(shown.length)} onClick={onEdit}>
           <span className="dim">{all.length ? "Edit actions…" : "Add an action…"}</span>
         </button>
       </div>
+    </Modal>
+  );
+}
+
+// shownOutput is output as a terminal would leave it: colours dropped, and a
+// line written over with \r, as progress is, only as it ended.
+const shownOutput = (text) =>
+  text
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .split("\n")
+    .map((l) => l.replace(/\r+$/, "").split("\r").pop())
+    .join("\n");
+
+// CommandOutput is what an action's command printed in its latest run, as
+// much as dv keeps, followed while it runs. It stays at the foot as lines
+// come, unless scrolled up from it.
+export function CommandOutput({ id, onClose }) {
+  const [run, setRun] = useState(null);
+  const [error, setError] = useState("");
+  const ref = useRef(null);
+  const atEnd = useRef(true);
+  useEffect(() => {
+    let live = true;
+    let timer;
+    const look = () =>
+      api.actionOutput(id).then(
+        (r) => {
+          if (!live) return;
+          setRun(r);
+          if (r.running) timer = setTimeout(look, 1000);
+        },
+        (e) => live && setError(e.message),
+      );
+    look();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [id]);
+  const text = useMemo(() => shownOutput(run?.output || ""), [run?.output]);
+  useLayoutEffect(() => {
+    if (atEnd.current && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [text]);
+  return (
+    <Modal onClose={onClose} wide centred className="viewer">
+      <div className="viewer-head">
+        <span className="path command-output-title">{run?.title || "Output"}</span>
+        {run && (
+          <span className="dim command-output-of" title={run.command}>
+            {run.command.split("\n")[0]}
+          </span>
+        )}
+        <span className="spacer" />
+        {run?.running && (
+          <button className="ghost" onClick={() => api.stopAction(id).catch(() => {})}>
+            Stop
+          </button>
+        )}
+        <button className="ghost" onClick={onClose}>
+          <IconX size={13} />
+        </button>
+      </div>
+      {error ? (
+        <div className="empty error">{error}</div>
+      ) : (
+        <pre
+          ref={ref}
+          className="command-output"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+          }}
+        >
+          {run?.cut && <span className="dim">{"Only the last megabyte is kept.\n"}</span>}
+          {text || (run && !run.running && <span className="dim">It printed nothing.</span>)}
+        </pre>
+      )}
     </Modal>
   );
 }
@@ -359,7 +447,7 @@ function ActionForm({ action, info, onSave, onCancel }) {
           <span>Command</span>
           <span className="settings-note">
             Runs in this folder with sh, which stops at the first command that fails. <code>$DV_REPO</code> is the repository,{" "}
-            <code>$DV_WORKTREE</code> this folder and <code>$DV_BRANCH</code> its branch. You are told how it ended, with the last of its output.
+            <code>$DV_WORKTREE</code> this folder and <code>$DV_BRANCH</code> its branch. You are told how it ended, with the last of its output; Output there shows all of it, as it runs too.
           </span>
           <textarea rows={5} value={a.command} placeholder="npm test" spellCheck={false} onChange={(e) => edit({ command: e.target.value })} onKeyDown={onKey} />
         </label>

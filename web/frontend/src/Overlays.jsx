@@ -241,7 +241,7 @@ const DEFS_SHOWN = 5;
 // the symbol index first, then the lines that contain it, grouped by file. A
 // Cmd/Ctrl+clicked identifier that did not resolve to exactly one definition
 // opens it seeded with its candidates, the text narrowed to the whole word.
-export function SearchPanel({ initialQuery = "", seed, source, from = "", opts = {}, place, onOpen, onLeave, onClose, onBack, backTo }) {
+export function SearchPanel({ initialQuery = "", seed, source, draft, from = "", opts = {}, place, onOpen, onLeave, onClose, onBack, backTo }) {
   const [query, setQuery] = useState(initialQuery);
   const inputRef = useRef(null);
   // A query it opens with was picked up elsewhere, so typing replaces it.
@@ -315,7 +315,7 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
 
   // One list for the keys, definitions then text: the row index is the item's.
   const items = [
-    ...shownDefs.map((h) => ({ file: h.file, line: h.line })),
+    ...shownDefs.map((h) => ({ file: h.file, line: h.line, draft: h.draft })),
     ...(moreDefs ? [{ more: true }] : []),
     ...groups.flatMap(([file, hits]) => hits.map((h) => ({ file, line: h.line }))),
   ];
@@ -478,7 +478,9 @@ export function SearchPanel({ initialQuery = "", seed, source, from = "", opts =
           </div>
         )}
       </div>
-      {wide && shown && <SearchPreview file={shown.file} line={shown.line} re={re} cache={cache} onOpen={(line) => open(sel, line)} />}
+      {wide && shown && (
+        <SearchPreview file={shown.file} line={shown.line} draft={shown.draft && draft} re={re} cache={cache} onOpen={(line) => open(sel, line)} />
+      )}
       </div>
       {(res || status) && (
         <div className="palette-foot dim">
@@ -501,30 +503,32 @@ const SPLIT = "(min-width: 900px)";
 const PREVIEW_AROUND = 150;
 
 // SearchPreview is the file around the selected result as it is on disk,
-// its line marked; each file is fetched once, into cache. A click on a line
-// opens the file there.
-function SearchPreview({ file, line, re, cache, onOpen }) {
-  const [data, setData] = useState(() => cache.get(file) || null);
+// or for a definition in a draft as the edit would leave it, its line marked;
+// each file is fetched once, into cache. A click on a line opens the file there.
+function SearchPreview({ file, line, draft, re, cache, onOpen }) {
+  const key = (draft ? "draft:" : "") + file;
+  const [data, setData] = useState(() => cache.get(key) || null);
   const [, force] = useState(0);
   const bodyRef = useRef(null);
   useEffect(() => {
-    if (cache.has(file)) return setData(cache.get(file));
+    if (draft && !cache.has(key)) cache.set(key, { lines: draft.fd.newLines, lang: draft.fd.lang });
+    if (cache.has(key)) return setData(cache.get(key));
     setData(null);
     let live = true;
     api.file(file).then(
-      (d) => (cache.set(file, d), live && setData(d)),
+      (d) => (cache.set(key, d), live && setData(d)),
       (e) => live && setData({ error: e.message }),
     );
     return () => {
       live = false;
     };
-  }, [file, cache]);
+  }, [key, file, draft, cache]);
   useEffect(() => {
     if (data?.lang) ensureLanguage(data.lang, () => force((n) => n + 1));
   }, [data?.lang]);
   const lines = data?.lines;
   const ready = langReady(data?.lang);
-  const html = useMemo(() => lines && highlightLines("preview:" + file, lines, data.lang), [lines, file, data?.lang, ready]);
+  const html = useMemo(() => lines && highlightLines("preview:" + key, lines, data.lang), [lines, key, data?.lang, ready]);
   const from = Math.max(0, line - 1 - PREVIEW_AROUND);
   const to = lines ? Math.min(lines.length, line + PREVIEW_AROUND) : 0;
   useLayoutEffect(() => {
@@ -595,9 +599,11 @@ function markSpans(full, spans) {
 // hits land. It is read-only on purpose: dv reviews, it does not edit. `side`
 // reads the file off that side of the scope instead of the working tree. It
 // draws through Code mode's rows, so its code is commented on, and added to a
-// session, as there; `changes` is the file's diff, once loaded.
+// session, as there; `changes` is the file's diff, once loaded. A `draft`,
+// { path, fd }, shows the file as an edit not yet made would leave it, which
+// has no lines yet to comment on.
 export function FileViewer({
-  file, line, side, scope, scroll = 0, threads, changes, wrap, preview, onPreview, onOpenFile, onClose, onBack, backTo, onSymbol, onComment, onThreadAction, onAttach, onSearch,
+  file, line, side, draft, scope, scroll = 0, threads, changes, wrap, preview, onPreview, onOpenFile, onClose, onBack, backTo, onSymbol, onComment, onThreadAction, onAttach: attach, onSearch,
 }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -615,11 +621,12 @@ export function FileViewer({
   useEffect(() => {
     setData(null);
     setError("");
+    if (draft) return setData({ lines: draft.fd.newLines, lang: draft.fd.lang });
     api
       .file(file, scope, side)
       .then(setData)
       .catch((e) => setError(e.message));
-  }, [file, scope, side]);
+  }, [file, scope, side, draft]);
 
   useEffect(() => {
     if (data?.lang) ensureLanguage(data.lang, () => force((n) => n + 1));
@@ -675,14 +682,16 @@ export function FileViewer({
   const shown = useMemo(() => commentsOn(threads, at, changes), [threads, at, changes]);
   const startComment = useCallback(
     (s, start, end, selected) => {
+      if (draft) return setSelection(null);
       const src = s === "old" ? fd?.oldLines : fd?.newLines;
       setComposing({ path: file, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
       setSelection(null);
     },
-    [fd, file],
+    [fd, file, draft],
   );
+  const onAttach = draft ? null : attach;
   // Where the viewer was, so stepping back from a definition returns there.
-  const jump = useCallback((name, from) => onSymbol(name, from, bodyRef.current?.scrollTop || 0), [onSymbol]);
+  const jump = useCallback((name, from) => onSymbol(name, from, bodyRef.current?.scrollTop || 0, draft), [onSymbol, draft]);
 
   return (
     <Modal onClose={onClose} onBack={onBack} wide centred className="viewer">
@@ -696,6 +705,11 @@ export function FileViewer({
         {data?.at && (
           <span className="at" title={`The ${side} side of the comparison, not the working tree`}>
             {data.at}
+          </span>
+        )}
+        {draft && (
+          <span className="at" title="As the edit waiting on you would leave it, not as it is on disk">
+            edit
           </span>
         )}
         <span className="spacer" />
@@ -957,6 +971,13 @@ export function SettingsOverlay({
               note="Shows what you might say next under the agent's reply, to put in the message box: Codex's own follow-ups, and a guess Claude Code makes after each turn with a small request of its own. A Claude session takes a change up the next time it starts."
               value={settings.promptSuggestions !== false}
               onPick={(on) => onChange({ promptSuggestions: on ? undefined : false })}
+              choices={OFF_ON}
+            />
+            <Setting
+              label="Show files in replies"
+              note="Tells agents they can show a picture, video, sound, PDF or a web page of their own in a reply, and to make a page when something comes across better interactively than as text. A page runs as part of dv. A session takes a change up the next time it starts."
+              value={settings.filesInReplies !== false}
+              onPick={(on) => onChange({ filesInReplies: on ? undefined : false })}
               choices={OFF_ON}
             />
             <Setting
@@ -1581,6 +1602,7 @@ export function HelpOverlay({ onClose }) {
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
     ["Alt+A", `Run an action (also ${modKey}+Shift+P, where the browser allows it)`],
+    ["Alt+P", "Your pad, from the message box too; from the pad, back to where you were"],
     [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
     ["/", "Filter the file list"],
     ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],

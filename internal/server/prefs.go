@@ -41,6 +41,26 @@ func PromptSuggestions(user *store.Prefs) func() bool {
 	}
 }
 
+// AgentInstructions reads what dv adds to a session's own instructions as it
+// starts: how to show files in a reply, unless the setting filesInReplies is off.
+func AgentInstructions(user *store.Prefs) func() string {
+	return func() string {
+		if user == nil {
+			return ""
+		}
+		var s struct {
+			On *bool `json:"filesInReplies"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		if s.On != nil && !*s.On {
+			return ""
+		}
+		return filesNote
+	}
+}
+
+const filesNote = "You are running in dv, a web page where the user reads your replies. A line of its own reading ![title](path) shows that file in your reply: a picture, video, sound, PDF, or an HTML page, which runs in place with its scripts and can load files beside it by relative path. When something would come across better interactively than as text - a chart of real data, something to explore with controls, a UI mock-up - write it as an HTML page and show it this way. Unless the page belongs in the project, put it under .dv/pages/ in your working directory, which git ignores. Paths are absolute or relative to your working directory. A reply read in a chat app shows only its text."
+
 // CloseIdleAfter reads how long an open session may go without a message
 // before it moves to Recent: the setting closeIdleAfter, in seconds, a day
 // unless set and never at 0.
@@ -57,6 +77,19 @@ func CloseIdleAfter(user *store.Prefs) func() time.Duration {
 			return 24 * time.Hour
 		}
 		return time.Duration(*s.After) * time.Second
+	}
+}
+
+// UnaskedEdits reads the globs of the files Auto, ask before edits does not ask
+// about: the pref unaskedEdits, one a line.
+func UnaskedEdits(user *store.Prefs) func() []string {
+	return func() []string {
+		if user == nil {
+			return nil
+		}
+		var text string
+		json.Unmarshal(user.All()["unaskedEdits"], &text)
+		return strings.Split(text, "\n")
 	}
 }
 

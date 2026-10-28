@@ -695,7 +695,7 @@ func (t *codexThread) load() error {
 		return errTerminal
 	}
 	var r threadResponse
-	err := t.call("thread/resume", map[string]any{"threadId": t.id, "excludeTurns": true}, &r)
+	err := t.call("thread/resume", t.side.withInstructions(map[string]any{"threadId": t.id, "excludeTurns": true}), &r)
 	switch {
 	case codex.IsActiveWriter(err):
 		return errTerminal

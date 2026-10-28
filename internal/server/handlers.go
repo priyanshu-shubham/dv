@@ -282,6 +282,60 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", modified, f)
 }
 
+// handleView serves a file from anywhere on disk, for a reply to show, at a
+// path of its own so a page loads what sits beside it by relative URL. A page
+// runs as dv's own, with the page's reach - no more than the agent that wrote
+// it had. Only dv's own pages may load or open one: any other site could
+// otherwise run an HTML file on the machine as dv.
+func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		writeErr(w, http.StatusForbidden, errors.New("files are shown only to dv's own pages"))
+		return
+	}
+	path, err := viewPath(r.PathValue("path"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("%s is not a file", path))
+		return
+	}
+	// What the system's table may not know; ServeContent goes by it for the rest.
+	if ctype := gitx.MediaType(path); ctype != "" {
+		w.Header().Set("Content-Type", ctype)
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, path, info.ModTime(), f)
+}
+
+// viewPath is the file a view URL names: an absolute path without its leading
+// slash, which a URL path cannot hold twice, or one from the home folder after ~.
+func viewPath(p string) (string, error) {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, filepath.FromSlash(rest)), nil
+	}
+	p = filepath.FromSlash(p)
+	if !filepath.IsAbs(p) {
+		p = string(filepath.Separator) + p
+	}
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("%q is not an absolute path", p)
+	}
+	return filepath.Clean(p), nil
+}
+
 // handleTree lists the whole repository as the scope's new side has it, and
 // apart from that what git ignores, with the contents of each ignored folder
 // named in open.
@@ -619,13 +673,12 @@ func (s *Server) handleSymbols(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	// Built the first time it is asked, which that question waits for.
 	s.index.Ready()
-	s.index.EnsureFresh(5 * time.Minute)
 
 	// from is the file the reader is in. It does not narrow the search, it
 	// ranks it: the nearest definition is nearly always the intended one.
 	from := q.Get("from")
 	if name := q.Get("name"); name != "" {
-		writeJSON(w, http.StatusOK, s.index.Resolve(name, from, 40))
+		writeJSON(w, http.StatusOK, s.index.Resolve(name, from, 40, nil))
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -637,6 +690,22 @@ func (s *Server) handleSymbols(w http.ResponseWriter, r *http.Request) {
 		hits = []symindex.Hit{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "status": s.index.Status()})
+}
+
+// handleResolveDraft is a Cmd/Ctrl+click in an edit waiting on the reader,
+// which sends the file as the edit would leave it.
+func (s *Server) handleResolveDraft(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string          `json:"name"`
+		From  string          `json:"from"`
+		Draft *symindex.Draft `json:"draft"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	s.index.Ready()
+	writeJSON(w, http.StatusOK, s.index.Resolve(req.Name, req.From, 40, req.Draft))
 }
 
 func (s *Server) handleSymbolStatus(w http.ResponseWriter, r *http.Request) {

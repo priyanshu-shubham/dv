@@ -23,6 +23,10 @@ export function pickSession(slug, session) {
   } catch {}
 }
 
+// OUTPUT_KEY holds, in sessionStorage, the command action whose output the
+// page loading next is to show.
+export const OUTPUT_KEY = "dv:output";
+
 // usePersisted keeps a small preference in localStorage so the viewer opens the
 // way you left it; `session` keeps it for the tab only. It is for what suits
 // one screen: what should follow the reader to another device is in prefs.js.

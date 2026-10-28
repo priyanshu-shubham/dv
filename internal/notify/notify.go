@@ -34,6 +34,7 @@ type Notice struct {
 	Session string    `json:"session"`
 	Agent   string    `json:"agent,omitempty"`   // "codex"; "" is Claude Code
 	Request string    `json:"request,omitempty"` // an Ask's, which its folder's page answers in a window of its own
+	Action  string    `json:"action,omitempty"`  // a command action's, whose output its folder's page shows
 	Title   string    `json:"title"`             // "Claude wants to run a command"
 	Where   string    `json:"where"`             // the session's title
 	Body    string    `json:"body,omitempty"`    // the command or question, or what the agent said last

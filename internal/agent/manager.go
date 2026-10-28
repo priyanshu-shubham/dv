@@ -39,9 +39,15 @@ type Manager struct {
 	// turn, a setting a session takes up the next time it starts. Set once,
 	// before the first session starts.
 	Suggests func() bool
+	// Instructions is what dv adds to a session's own, Claude's or Codex's, as
+	// it starts. Set once, as Suggests is.
+	Instructions func() string
 	// CloseIdle is how long an open session may go without a message before
 	// it moves to Recent; 0 is never. Set once, as Suggests is.
 	CloseIdle func() time.Duration
+	// Unasked are globs of the files AutoAskEdits leaves their edits to auto
+	// mode for, read at each edit. Set once, as Suggests is.
+	Unasked func() []string
 
 	mu      sync.Mutex
 	procs   map[string]*proc
@@ -75,6 +81,7 @@ func New(root string, broker *permit.Broker, saved *store.Sessions) *Manager {
 		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{}, agents: map[string]string{},
 		shells: map[string]*shellRun{},
 	}
+	m.codex.instructions = m.instructions
 	// A session started here but not yet sent to has no transcript, so all
 	// that says it exists is its place among the open ones.
 	if ids := saved.IDs(); len(ids) > 0 {
@@ -520,6 +527,13 @@ func (m *Manager) Start(id string) error {
 	return err
 }
 
+func (m *Manager) instructions() string {
+	if m.Instructions == nil {
+		return ""
+	}
+	return m.Instructions()
+}
+
 func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p := &proc{id: id, cwd: cwd, broker: m.broker, resume: resume, lastUsed: time.Now()}
 	// A resume starts on the user's settings, not what the session last ran with.
@@ -532,6 +546,8 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p.wrote = func() { m.signal(id, true) }
 	p.named = func() string { return agentName(transcriptFiles(m.root)[id]) }
 	p.suggests = func() bool { return m.Suggests != nil && m.Suggests() }
+	p.instructions = m.instructions
+	p.unasked = func(path string) bool { return m.Unasked != nil && unasked(m.Unasked(), m.root, path) }
 	p.picked = func(model, effort string) {
 		p.mu.Lock()
 		p.model, p.effort = model, effort

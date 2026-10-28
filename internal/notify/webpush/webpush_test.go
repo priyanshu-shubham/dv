@@ -215,6 +215,11 @@ func TestMessage(t *testing.T) {
 	if m := messageOf(n); m.URL != "/?session=s+1" || len(m.Body) > 400 || !strings.HasSuffix(m.Body, "…") {
 		t.Fatalf("%+v", m)
 	}
+	// A command action's opens on its output.
+	cmd := notify.Notice{ID: "n2", Kind: notify.Done, Folder: "alpha", Action: "build", Title: "Build failed (exit 1)"}
+	if m := messageOf(cmd); m.URL != "/alpha/?output=build" || m.Action != "build" {
+		t.Fatalf("%+v", m)
+	}
 }
 
 // pushed is a message as a push service took it.

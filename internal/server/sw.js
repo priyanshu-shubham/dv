@@ -21,33 +21,39 @@ self.addEventListener("push", (event) => {
       // A page in front of the reader tells of it itself. Chrome lets a push
       // go unshown only then. A test is asked for to be seen.
       if (n.id !== "dv-test" && pages.some((p) => p.focused && p.visibilityState === "visible")) return;
-      return self.registration.showNotification(n.title || "dv", {
-        body: n.body || "",
-        tag: n.id,
-        data: { url: n.url || "/", session: n.session, folder: n.folder },
-        // dv puts both before this file as data (HandleWorker).
-        icon: ICON,
-        badge: BADGE,
-        // Without a tag, renotify throws.
-        renotify: n.kind === "ask" && !!n.id,
-      });
+      // A session's notification takes the place of the one before it.
+      const tag = n.session || n.id;
+      return self.registration.getNotifications({ tag }).then((shown) =>
+        self.registration.showNotification(n.title || "dv", {
+          body: n.body || "",
+          tag,
+          // id is the notice's, which a page closes the notification by.
+          data: { id: n.id, url: n.url || "/", session: n.session, folder: n.folder, action: n.action },
+          // dv puts both before this file as data (HandleWorker).
+          icon: ICON,
+          badge: BADGE,
+          // Taking another notice's place is silent without renotify, which
+          // throws without a tag.
+          renotify: !!tag && (n.kind === "ask" || shown.some((s) => s.data?.id !== n.id)),
+        }),
+      );
     }),
   );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const { url = "/", session, folder } = event.notification.data || {};
+  const { url = "/", session, folder, action } = event.notification.data || {};
   // A hub has each folder at /<slug>/; a lone dv has its one at /.
   const base = folder ? `/${folder}/` : "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (pages) => {
-      // The app open on the folder is told which session, rather than loaded
-      // again; of no session - the test, an action's command - it is the place.
+      // The app open on the folder is told which session, or command's
+      // output, rather than loaded again; of neither - the test - it is the place.
       const page = pages.find((p) => new URL(p.url).pathname.startsWith(base));
       if (page) {
         await page.focus().catch(() => {});
-        if (session) page.postMessage({ type: "dv:open", session });
+        if (session || action) page.postMessage({ type: "dv:open", session, action });
         return;
       }
       // Open on another of the hub's folders, it goes there, rather than a

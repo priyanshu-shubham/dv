@@ -846,6 +846,35 @@ html.phone ::-webkit-scrollbar {
   padding: 8px 0 8px 24px;
 }
 
+/* The sheet already says what the box is for. */
+.p-unasked-sheet .unasked {
+  width: auto;
+  gap: 10px;
+  padding: 0 24px 16px;
+}
+
+.p-unasked-sheet .unasked-title {
+  display: none;
+}
+
+.p-unasked-sheet .unasked textarea {
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 4px 4px 0 0;
+  background: var(--m-high);
+  box-shadow: inset 0 -1px 0 var(--fg-2);
+  resize: none;
+  font: 15px / 1.5 var(--font-mono);
+}
+
+.p-unasked-sheet .unasked textarea:focus {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.p-unasked-sheet .unasked-note {
+  font-size: 13.5px;
+}
+
 /* As wide as the radios above, so its words line up with the models'. */
 .p-add-row > .p-row-icon {
   width: 20px;
@@ -1316,26 +1345,43 @@ html.phone .diff .cell.sel .ln {
   color: var(--accent);
 }
 
+/* Floating over the tabs, or a session's message box, as the bar for selected
+   text does. */
 .p-pickbar {
   position: fixed;
-  inset: 0 0 auto;
+  right: 12px;
+  bottom: calc(var(--m-nav-h) + env(safe-area-inset-bottom) + 12px);
+  left: 12px;
   z-index: 100;
   display: flex;
   align-items: center;
   gap: 2px;
-  height: calc(var(--m-bar-h) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 8px 0 4px;
+  padding: 4px;
+  border-radius: 16px;
   background: var(--m-high);
+  box-shadow: var(--shadow-pop);
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
   animation: p-pickbar-in 0.18s var(--m-ease);
+}
+
+.p-pickbar.at-box {
+  bottom: calc(var(--p-box-h, 120px) + 8px);
+}
+
+.p-pickbar.held {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
 }
 
 .p-pickbar-title {
   flex: 1;
   min-width: 0;
-  padding-left: 4px;
   overflow: hidden;
   color: var(--fg);
-  font-size: 20px;
+  font-size: 15px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1348,7 +1394,7 @@ html.phone .diff .cell.sel .ln {
 @keyframes p-pickbar-in {
   from {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(8px);
   }
 }
 
@@ -1647,6 +1693,26 @@ html.phone .p-comments .notes {
   background: var(--bg);
 }
 
+/* Tall enough to write in, with the pad filling it. */
+.p-pad-sheet {
+  height: 75%;
+}
+
+.p-pad-sheet .p-sheet-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+html.phone .p-comments .pad,
+html.phone .p-pad-sheet .pad {
+  margin: 4px 12px 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--m-surface);
+  font-size: 15px;
+}
+
 html.phone .p-comments .comment-picks {
   background: var(--bg);
 }
@@ -1847,10 +1913,30 @@ html.phone .agent-chip-x {
   overflow-wrap: anywhere;
 }
 
-/* What goes with the message, over its words. */
+/* What goes with the message, over its words: one row, scrolled sideways, so
+   however much goes with it the conversation keeps its room. */
 html.phone .p-box .agent-attached {
+  flex-wrap: nowrap;
   margin: 0 0 6px -8px;
   gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+html.phone .p-box .agent-attached > * {
+  flex: none;
+}
+
+html.phone .p-box .agent-attached > .link {
+  position: sticky;
+  right: 0;
+  align-self: stretch;
+  padding: 0 4px 0 12px;
+  background: linear-gradient(to right, transparent, var(--m-high) 10px);
+}
+
+html.phone .p-box .agent-attached-held {
+  order: -1;
 }
 
 html.phone .p-box .agent-chip,
@@ -2031,6 +2117,20 @@ html.phone .backdrop.centred > .modal.settings {
   max-height: none;
   border-radius: 0;
   background: var(--bg);
+  animation: none;
+}
+
+/* A page full size has the screen, as a tab of its own would. */
+html.phone .backdrop:has(> .modal.page-view) {
+  align-items: stretch;
+  padding: 0;
+}
+
+html.phone .backdrop.centred > .modal.page-view {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
   animation: none;
 }
 

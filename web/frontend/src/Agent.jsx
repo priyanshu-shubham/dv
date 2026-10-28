@@ -8,16 +8,18 @@ import { commentEvent, Request, RequestTitle, saidWith } from "./AgentPrompt.jsx
 import { DiffBody } from "./FileDiff.jsx";
 import { grow } from "./hunks.js";
 import { codeBlocks, ensureLanguage, highlightLines, langReady } from "./highlight.js";
-import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { Media, MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
+import { PdfView } from "./Pdf.jsx";
+import { absolute, inlineFiles, inside, kindOf, splitShown } from "./shown.js";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
-import { AttachTarget } from "./Threads.jsx";
+import { AttachButton, AttachTarget } from "./Threads.jsx";
 import { agentName, cx, duration, isTyping, limitWindow, LOST_MS, LRM, modKey, PHONE_APP, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useLasting, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconNewSession, IconPin, IconPlus, IconReply, IconStop,
+  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconStop,
   IconTemporary,
   IconUndo, IconX,
 } from "./icons.jsx";
@@ -27,7 +29,7 @@ import { useBack } from "./phone/back.js";
 import { Icon as PhoneIcon } from "./phone/icons.jsx";
 import { Photo } from "./phone/Photo.jsx";
 
-const md = codeBlocks(codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true }))));
+const md = inlineFiles(codeBlocks(codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true })))));
 // A command's output is Markdown, or lines of plain text that must stay lines.
 const mdOutput = codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true })));
 const NO_THREADS = [];
@@ -212,21 +214,6 @@ function commandsFor(draft, commands) {
 // are two, as they say different things.
 export const attachKey = (a) => JSON.stringify([a.kind, a.file, a.side, a.start, a.end, a.threadId, a.body]);
 
-// endQuotes puts a blank line between a quote and a line written right under
-// it, which Markdown would read as more of the quote. A reply leaves the box
-// without that blank line, so it only goes in when there is something after.
-function endQuotes(text) {
-  const out = [];
-  let fence = "";
-  for (const line of text.split("\n")) {
-    if (!fence && out.at(-1)?.startsWith(">") && line.trim() && !line.startsWith(">")) out.push("");
-    const f = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
-    if (f && (!fence || (f[0] === fence[0] && f.length >= fence.length))) fence = fence ? "" : f;
-    out.push(line);
-  }
-  return out.join("\n");
-}
-
 function composeMessage(text, attached, threads) {
   const parts = [];
   for (const a of attached) {
@@ -251,7 +238,7 @@ function composeMessage(text, attached, threads) {
       parts.push(`<comment path="${attr(t.file)}"${lines} side="${t.side}"${on}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
     }
   }
-  const body = endQuotes(text).trim();
+  const body = text.trim();
   return parts.length ? `${body}\n\n<dv-context>\n${parts.join("\n")}\n</dv-context>` : body;
 }
 
@@ -585,7 +572,13 @@ export default function AgentView({
   const name = agentName(agentKind);
   const { available, models = NO_MODELS, mode: defaultMode } = agents[agentKind] || agents[""];
   // Codex's auto review takes every approval, edits too.
-  const modes = useMemo(() => (agentKind === "codex" ? allModes.filter((m) => m.id !== "autoAskEdits") : allModes), [agentKind, allModes]);
+  const [unaskedText] = usePref("user", "unaskedEdits", "");
+  const modes = useMemo(() => {
+    if (agentKind === "codex") return allModes.filter((m) => m.id !== "autoAskEdits");
+    const globs = globLines(unaskedText);
+    return globs.length ? allModes.map((m) => (m.id === "autoAskEdits" ? { ...m, description: `Not for ${globs.join(", ")}` } : m)) : allModes;
+  }, [agentKind, allModes, unaskedText]);
+  const unaskedGear = agentKind !== "codex" && { id: "autoAskEdits", title: "Edits it doesn't ask about", panel: <UnaskedEdits /> };
   // Hidden rather than gone in the other modes, so coming back draws nothing
   // again; its keys and its grabs for focus wait until then.
   // Docked in the Ask panel, it is shown beside another view whose keys they are.
@@ -647,7 +640,14 @@ export default function AgentView({
     },
     [setDraft],
   );
-  const replyWith = useCallback((text, code) => addQuote(quote(text, code)), [addQuote]);
+  // file is the page a quote was taken from, which goes with it.
+  const replyWith = useCallback(
+    (text, code, file) => {
+      addQuote(quote(text, code));
+      if (file && onAttach) onAttach({ kind: "file", file }, id);
+    },
+    [addQuote, onAttach, id],
+  );
   const [userSettings] = usePref("user", "settings", NO_SETTINGS);
   // What you might say next, under the latest reply: Codex's follow-ups in it,
   // and Claude Code's guess after it. Once you have said something since,
@@ -666,11 +666,13 @@ export default function AgentView({
     [setDraft],
   );
   const askInNew = useCallback(
-    (text, code) => {
+    (text, code, file) => {
       quoted.current = quote(text, code);
-      onStartAdded();
+      // Added to a new session's box, the page opens one itself.
+      if (file && onAttach) onAttach({ kind: "file", file }, "");
+      else onStartAdded();
     },
-    [onStartAdded],
+    [onStartAdded, onAttach],
   );
   useEffect(() => {
     if (id || !quoted.current) return;
@@ -1828,6 +1830,7 @@ export default function AgentView({
             choices={modes}
             value={mode}
             onPick={pickMode}
+            gear={unaskedGear}
           />
           {!readOnly && !docked && (
             <button
@@ -2017,10 +2020,11 @@ export default function AgentView({
       {sheet?.type === "mode" && (
         <ModeSheet
           // Named as the box names them, in full under.
-          modes={modes.map((m) => (MODE_SHORT[m.id] ? { ...m, label: MODE_SHORT[m.id], description: m.label } : m))}
+          modes={modes.map((m) => (MODE_SHORT[m.id] ? { ...m, label: MODE_SHORT[m.id], description: [m.label, m.description].filter(Boolean).join(" · ") } : m))}
           mode={mode}
           pending={live?.pending}
           onPick={pickMode}
+          gear={unaskedGear}
           onClose={closeSheet}
         />
       )}
@@ -2081,6 +2085,7 @@ export default function AgentView({
             onBack={phone.onBack}
             onTitle={prompts.length > 1 ? () => setSheet({ type: "jump" }) : null}
             onActions={phone.onActions}
+            pad
             menu={sessionMenu}
           />
         )
@@ -2231,7 +2236,7 @@ export default function AgentView({
             />
           ))}
           {live?.blocks?.map((b, i) => (
-            <Streaming key={i} block={b} />
+            <Streaming key={i} block={b} root={root} />
           ))}
           {/* What Claude is doing is under what it was asked; what waits for it, under that. */}
           {incoming.filter((w) => !w.queued && !w.behind).map(bubble)}
@@ -2398,14 +2403,16 @@ function useAtWork(session, items, busy, running) {
 // Where a selection is not offered: what is typed, and the edits' code, whose
 // comment box has its own way to a new session.
 const NOT_ASKED = "textarea, input, .agent-composer, .agent-head, .agent-edit .file-body";
-const CODE_TEXT = "pre, code, .agent-code";
+// Code drawn as a block; a `code` outside one is inline, in what was said.
+const CODE_BLOCK = "pre, .agent-code, .agent-found-line";
 
 // SelectionAsk is a small bar over text selected in the conversation - what was
-// said, a call, its result - that quotes it in a reply here (onReply, when this
-// session can be written to) or in a new session's message box. It waits for
-// the selection to be done, not each change.
+// said, a call, its result, a page a reply shows - that quotes it in a reply
+// here (onReply, when this session can be written to) or in a new session's
+// message box. A page's quote goes with the page, for the agent to know where it
+// is from. It waits for the selection to be done, not each change.
 function SelectionAsk({ within, active, onReply, onAsk }) {
-  const [at, setAt] = useState(null); // { top, left, text, code }
+  const [at, setAt] = useState(null); // { top, left, text, code, file, doc }
   const bar = useRef(null);
   const shown = useRef(false);
   shown.current = !!at;
@@ -2413,26 +2420,38 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
     if (!active) return setAt(null);
     let pressed = false;
     let settle = 0;
+    // The document the selection is in: the page's, or a shown page's own.
+    let doc = document;
+    const docOf = (e) => e.target.ownerDocument || e.target;
     const place = (snap) => {
-      const sel = window.getSelection();
+      const sel = doc.getSelection();
       const root = within.current;
-      if (!sel?.rangeCount || sel.isCollapsed || !root) return setAt(null);
+      const frame = doc === document ? null : doc.defaultView?.frameElement;
+      if (!sel?.rangeCount || sel.isCollapsed || !root || (doc !== document && !root.contains(frame))) return setAt(null);
       const el = (n) => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
       const ends = [el(sel.getRangeAt(0).startContainer), el(sel.getRangeAt(0).endContainer)];
-      if (ends.some((e) => !root.contains(e) || e.closest(NOT_ASKED))) return setAt(null);
+      if (!frame && ends.some((e) => !root.contains(e) || e.closest(NOT_ASKED))) return setAt(null);
       if (snap) snapToWords(sel);
       const text = sel.toString().replace(/^\s*\n|\s+$/g, "");
       if (!text) return setAt(null);
-      const range = sel.getRangeAt(0);
-      const r = range.getBoundingClientRect();
-      const box = root.getBoundingClientRect();
+      let r = sel.getRangeAt(0).getBoundingClientRect();
+      let box = root.getBoundingClientRect();
+      if (frame) {
+        // A shown page's own coordinates start at its frame, which clips it.
+        const f = frame.getBoundingClientRect();
+        r = { top: r.top + f.top, bottom: r.bottom + f.top, left: r.left + f.left, right: r.right + f.left };
+        box = { top: Math.max(box.top, f.top), bottom: Math.min(box.bottom, f.bottom), left: box.left, right: box.right };
+      }
       if (r.bottom < box.top || r.top > box.bottom) return setAt(null);
       const above = r.top - 34;
+      const inline = ends.map((e) => e.closest("code"));
       setAt({
         top: above >= box.top ? above : Math.min(r.bottom + 6, box.bottom - 34),
         left: Math.min(Math.max((r.left + r.right) / 2, box.left + 80), box.right - 80),
         text,
-        code: ends.every((e) => e.closest(CODE_TEXT)),
+        code: ends.every((e) => e.closest(CODE_BLOCK)) ? "block" : inline[0] && inline[0] === inline[1] ? "inline" : false,
+        file: (frame || ends[0]).closest(".agent-shown-card")?.dataset.path,
+        doc,
       });
     };
     const onDown = (e) => {
@@ -2440,31 +2459,47 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
       pressed = true;
       setAt(null);
     };
-    const onUp = () => {
+    const onUp = (e) => {
       pressed = false;
+      doc = docOf(e);
       setTimeout(() => place(true));
     };
     // Keys and a touch's handles select without a press to wait for.
-    const onChange = () => {
+    const onChange = (e) => {
       clearTimeout(settle);
-      if (window.getSelection()?.isCollapsed) return setAt(null);
+      const d = docOf(e);
+      if (d.getSelection()?.isCollapsed) return d === doc && setAt(null);
+      doc = d;
       if (!pressed) settle = setTimeout(() => place(true), 250);
     };
     const onMove = () => shown.current && place(false);
-    document.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("pointerup", onUp, true);
-    document.addEventListener("pointercancel", onUp, true);
-    document.addEventListener("selectionchange", onChange);
-    window.addEventListener("scroll", onMove, true);
+    const listen = (d, add) => {
+      const on = add ? "addEventListener" : "removeEventListener";
+      d[on]("pointerdown", onDown, true);
+      d[on]("pointerup", onUp, true);
+      d[on]("pointercancel", onUp, true);
+      d[on]("selectionchange", onChange);
+      d.defaultView?.[on]("scroll", onMove, true);
+    };
+    // Each page a reply shows is a document of its own, heard from as it loads.
+    const pages = new Set();
+    const hear = (frame) => {
+      const d = frame.contentDocument;
+      if (!d || pages.has(d)) return;
+      pages.add(d);
+      listen(d, true);
+    };
+    const onPage = (e) => hear(e.target);
+    listen(document, true);
     window.addEventListener("resize", onMove);
+    document.addEventListener("dv:page", onPage, true);
+    within.current?.querySelectorAll(".agent-shown-body iframe").forEach(hear);
     return () => {
       clearTimeout(settle);
-      document.removeEventListener("pointerdown", onDown, true);
-      document.removeEventListener("pointerup", onUp, true);
-      document.removeEventListener("pointercancel", onUp, true);
-      document.removeEventListener("selectionchange", onChange);
-      window.removeEventListener("scroll", onMove, true);
+      listen(document, false);
       window.removeEventListener("resize", onMove);
+      document.removeEventListener("dv:page", onPage, true);
+      pages.forEach((d) => listen(d, false));
     };
   }, [active, within]);
   // Beside the selection with a pointer; under a finger the browser's own copy
@@ -2472,9 +2507,9 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
   const touch = useMedia(TOUCH);
   if (!at) return null;
   const take = (to) => {
-    window.getSelection()?.removeAllRanges();
+    at.doc.getSelection()?.removeAllRanges();
     setAt(null);
-    to(at.text, at.code);
+    to(at.text, at.code, at.file);
   };
   return createPortal(
     <div
@@ -2514,11 +2549,20 @@ function snapToWords(sel) {
   else sel.setBaseAndExtent(sn, so, en, eo);
 }
 
-// quote is text taken into a message: code fenced as it was, prose as a quote.
+// quote is text taken into a message: a block of code fenced as it was, the
+// rest as a quote, with inline code kept in its backticks.
 function quote(text, code) {
-  if (!code) return text.split("\n").map((l) => `> ${l}`).join("\n");
-  const fence = "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
-  return `${fence}\n${text}\n${fence}`;
+  const ticks = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length)) + 1;
+  if (code === "block") {
+    const fence = "`".repeat(Math.max(3, ticks));
+    return `${fence}\n${text}\n${fence}`;
+  }
+  if (code === "inline") {
+    const tick = "`".repeat(ticks);
+    const pad = /^`|`$/.test(text) ? " " : "";
+    text = `${tick}${pad}${text}${pad}${tick}`;
+  }
+  return text.split("\n").map((l) => `> ${l}`).join("\n");
 }
 
 // `last` is for when a call is open, which hides the message box under it.
@@ -2742,7 +2786,7 @@ const Item = memo(function Item(props) {
         />
       );
     case "text":
-      return <Markdown md={md} text={item.text} className="markdown agent-text" />;
+      return <AgentText text={item.text} root={props.root} onAttach={props.onAttach} />;
     case "thinking":
       return <Thinking text={item.text} />;
     case "note":
@@ -2960,6 +3004,36 @@ const MODE_NAMES = {
 
 // On a phone's message box, where both pickers and Send share one line.
 const MODE_SHORT = { default: "Ask first", autoAskEdits: "Auto, ask", bypassPermissions: "Bypass" };
+
+const globLines = (text) =>
+  text
+    .split("\n")
+    .map((g) => g.trim())
+    .filter(Boolean);
+
+// UnaskedEdits is the files Auto, ask before edits leaves to auto mode, as
+// globs. They are the reader's, for every folder, and a session goes by them
+// from its next edit, which dv checks as Claude makes it.
+function UnaskedEdits() {
+  const [text, setText] = usePref("user", "unaskedEdits", "");
+  return (
+    <label className="unasked">
+      <span className="unasked-title">Don't ask about edits to</span>
+      <textarea
+        value={text}
+        rows={4}
+        placeholder={"*.md\ndocs/\n**/*_test.go"}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoFocus
+        onChange={(e) => setText(e.target.value)}
+      />
+      <span className="unasked-note">
+        One glob a line, from the folder's root, as the file filter reads them. Claude edits these without asking, in every folder, from its next edit.
+      </span>
+    </label>
+  );
+}
 const EFFORT_SHORT = { minimal: "Min", medium: "Med", xhigh: "XHigh" };
 
 // modeChange words a change of permission mode: plan mode is a place Claude
@@ -3017,10 +3091,8 @@ function Compacted({ item }) {
 
 // Streaming is a reply as it arrives: its text, or its thinking. What a tool
 // call is doing shows in the Activity line under it.
-function Streaming({ block }) {
-  if (block.kind === "text") {
-    return <Markdown md={md} text={block.text} className="markdown agent-text streaming" />;
-  }
+function Streaming({ block, root }) {
+  if (block.kind === "text") return <AgentText text={block.text} root={root} streaming />;
   if (block.kind === "thinking" && block.text) return <Thinking text={block.text} />;
   return null;
 }
@@ -3428,6 +3500,193 @@ function ToolImage({ src, detail = {}, name }) {
         </Modal>
       )}
     </>
+  );
+}
+
+// AgentText is a reply's text, with the files it shows drawn where they stand.
+function AgentText({ text, root, streaming, onAttach }) {
+  const parts = useMemo(() => splitShown(md, text), [text]);
+  const className = cx("markdown agent-text", streaming && "streaming");
+  const env = { root };
+  if (!parts.some((p) => p.path)) return <Markdown md={md} env={env} text={text} className={className} />;
+  return (
+    <div className="agent-shown-text">
+      {parts.map((p, i) =>
+        p.path ? (
+          <Shown key={i} file={p} root={root} streaming={streaming} onAttach={onAttach} />
+        ) : (
+          <Markdown key={i} md={md} env={env} text={p.text} className={className} />
+        ),
+      )}
+    </div>
+  );
+}
+
+// Shown is a file a reply shows, framed as an edit is, to send back with the
+// next message: a picture to open full size, a video or sound to play, a page
+// or PDF to use in place or full size. Anything else is a link to it. A page or
+// PDF still being written of has only its head, so it loads once, when the
+// reply is done.
+function Shown({ file, root, streaming, onAttach }) {
+  const path = absolute(file.path, root);
+  const kind = kindOf(file.path);
+  const src = api.viewURL(path) + file.rest;
+  const name = file.title || file.path.slice(file.path.search(/[^\\/]*$/));
+  const [ref, version, missing] = useChanges(kind === "file" ? null : src);
+  const [full, setFull] = useState(false);
+
+  if (kind === "file") {
+    const rel = inside(path, root);
+    return (
+      <a
+        className={cx("view-file agent-shown-file", rel && "path-link")}
+        href={rel ? "/" + rel : src}
+        data-path={rel || undefined}
+        target={rel ? undefined : "_blank"}
+        rel="noopener"
+        title={file.path}
+      >
+        <IconFile size={12} />
+        {name}
+      </a>
+    );
+  }
+  // Fetched afresh once changed, past what the browser keeps of the last one.
+  const fresh = version ? src.replace(/^([^#]*?)(\?[^#]*)?(#.*)?$/, (_, a, q, h) => `${a}${q ? q + "&" : "?"}v=${version}${h || ""}`) : src;
+  const big = kind === "page" || kind === "pdf";
+  const body = (fill) =>
+    missing ? (
+      <div className="file-note error">dv cannot find {file.path}</div>
+    ) : kind === "page" ? (
+      <ShownPage src={src} name={name} version={version} fill={fill} />
+    ) : kind === "pdf" ? (
+      <PdfView src={fresh} />
+    ) : kind === "image" ? (
+      <ToolImage key={version} src={fresh} name={name} />
+    ) : (
+      <Media type={kind + "/"} src={fresh} />
+    );
+  const open = (
+    <a className="view-file" href={src} target="_blank" rel="noopener" title="Open in a new tab">
+      <IconOpenOut size={12} />
+    </a>
+  );
+  return (
+    <div className={cx("file agent-shown-card", !big && "small")} data-path={file.path} ref={ref}>
+      <header className="file-head">
+        <h3 className="file-path" title={file.path}>
+          <span className="name">{name}</span>
+        </h3>
+        <span className="spacer" />
+        {onAttach && <AttachButton what="this file" onClick={(to) => onAttach({ kind: "file", file: file.path }, to)} />}
+        {open}
+        {big && (
+          <button className="view-file" onClick={() => setFull(true)} title="See it full size">
+            <IconMaximize size={12} />
+          </button>
+        )}
+      </header>
+      {!(streaming && big) && <div className="file-body agent-shown-body">{body(false)}</div>}
+      {full && (
+        <Modal wide centred className="viewer page-view" onClose={() => setFull(false)}>
+          <div className="viewer-head">
+            <span className="path">{name}</span>
+            <span className="spacer" />
+            {open}
+            <button className="ghost" onClick={() => setFull(false)} title="Close (Esc)">
+              <IconX size={13} />
+            </button>
+          </div>
+          <div className="page-view-body">{body(true)}</div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// useChanges counts the times the file at src has changed since it was shown,
+// looked at every few seconds while it is on screen, and says whether it is
+// missing.
+function useChanges(src) {
+  const ref = useRef(null);
+  const [state, setState] = useState({ version: 0, missing: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!src || !el) return;
+    let seen = null;
+    let onScreen = false;
+    const look = () =>
+      fetch(src, { method: "HEAD", cache: "no-store" })
+        .then((r) => (r.ok ? `${r.headers.get("last-modified")} ${r.headers.get("content-length")}` : "missing"))
+        // dv out of reach says nothing of the file.
+        .catch(() => seen)
+        .then((now) => {
+          if (now === seen) return;
+          const changed = seen !== null;
+          seen = now;
+          setState((s) => ({ version: s.version + (changed ? 1 : 0), missing: now === "missing" }));
+        });
+    const io = new IntersectionObserver(([e]) => (onScreen = e.isIntersecting), { root: el.closest(".agent-scroll") });
+    io.observe(el);
+    look();
+    const timer = setInterval(() => onScreen && !document.hidden && look(), 2000);
+    return () => {
+      io.disconnect();
+      clearInterval(timer);
+    };
+  }, [src]);
+  return [ref, state.version, state.missing];
+}
+
+const PAGE_MIN = 40; // px: less is a page laid out to the frame, not its content
+
+// ShownPage is a page in the conversation, as tall as its content so that only
+// the conversation scrolls - or filling what holds it. It is dv's own, so its
+// height is read off it, and a change to the file reloads it in place.
+function ShownPage({ src, name, version, fill }) {
+  const ref = useRef(null);
+  const [height, setHeight] = useState(0);
+  const first = useRef(version);
+  useEffect(() => {
+    if (version !== first.current) ref.current?.contentWindow?.location.reload();
+  }, [version]);
+  const loaded = () => {
+    // For SelectionAsk to hear what is selected in it, a document of its own.
+    ref.current?.dispatchEvent(new Event("dv:page", { bubbles: true }));
+    const win = ref.current?.contentWindow;
+    const doc = ref.current?.contentDocument;
+    if (fill || !win || !doc?.body) return;
+    // A page laid out to its window - 100vh and a margin - outgrows the frame
+    // again each time the frame grows. Doing so at once by as much as before,
+    // it is left the height it has, less what it outgrows it by - the margin,
+    // which would only be a scrollbar inside the conversation's. Doing so at
+    // once for long, it is just left.
+    let gap = 0;
+    let fitted = -Infinity;
+    let echoes = 0;
+    const measure = () => {
+      if (echoes < 0) return;
+      const content = Math.ceil(Math.max(doc.documentElement.getBoundingClientRect().height, doc.body.scrollHeight));
+      // A sideways scrollbar is room the content does not have.
+      const want = content + win.innerHeight - doc.documentElement.clientHeight;
+      const over = want - win.innerHeight;
+      if (Math.abs(over) < 1) return;
+      const echo = performance.now() - fitted < 500;
+      echoes = echo ? echoes + 1 : 0;
+      if (echo && over > 0 && Math.abs(over - gap) < 1) {
+        doc.documentElement.style.overflowY = "hidden";
+        return void (echoes = -1);
+      }
+      if (echo && over > 0 && echoes > 30) return void (echoes = -1);
+      gap = over;
+      fitted = performance.now();
+      setHeight(content < PAGE_MIN ? 0 : want);
+    };
+    measure();
+    new win.ResizeObserver(measure).observe(doc.body);
+  };
+  return (
+    <iframe ref={ref} src={src} title={name} loading="lazy" onLoad={loaded} style={height >= PAGE_MIN ? { height } : undefined} />
   );
 }
 

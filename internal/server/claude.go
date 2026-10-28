@@ -35,6 +35,11 @@ func (s *Server) handleClaudeHook(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+// KeepAlive is how often a quiet stream says something anyway: a proxy in
+// front of dv drops a response silent for long, as these are while a session
+// waits on the reader, and the page takes its requests down until it is back.
+const KeepAlive = 30 * time.Second
+
 // handleClaudeRequests streams the waiting requests, the whole list each time
 // it changes, and what the open sessions are doing, each time that does. A
 // stream rather than a poll, because the page has to hear of a request, or of
@@ -56,6 +61,8 @@ func (s *Server) handleClaudeRequests(w http.ResponseWriter, r *http.Request) {
 	// looked at on a tick; each part goes out only when it moved.
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
+	quiet := time.NewTicker(KeepAlive)
+	defer quiet.Stop()
 	sent := map[string]string{}
 	send := func(key string, v any) bool {
 		b, err := json.Marshal(map[string]any{key: v})
@@ -76,6 +83,9 @@ func (s *Server) handleClaudeRequests(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-changed:
 		case <-tick.C:
+		case <-quiet.C:
+			fmt.Fprint(w, ": \n\n")
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}

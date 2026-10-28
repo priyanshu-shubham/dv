@@ -753,6 +753,12 @@ func TestSummaryTakesTheLatestTitleAndPrompt(t *testing.T) {
 	if s, _ := summarize(path); s.Last != "and six" || s.LastBy != "you" || s.used != 31240 || s.model != "claude-opus-5" {
 		t.Fatalf("summary %+v", s)
 	}
+	// A file the reply shows reads as its title.
+	shown := assistant("a6", "a5", "msg_5", text("Here:\n\n![Sales by month](.dv/pages/sales.html)"))
+	os.WriteFile(path, []byte(conversation(t)+line(t, shown)), 0o644)
+	if s, _ := summarize(path); s.Last != "Here: Sales by month" {
+		t.Fatalf("last said %q", s.Last)
+	}
 
 	// Untitled, a session is named by its prompt, which Claude Code keeps with the context flattened in.
 	asked := line(t, user("u1", "", "what does this do?\n\n<dv-context>\n<file path=\"a.go\" />\n</dv-context>"))
@@ -1246,6 +1252,22 @@ func TestASuggestionLastsUntilTheNextTurn(t *testing.T) {
 	p.handle([]byte(`{"type":"system","subtype":"session_state_changed","state":"running"}`))
 	if p.suggestion != "" {
 		t.Fatalf("suggestion %q kept into the next turn", p.suggestion)
+	}
+}
+
+// What dv adds to the system prompt goes with every start, a resume's too,
+// which does not keep it; with the setting off, nothing goes.
+func TestInstructionsGoWithEachStart(t *testing.T) {
+	note := ""
+	p := &proc{id: "s1", instructions: func() string { return note }}
+	if slices.Contains(p.args(), "--append-system-prompt") {
+		t.Fatal("appended to the system prompt with nothing to add")
+	}
+	note = "Show files."
+	p.resume = true
+	args := p.args()
+	if i := slices.Index(args, "--append-system-prompt"); i < 0 || args[i+1] != note {
+		t.Fatalf("resumed without the instructions: %q", args)
 	}
 }
 

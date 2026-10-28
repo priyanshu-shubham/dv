@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeLister lets the tests drive an Index over a temp directory.
@@ -12,6 +13,9 @@ type fakeLister struct{ files []string }
 
 func (f fakeLister) TrackedFiles() ([]string, error) { return f.files, nil }
 func (f fakeLister) SkippedDirs() []string           { return nil }
+
+// Version has always moved, so a catch-up always looks over the files.
+func (f fakeLister) Version() (string, error) { return time.Now().String(), nil }
 
 func build(t *testing.T, files map[string]string) *Index {
 	t.Helper()
@@ -133,7 +137,7 @@ func TestResolveIsWholeWordOnly(t *testing.T) {
 		}, "\n"),
 	})
 
-	res := ix.Resolve("inflight", "a.go", 10)
+	res := ix.Resolve("inflight", "a.go", 10, nil)
 	if len(res.Defs) == 0 {
 		t.Fatal("inflight resolved to nothing")
 	}
@@ -162,7 +166,7 @@ func TestResolveSkipsBlockCommentedCode(t *testing.T) {
 		}, "\n"),
 	})
 	for _, name := range []string{"Buried", "buried"} {
-		if res := ix.Resolve(name, "", 10); len(res.Defs) != 0 {
+		if res := ix.Resolve(name, "", 10, nil); len(res.Defs) != 0 {
 			t.Errorf("%s resolved inside a block comment: %+v", name, res.Defs)
 		}
 	}
@@ -170,7 +174,7 @@ func TestResolveSkipsBlockCommentedCode(t *testing.T) {
 
 func TestResolveAlwaysReturnsAList(t *testing.T) {
 	ix := build(t, map[string]string{"a.go": "package a\n"})
-	if res := ix.Resolve("Nowhere", "", 10); res.Defs == nil {
+	if res := ix.Resolve("Nowhere", "", 10, nil); res.Defs == nil {
 		t.Error("Defs is nil; the client has to special-case that")
 	}
 }
@@ -190,12 +194,46 @@ func TestResolveSkipsUsagesAndProse(t *testing.T) {
 		}, "\n"),
 	})
 
-	res := ix.Resolve("inflight", "a.go", 10)
+	res := ix.Resolve("inflight", "a.go", 10, nil)
 	if len(res.Defs) != 1 {
 		t.Fatalf("want only the declaration, got %v", names(res.Defs))
 	}
 	if res.Defs[0].Line != 5 {
 		t.Errorf("want line 5, got %v", names(res.Defs))
+	}
+}
+
+func TestResolveReadsTheDraft(t *testing.T) {
+	ix := build(t, map[string]string{
+		"a.go": "package a\n\nfunc Old() {}\n",
+		"b.go": "package a\n\nfunc Other() {}\n",
+	})
+	draft := &Draft{Path: "a.go", Text: strings.Join([]string{
+		"package a",
+		"",
+		"type S struct {",
+		"\tcount int",
+		"}",
+		"",
+		"func (s *S) Added() {}",
+		"",
+		"func Old() {}",
+	}, "\n")}
+
+	for _, c := range []struct {
+		name, want string
+	}{
+		{"Added", "a.go:7"}, // only in the edit
+		{"Old", "a.go:9"},   // on disk too, but at line 3
+		{"count", "a.go:4"}, // found by the scan, below the index
+	} {
+		res := ix.Resolve(c.name, "b.go", 10, draft)
+		if got := names(res.Defs); len(got) != 1 || got[0] != c.want || !res.Defs[0].Draft {
+			t.Errorf("%s: got %v %+v, want the draft's %s", c.name, got, res.Defs, c.want)
+		}
+	}
+	if res := ix.Resolve("Other", "a.go", 10, draft); len(res.Defs) != 1 || res.Defs[0].Draft {
+		t.Errorf("Other is on disk, not in the draft: %+v", res.Defs)
 	}
 }
 
@@ -208,7 +246,7 @@ func TestResolveRanksByProximity(t *testing.T) {
 		"cmd/tool/main.go":        body,
 	})
 
-	res := ix.Resolve("Handle", "internal/api/other.go", 10)
+	res := ix.Resolve("Handle", "internal/api/other.go", 10, nil)
 	want := []string{
 		"internal/api/other.go:3",   // same file
 		"internal/api/handler.go:3", // same directory
@@ -252,7 +290,7 @@ func TestResolveKeepsToTheLanguage(t *testing.T) {
 		// A field in Go outranks a function the index has in JS.
 		{"limit", "server/main.go", "scan", []string{"server/limits.go:4"}},
 	} {
-		res := ix.Resolve(c.name, c.from, 10)
+		res := ix.Resolve(c.name, c.from, 10, nil)
 		got := names(res.Defs)
 		if res.Source != c.source || strings.Join(got, " ") != strings.Join(c.want, " ") {
 			t.Errorf("%s from %s: %s %v, want %s %v", c.name, c.from, res.Source, got, c.source, c.want)
@@ -262,7 +300,7 @@ func TestResolveKeepsToTheLanguage(t *testing.T) {
 
 func TestResolveNoOriginStillWorks(t *testing.T) {
 	ix := build(t, map[string]string{"a.go": "package a\n\nfunc Handle() {}\n"})
-	res := ix.Resolve("Handle", "", 10)
+	res := ix.Resolve("Handle", "", 10, nil)
 	if len(res.Defs) != 1 || res.Source != "index" {
 		t.Fatalf("got %+v", res)
 	}
@@ -274,7 +312,7 @@ func TestResolveNoOriginStillWorks(t *testing.T) {
 func TestResolveRejectsNonIdentifiers(t *testing.T) {
 	ix := build(t, map[string]string{"a.go": "package a\n"})
 	for _, s := range []string{"", "a b", "1abc", "x-y", strings.Repeat("a", 200)} {
-		if res := ix.Resolve(s, "", 10); res.Source != "none" || len(res.Defs) != 0 {
+		if res := ix.Resolve(s, "", 10, nil); res.Source != "none" || len(res.Defs) != 0 {
 			t.Errorf("%q resolved to %+v", s, res)
 		}
 	}

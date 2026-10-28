@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -41,6 +42,9 @@ type Session struct {
 
 // lastWords is how much of the last thing said a row keeps.
 const lastWords = 240
+
+// shownFile is a file shown in a reply, which a row reads as its title.
+var shownFile = regexp.MustCompile(`!\[([^\]\n]*)\]\([^)\s]*(?:\s+"[^"\n]*")?\)`)
 
 // A transcript can run to tens of megabytes, and listing reads every one, so
 // only its two ends are read: the start has where it ran and the first prompt,
@@ -90,6 +94,7 @@ func summarize(path string) (Session, bool) {
 	said := func(text, by string) {
 		// What went with a message from dv is not what was said.
 		text, _, _ = strings.Cut(text, "<dv-context>")
+		text = shownFile.ReplaceAllString(text, "$1")
 		if text = strings.Join(strings.Fields(text), " "); text != "" {
 			s.Last, s.LastBy = cut(text, lastWords), by
 		}

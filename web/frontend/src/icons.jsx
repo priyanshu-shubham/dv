@@ -38,6 +38,8 @@ export const IconX = svg(<path d="M4 4l8 8M12 4l-8 8" />, { stroke: true });
 export const IconPlus = svg(<path d="M8 3.5v9M3.5 8h9" />, { stroke: true });
 export const IconMinus = svg(<path d="M3.5 8h9" />, { stroke: true });
 export const IconExpand = svg(<path d="M5 6.5L8 3.5l3 3M5 9.5l3 3 3-3" />, { stroke: true });
+export const IconMaximize = svg(<path d="M9.5 2.5h4v4M13.5 2.5L9.5 6.5M6.5 13.5h-4v-4M2.5 13.5l4-4" />, { stroke: true });
+export const IconOpenOut = svg(<path d="M9.5 2.5h4v4M13.5 2.5L8 8M11.5 9.5v4h-9v-9h4" />, { stroke: true });
 export const IconCollapse = svg(<path d="M5 3.5l3 3 3-3M5 12.5l3-3 3 3" />, { stroke: true });
 export const IconFilter = svg(<path d="M2.5 3h11L9.2 8.3V13l-2.4-1.2V8.3z" />, { stroke: true });
 export const IconSplit =svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" /></>, { stroke: true });
@@ -55,6 +57,7 @@ export const IconPin =svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { s
 export const IconArrowUp = svg(<path d="M8 13V3.5M3.5 8L8 3.5 12.5 8" />, { stroke: true });
 export const IconStop = svg(<rect x="4" y="4" width="8" height="8" rx="1.5" />);
 export const IconUndo = svg(<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2v3.5H6" />, { stroke: true });
+export const IconPad = svg(<><rect x="3" y="2" width="10" height="12.5" rx="1.5" /><path d="M5.5 5.5h5M5.5 8.25h5M5.5 11h3" /></>, { stroke: true });
 export const IconEdit = svg(<path d="M10.5 3l2.5 2.5L6 12.5H3.5V10zM9 4.5L11.5 7" />, { stroke: true });
 export const IconBell = svg(<path d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1.2 1.2H2.8zM6.5 14.2a1.6 1.6 0 0 0 3 0" />, { stroke: true });
 

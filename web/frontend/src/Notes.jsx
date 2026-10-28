@@ -5,6 +5,7 @@ import { linkPaths, Markdown } from "./links.js";
 import { AttachButton } from "./Threads.jsx";
 import { say } from "./Notices.jsx";
 import { Modal } from "./Overlays.jsx";
+import { usePref } from "./prefs.js";
 import { AgentIcon, IconCheck, IconChevron, IconChevronDown, IconDots, IconEdit, IconPlus, IconX } from "./icons.jsx";
 import { cx, modKey, relTime, useDismiss, usePersisted } from "./util.js";
 
@@ -32,6 +33,32 @@ export const openNotes = (notes) => notes.filter((n) => n.status !== "done").len
 
 // noteText is a note as it goes into a message box.
 export const noteText = (note) => [note.title, note.body].filter(Boolean).join("\n\n");
+
+// Pad is the reader's own free text. It is kept with their settings, so every
+// folder and device has the same one, saved as a draft is. focus moving puts
+// the caret in it, where it was left.
+export function Pad({ focus }) {
+  const [text, setText] = usePref("user", "pad", "");
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!focus) return;
+    const el = ref.current;
+    const at = Math.min(padCaret, el.value.length);
+    el.setSelectionRange(at, at);
+    el.focus();
+  }, [focus]);
+  return (
+    <textarea
+      ref={ref}
+      className="pad"
+      value={text}
+      placeholder="Notes to yourself, the same in every folder"
+      onChange={(e) => setText(e.target.value)}
+      onBlur={(e) => (padCaret = e.target.selectionStart)}
+    />
+  );
+}
+let padCaret = Infinity;
 
 // Notes is the repository's list, grouped by status, in the right-hand panel
 // beside the comments. composing is whether the new note's form is open;

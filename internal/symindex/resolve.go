@@ -16,8 +16,38 @@ import (
 type Candidate struct {
 	Symbol
 	Score int    `json:"score"`
-	Why   string `json:"why,omitempty"` // "same file", "same directory", "nearby"
+	Why   string `json:"why,omitempty"`   // "same file", "same directory", "nearby"
+	Draft bool   `json:"draft,omitempty"` // the line is the draft's, not the file on disk's
 }
+
+// Draft is a file as an edit waiting on the reader would leave it, read in
+// place of the one on disk, so a name the edit brings in resolves before it
+// is made.
+type Draft struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+}
+
+func (d *Draft) mark(c Candidate) Candidate {
+	c.Draft, c.Why = true, "in the edit"
+	return c
+}
+
+// defs is what the index would hold of name were the draft on disk.
+func (d *Draft) defs(name, from string) []Candidate {
+	if d == nil || langFor(d.Path) == nil {
+		return nil
+	}
+	var out []Candidate
+	for _, s := range scanFile(d.Path, []byte(d.Text), langFor(d.Path)) {
+		if s.Name == name {
+			out = append(out, d.mark(score(s, from, 0)))
+		}
+	}
+	return out
+}
+
+func (d *Draft) covers(file string) bool { return d != nil && d.Path == file }
 
 // Resolution is what a Cmd/Ctrl+click on an identifier gets back. Source says
 // how the answers were found, so the UI can be honest about whether it is
@@ -44,7 +74,7 @@ const maxScanMatches = 400
 // the JS is no answer to one clicked in Go, and would stand between the reader
 // and the jump. Only when that language has none are the others offered, as a
 // class in CSS is to a name clicked in JSX.
-func (ix *Index) Resolve(name, from string, limit int) Resolution {
+func (ix *Index) Resolve(name, from string, limit int, draft *Draft) Resolution {
 	res := Resolution{Name: name, Source: "none", Defs: []Candidate{}}
 	if !isIdentifier(name) {
 		return res
@@ -52,8 +82,11 @@ func (ix *Index) Resolve(name, from string, limit int) Resolution {
 
 	var indexed []Candidate
 	for _, s := range ix.Lookup(name) {
-		indexed = append(indexed, score(s, from, 0))
+		if !draft.covers(s.File) {
+			indexed = append(indexed, score(s, from, 0))
+		}
 	}
+	indexed = append(indexed, draft.defs(name, from)...)
 	fam := family(from)
 	ours := func(defs []Candidate) []Candidate {
 		if fam == nil {
@@ -69,7 +102,7 @@ func (ix *Index) Resolve(name, from string, limit int) Resolution {
 	}
 	if defs := ours(indexed); len(defs) > 0 {
 		res.Defs, res.Source = defs, "index"
-	} else if scanned := ix.scanDefs(name, from); len(ours(scanned)) > 0 {
+	} else if scanned := ix.scanDefs(name, from, draft); len(ours(scanned)) > 0 {
 		res.Defs, res.Source = ours(scanned), "scan"
 	} else if len(indexed) > 0 {
 		res.Defs, res.Source = indexed, "index"
@@ -112,7 +145,7 @@ func (ix *Index) Lookup(name string) []Symbol {
 // Deciding whether a line is prose needs the lines above it - a name inside a
 // /* */ block has no marker of its own - so the candidate files are re-read and
 // walked in order rather than judged one line at a time.
-func (ix *Index) scanDefs(name, from string) []Candidate {
+func (ix *Index) scanDefs(name, from string, draft *Draft) []Candidate {
 	res, err := ix.Search(SearchOpts{Query: name, WholeWord: true, CaseSens: true, MaxMatches: maxScanMatches})
 	if err != nil || res == nil {
 		return nil
@@ -120,7 +153,7 @@ func (ix *Index) scanDefs(name, from string) []Candidate {
 	byFile := map[string][]int{}
 	var order []string
 	for _, m := range res.Matches {
-		if langFor(m.File) == nil {
+		if langFor(m.File) == nil || draft.covers(m.File) {
 			continue
 		}
 		if _, seen := byFile[m.File]; !seen {
@@ -132,8 +165,17 @@ func (ix *Index) scanDefs(name, from string) []Candidate {
 	sh := newDeclShapes(name)
 	var out []Candidate
 	for _, file := range order {
-		for _, d := range ix.declsIn(file, name, byFile[file], sh) {
+		b, err := gitx.ReadTextFile(filepath.Join(ix.root, file), maxIndexedBytes)
+		if err != nil {
+			continue
+		}
+		for _, d := range declsIn(file, b, name, byFile[file], sh) {
 			out = append(out, score(d.Symbol, from, d.bonus))
+		}
+	}
+	if draft != nil && langFor(draft.Path) != nil {
+		for _, d := range declsIn(draft.Path, []byte(draft.Text), name, nil, sh) {
+			out = append(out, draft.mark(score(d.Symbol, from, d.bonus)))
 		}
 	}
 	return out
@@ -146,16 +188,15 @@ type decl struct {
 }
 
 // declsIn walks one file, tracking comment and string state, and reports which
-// of the given lines actually declare name.
-func (ix *Index) declsIn(file, name string, lines []int, sh declShapes) []decl {
+// of the given lines, or with none given any line, actually declare name.
+func declsIn(file string, b []byte, name string, lines []int, sh declShapes) []decl {
 	l := langFor(file)
-	b, err := gitx.ReadTextFile(filepath.Join(ix.root, file), maxIndexedBytes)
-	if err != nil {
-		return nil
-	}
-	want := make(map[int]bool, len(lines))
-	for _, n := range lines {
-		want[n] = true
+	var want map[int]bool
+	if lines != nil {
+		want = make(map[int]bool, len(lines))
+		for _, n := range lines {
+			want[n] = true
+		}
 	}
 
 	var out []decl
@@ -169,7 +210,7 @@ func (ix *Index) declsIn(file, name string, lines []int, sh declShapes) []decl {
 		// Every line has to go through strip, matched or not, or the block
 		// state is wrong by the time an interesting line arrives.
 		code := l.strip(raw, &st, true)
-		if !want[n] || l.isCont(raw) || !containsWord(code, name) {
+		if (want != nil && !want[n]) || l.isCont(raw) || !containsWord(code, name) {
 			continue
 		}
 		kind, bonus := sh.match(code)

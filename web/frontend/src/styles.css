@@ -1008,20 +1008,20 @@ button.headref:hover {
    card's own edge would have run straight past them. The card clips its parts
    to its corners. */
 .content .file,
-.file.agent-edit {
+.file:is(.agent-edit, .agent-shown-card) {
   --edge: var(--border-soft);
   border-radius: var(--r-lg);
 }
 
 .content .file > .file-head,
-.file.agent-edit > .file-head {
+.file:is(.agent-edit, .agent-shown-card) > .file-head {
   background: none;
 }
 
 .content .file > .file-head::before,
 .content .file > .file-head::after,
-.file.agent-edit > .file-head::before,
-.file.agent-edit > .file-head::after {
+.file:is(.agent-edit, .agent-shown-card) > .file-head::before,
+.file:is(.agent-edit, .agent-shown-card) > .file-head::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -1032,14 +1032,14 @@ button.headref:hover {
    scale the two round to different device pixels, which left a row of code
    showing between them. At the card's top the card clips it away. */
 .content .file > .file-head::before,
-.file.agent-edit > .file-head::before {
+.file:is(.agent-edit, .agent-shown-card) > .file-head::before {
   top: -14px;
   z-index: -2;
   background: var(--bg);
 }
 
 .content .file > .file-head::after,
-.file.agent-edit > .file-head::after {
+.file:is(.agent-edit, .agent-shown-card) > .file-head::after {
   z-index: -1;
   border: 1px solid var(--edge);
   border-bottom: 0;
@@ -1049,19 +1049,19 @@ button.headref:hover {
 
 /* Folded, the head is the whole card. */
 .content .file > .file-head:last-child::after,
-.file.agent-edit > .file-head:last-child::after {
+.file:is(.agent-edit, .agent-shown-card) > .file-head:last-child::after {
   border-bottom: 1px solid var(--edge);
   border-radius: var(--r-lg);
 }
 
 .content .file > :not(.file-head),
-.file.agent-edit > :not(.file-head) {
+.file:is(.agent-edit, .agent-shown-card) > :not(.file-head) {
   border: 0 solid var(--edge);
   border-width: 0 1px;
 }
 
 .content .file > :last-child:not(.file-head),
-.file.agent-edit > :last-child:not(.file-head) {
+.file:is(.agent-edit, .agent-shown-card) > :last-child:not(.file-head) {
   border-bottom-width: 1px;
   border-radius: 0 0 var(--r-lg) var(--r-lg);
   overflow: clip;
@@ -1222,6 +1222,20 @@ button.headref:hover {
 
 .comment-list {
   padding: 8px;
+}
+
+textarea.pad {
+  flex: 1;
+  min-height: 0;
+  margin: 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  resize: none;
+  font: var(--fs-sm) / 1.6 var(--font-mono);
+}
+
+textarea.pad:focus {
+  box-shadow: none;
 }
 
 /* The bar for handing comments over: tick them, then send or delete together. */
@@ -3829,6 +3843,30 @@ mark {
   height: 6px;
 }
 
+.command-output-title {
+  flex: none;
+}
+
+.command-output-of {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-output {
+  flex: 1;
+  min-height: 120px;
+  margin: 0;
+  padding: 10px 14px 14px;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--fg-2);
+  font: 12px/18px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .help-body {
   display: grid;
   grid-template-columns: 150px 1fr;
@@ -3939,6 +3977,17 @@ mark {
 
 .action-row .sym {
   font-family: var(--font-ui);
+}
+
+.action-line {
+  position: relative;
+}
+
+.action-output {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
 }
 
 .action-row .dim {
@@ -4364,6 +4413,44 @@ body.resizing * {
 
 .model-list .model-drop:hover {
   color: var(--fg);
+}
+
+.model-list .model-gear {
+  opacity: 1;
+}
+
+/* What Auto, ask before edits leaves alone, in the mode menu in place of its list. */
+.unasked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 300px;
+  padding: 6px 8px 8px;
+}
+
+.unasked-title {
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* Over the message box's own; the menu's raised fill is the input's, so the
+   page's sets it apart. */
+.model-list .unasked textarea {
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+  resize: vertical;
+  background: var(--bg);
+  font: var(--fs-xs) / 1.6 var(--font-mono);
+}
+
+.model-list .unasked textarea:focus {
+  box-shadow: var(--field-ring);
+}
+
+.unasked-note {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
 }
 
 .model-add-row .model-name {
@@ -5906,6 +5993,89 @@ button.ghost.agent-context {
   max-height: 100%;
   margin: 0 auto;
   object-fit: contain;
+}
+
+.agent-shown-file {
+  margin: 2px 0 8px;
+}
+
+.agent-shown-card {
+  margin: 6px 0;
+  content-visibility: visible;
+}
+
+/* A picture, video or sound takes its own width, with room for the head. */
+.agent-shown-card.small {
+  width: fit-content;
+  min-width: min(280px, 100%);
+  max-width: 100%;
+}
+
+.agent-shown-body > .agent-image {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.agent-shown-body > .media {
+  align-items: flex-start;
+  padding: 0;
+}
+
+.agent-shown-body > .media video {
+  max-height: 360px;
+  border-radius: 0;
+}
+
+.agent-shown-body > .media-audio {
+  padding: 8px;
+}
+
+/* Unstyled, a page is black on white in a tab of its own, so here too, not
+   on dv's ground. Its height is set to its content's once it loads; this is
+   for one laid out to its window. */
+.agent-shown-body > iframe {
+  display: block;
+  width: 100%;
+  height: min(480px, 70vh);
+  border: 0;
+  background: #fff;
+}
+
+.agent-shown-body > .pdf-view {
+  border: 0;
+  border-radius: 0;
+}
+
+/* The card's head has it already. */
+:is(.agent-shown-body, .page-view-body) .pdf-open {
+  display: none;
+}
+
+.modal.page-view {
+  width: min(1400px, 96vw);
+  height: 88vh;
+}
+
+.page-view-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.page-view-body > iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.page-view-body > .pdf-view {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .agent-plan {

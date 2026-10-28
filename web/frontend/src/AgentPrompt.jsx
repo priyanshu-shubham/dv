@@ -752,6 +752,10 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
   // A plan opens as the document it is; an edit opens as the diff it is.
   const [preview, setPreview] = useState(req.tool === "ExitPlanMode");
   const [copied, copy] = useCopy(p?.path || "");
+  // A name is looked up in the file as the edit would leave it, so one the
+  // edit brings in is found. A problem edit's diff is two snippets, no file.
+  const draft = useMemo(() => (fd && !fd.binary && !fd.tooLarge && !p.problem ? { path: p.path, fd } : null), [fd, p?.path, p?.problem]);
+  const symbol = useCallback((name, from) => onSymbol(name, from, 0, draft), [onSymbol, draft]);
 
   const startComment = useCallback(
     (side, start, end, selected) => {
@@ -937,7 +941,7 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
             expanded={expanded}
             onExpand={expand}
             {...commentable}
-            onSymbol={onSymbol}
+            onSymbol={symbol}
             path={p.path}
             wrap={wrap}
             drawAll

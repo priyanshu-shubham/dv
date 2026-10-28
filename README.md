@@ -14,6 +14,8 @@ browser - a phone's too.
   their permission prompts are answered in the page. A plan comes up for
   approval with its lines open to comments. A message starting with `!` runs
   in your shell, as in the terminal, and the agent is sent what it printed.
+  A reply can show a picture, video, PDF or a web page the agent made, live
+  in place.
 
 Run `dv` in a git repository and it prints a URL. Comments are kept in a file
 inside the repository that git never sees. Outside git, the same page opens on
@@ -142,6 +144,11 @@ message is the title and the rest is Markdown under it; `-p high|medium|low`
 sets the priority and `-l a,b` the labels. From the page a note can be sent
 to a session's message box. See `dv note -h`.
 
+Beside them, **Pad** is a scratch pad of your own: free text, saved as you
+type, and the same in every folder and on every device. The header's pad
+button or Alt+P opens it from anywhere, the message box too, and Alt+P again
+goes back to where you were; on a phone, a session's bar has a button for it.
+
 ## What dv keeps, and where
 
 In the repository, in `.dv/` at its root:
@@ -165,7 +172,7 @@ in `.dv/`.
 
 In your config folder (`~/.config/dv` on Linux): `prefs.json`, the settings that
 follow you to every repository and device - theme, code colours, sidebar side,
-context, Markdown previews, whether added-to sessions start temporary - and
+context, Markdown previews, whether added-to sessions start temporary, the pad - and
 `hub.json`, the hub's folders. What suits one
 screen - split or unified, wrapping, panel widths, desktop notifications - stays
 in the browser.
@@ -214,6 +221,14 @@ on a phone. It knows Go, JavaScript and TypeScript, Python, Rust, Ruby, Java,
 Kotlin, Scala, C#, C, C++, Objective-C, PHP, shell, SQL, Protocol Buffers,
 Terraform and HCL, CSS, Elixir, Lua and Swift, plus Makefile targets and
 Markdown headings.
+
+**Files in replies**: dv tells Claude and Codex that a line of `![title](path)`
+shows that file in the reply - a picture, video, sound, PDF or HTML page - and
+to make a page when something comes across better interactively than as text.
+The path is absolute or from the folder. A page runs as part of dv, loads what
+sits beside it by relative path, and reloads when the file changes. Text
+selected in it quotes in a reply as the agent's own does, with the file going
+along. **Show files in replies**, in Settings, stops telling them.
 
 **Outside git**, the file listing leaves out `node_modules`, `.venv`,
 `__pycache__`, `.cache` and version control's folders, and stops at 50,000

@@ -1,11 +1,12 @@
 // Picking lines by touch, in the phone app: held, a line is picked and the
 // lines down to the finger as it drags; tapped while picking, a line widens the
-// range to it. A bar over the screen, as Android's contextual bar is, says
-// what to do with them. The diff's own selection draws what is picked.
+// range to it. A bar floating at the foot, in reach of the thumb, says what to
+// do with them. The diff's own selection draws what is picked.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { codeHunks } from "../hunks.js";
 import { say } from "../Notices.jsx";
+import { cx } from "../util.js";
 import { useBack } from "./back.js";
 import { Icon } from "./icons.jsx";
 
@@ -20,9 +21,11 @@ let current = null; // the cancel of whichever diff is picking
 export const endPicking = () => current?.();
 
 // usePick follows the fingers on root, a diff's rows, while on. It returns
-// whether lines are being picked, and what ends that.
+// whether lines are being picked, what ends that, and whether the finger is
+// still dragging the range out.
 export function usePick(rootRef, on, selection, setSelection) {
   const [picking, setPicking] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const sel = useRef(selection);
   sel.current = selection;
   const mine = useRef(false);
@@ -75,6 +78,7 @@ export function usePick(rootRef, on, selection, setSelection) {
         navigator.vibrate?.(12);
         window.getSelection()?.removeAllRanges();
         hold.dragging = true;
+        setDragging(true);
         setPicking(true);
         setSelection({ side, start: no, end: no });
       }, HOLD_MS);
@@ -121,7 +125,10 @@ export function usePick(rootRef, on, selection, setSelection) {
       if (!h) return;
       clearTimeout(h.timer);
       // The lift after a hold would click whatever is under the finger.
-      if (h.dragging) return void e.preventDefault();
+      if (h.dragging) {
+        setDragging(false);
+        return void e.preventDefault();
+      }
       // A tap while picking widens the range to the line tapped.
       if (mine.current && sel.current) {
         e.preventDefault();
@@ -137,6 +144,7 @@ export function usePick(rootRef, on, selection, setSelection) {
     return () => {
       cancelAnimationFrame(scroll);
       if (hold) clearTimeout(hold.timer);
+      setDragging(false);
       root.removeEventListener("touchstart", onStart);
       root.removeEventListener("touchmove", onMove);
       root.removeEventListener("touchend", onEnd);
@@ -145,7 +153,7 @@ export function usePick(rootRef, on, selection, setSelection) {
     };
   }, [rootRef, on, setSelection]);
 
-  return [picking && !!selection, () => stop.current()];
+  return [picking && !!selection, () => stop.current(), dragging];
 }
 
 // hunkOf is the change a picked range is in: the run of changed lines holding
@@ -162,8 +170,10 @@ export function hunkOf(fd, { side, start }) {
 }
 
 // PickBar is what picked lines can be: commented on, added to the next
-// message, copied, or widened to their change.
-export function PickBar({ selection, lines, onHunk, onComment, onAttach, onClose }) {
+// message, copied, or widened to their change. atBox floats it over a
+// session's message box rather than the tabs; held puts it away while the
+// finger is still picking, where it would be under it.
+export function PickBar({ selection, lines, atBox, held, onHunk, onComment, onAttach, onClose }) {
   const n = selection.end - selection.start + 1;
   const copy = () =>
     navigator.clipboard?.writeText(lines.join("\n")).then(
@@ -171,22 +181,22 @@ export function PickBar({ selection, lines, onHunk, onComment, onAttach, onClose
       () => say("Could not copy"),
     );
   return createPortal(
-    <div className="p-pickbar" role="toolbar">
-      <button className="p-icon" onClick={onClose} aria-label="Done">
-        <Icon name="x" />
+    <div className={cx("p-pickbar", atBox && "at-box", held && "held")} role="toolbar">
+      <button className="p-icon small" onClick={onClose} aria-label="Done">
+        <Icon name="x" size={20} />
       </button>
       <span className="p-pickbar-title">{n === 1 ? `Line ${selection.start}` : `${n} lines`}</span>
       {onHunk && (
-        <button className="p-icon" onClick={onHunk} aria-label="The whole change">
-          <Icon name="hunk" />
+        <button className="p-icon small" onClick={onHunk} aria-label="The whole change">
+          <Icon name="hunk" size={20} />
         </button>
       )}
-      <button className="p-icon" onClick={copy} aria-label="Copy">
-        <Icon name="copy" />
+      <button className="p-icon small" onClick={copy} aria-label="Copy">
+        <Icon name="copy" size={20} />
       </button>
       {onAttach && (
-        <button className="p-icon" onClick={onAttach} aria-label="Add to your next message">
-          <Icon name="spark" />
+        <button className="p-icon small" onClick={onAttach} aria-label="Add to your next message">
+          <Icon name="spark" size={20} />
         </button>
       )}
       {onComment && (

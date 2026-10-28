@@ -9,6 +9,8 @@ package symindex
 import (
 	"bufio"
 	"bytes"
+	"maps"
+	"os"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -28,10 +30,12 @@ type Symbol struct {
 	Text string `json:"text"` // the defining source line, trimmed
 }
 
-// Lister supplies the files to index; *gitx.Repo satisfies it.
+// Lister supplies the files to index; *gitx.Repo satisfies it. Version
+// changes whenever any of them might have.
 type Lister interface {
 	TrackedFiles() ([]string, error)
 	SkippedDirs() []string
+	Version() (string, error)
 }
 
 // Index holds the symbol table and rebuilds it on demand.
@@ -41,13 +45,26 @@ type Index struct {
 
 	mu       sync.RWMutex
 	syms     []Symbol
-	files    int
+	stamps   map[string]stamp // every file read, as it was when read
+	version  string           // the Lister's Version the table is current with
+	gen      int              // bumped as a build or drop replaces the table
 	builtAt  time.Time
 	building bool
 	built    chan struct{} // closed as the build running ends
 	buildErr error
 	idle     *time.Timer // lets the table go once pages stop using it
+
+	catching sync.Mutex
+	caughtUp time.Time
 }
+
+// stamp is how a file is known to have changed since it was read.
+type stamp struct {
+	size int64
+	mod  time.Time
+}
+
+func stampOf(fi os.FileInfo) stamp { return stamp{fi.Size(), fi.ModTime()} }
 
 // idleAfter is how long the table is kept with no page using it. It is built
 // only when first looked in, so a folder open only for its agents, or never
@@ -68,7 +85,7 @@ type Status struct {
 func (ix *Index) Status() Status {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	s := Status{Symbols: len(ix.syms), Files: ix.files, Building: ix.building}
+	s := Status{Symbols: len(ix.syms), Files: len(ix.stamps), Building: ix.building}
 	if !ix.builtAt.IsZero() {
 		s.BuiltAt = ix.builtAt.Format(time.RFC3339)
 	}
@@ -90,13 +107,16 @@ func (ix *Index) Build() {
 	ix.building, ix.built = true, make(chan struct{})
 	ix.mu.Unlock()
 
-	syms, files, err := ix.scan()
+	// Taken first, so an edit during the scan reads as one after it.
+	version, _ := ix.lister.Version()
+	syms, stamps, err := ix.scan()
 
 	ix.mu.Lock()
 	ix.building = false
 	ix.buildErr = err
 	if err == nil {
-		ix.syms, ix.files, ix.builtAt = syms, files, time.Now()
+		ix.syms, ix.stamps, ix.version, ix.builtAt = syms, stamps, version, time.Now()
+		ix.gen++
 	}
 	close(ix.built)
 	ix.mu.Unlock()
@@ -118,8 +138,9 @@ func (ix *Index) Use() {
 	}
 }
 
-// Ready waits for the table, built now if it has not been, for a question
-// that needs it answered in full.
+// Ready waits for the table, built now if it has not been and otherwise
+// caught up with the files changed since, for a question that needs it
+// answered in full.
 func (ix *Index) Ready() {
 	ix.Use()
 	ix.mu.RLock()
@@ -127,7 +148,89 @@ func (ix *Index) Ready() {
 	ix.mu.RUnlock()
 	if !built {
 		ix.Build()
+		return
 	}
+	ix.catchUp()
+}
+
+// recheckAfter spares the palette, which asks on every pause in typing, a
+// git status each time.
+const recheckAfter = time.Second
+
+// catchUp rereads the files that changed since they were read, and drops
+// those gone. Agents edit while the reader reads, and a line remembered from
+// before an edit lands on whatever has since moved there. Files are only
+// looked over once the Version says something moved.
+func (ix *Index) catchUp() {
+	ix.catching.Lock()
+	defer ix.catching.Unlock()
+	if time.Since(ix.caughtUp) < recheckAfter {
+		return
+	}
+	ix.caughtUp = time.Now()
+	ix.mu.RLock()
+	known, gen, was := ix.stamps, ix.gen, ix.version
+	ix.mu.RUnlock()
+	version, err := ix.lister.Version()
+	if err == nil && version == was {
+		return
+	}
+
+	paths, err := ix.lister.TrackedFiles()
+	if err != nil {
+		return
+	}
+	listed := make(map[string]bool, len(paths))
+	changed := map[string]stamp{}
+	for _, p := range paths {
+		if skipPath(p) || langFor(p) == nil {
+			continue
+		}
+		fi, err := os.Stat(filepath.Join(ix.root, p))
+		if err != nil {
+			continue
+		}
+		listed[p] = true
+		if st := stampOf(fi); known[p] != st {
+			changed[p] = st
+		}
+	}
+	gone := false
+	for p := range known {
+		gone = gone || !listed[p]
+	}
+
+	var fresh []Symbol
+	for p := range changed {
+		if b, err := gitx.ReadTextFile(filepath.Join(ix.root, p), maxIndexedBytes); err == nil {
+			fresh = append(fresh, scanFile(p, b, langFor(p))...)
+		}
+	}
+
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	if ix.gen != gen {
+		return // a build or drop since has a table of its own
+	}
+	ix.version = version
+	if len(changed) == 0 && !gone {
+		return
+	}
+	kept := make([]Symbol, 0, len(ix.syms))
+	for _, s := range ix.syms {
+		if _, redone := changed[s.File]; listed[s.File] && !redone {
+			kept = append(kept, s)
+		}
+	}
+	stamps := make(map[string]stamp, len(listed))
+	for p := range listed {
+		if st, ok := changed[p]; ok {
+			stamps[p] = st
+		} else {
+			stamps[p] = known[p]
+		}
+	}
+	ix.syms, ix.stamps = merge(kept, sortSymbols(fresh)), stamps
 }
 
 // drop lets the table go, and hands its memory back to the system now rather
@@ -139,7 +242,8 @@ func (ix *Index) drop() {
 		ix.mu.Unlock()
 		return
 	}
-	ix.syms, ix.files, ix.builtAt = nil, 0, time.Time{}
+	ix.syms, ix.stamps, ix.builtAt = nil, nil, time.Time{}
+	ix.gen++
 	ix.mu.Unlock()
 	debug.FreeOSMemory()
 }
@@ -157,24 +261,12 @@ func (ix *Index) Close() {
 // BuildAsync kicks off a build without blocking the request that triggered it.
 func (ix *Index) BuildAsync() { go ix.Build() }
 
-// EnsureFresh rebuilds in the background when the index has gone stale, so a
-// long-lived server keeps up with edits without watching the filesystem.
-func (ix *Index) EnsureFresh(maxAge time.Duration) {
-	ix.mu.RLock()
-	stale := ix.builtAt.IsZero() || time.Since(ix.builtAt) > maxAge
-	busy := ix.building
-	ix.mu.RUnlock()
-	if stale && !busy {
-		ix.BuildAsync()
-	}
-}
-
 const maxIndexedBytes = 2 << 20
 
-func (ix *Index) scan() ([]Symbol, int, error) {
+func (ix *Index) scan() ([]Symbol, map[string]stamp, error) {
 	paths, err := ix.lister.TrackedFiles()
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	type job struct{ path string }
@@ -182,7 +274,7 @@ func (ix *Index) scan() ([]Symbol, int, error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var all []Symbol
-	scanned := 0
+	stamps := map[string]stamp{}
 
 	workers := 8
 	for i := 0; i < workers; i++ {
@@ -190,22 +282,29 @@ func (ix *Index) scan() ([]Symbol, int, error) {
 		go func() {
 			defer wg.Done()
 			var local []Symbol
-			n := 0
+			seen := map[string]stamp{}
 			for j := range jobs {
 				l := langFor(j.path)
 				if l == nil {
 					continue
 				}
-				b, err := gitx.ReadTextFile(filepath.Join(ix.root, j.path), maxIndexedBytes)
+				// Stamped before it is read: an edit landing in between then
+				// shows as a change, and is read again.
+				full := filepath.Join(ix.root, j.path)
+				fi, err := os.Stat(full)
 				if err != nil {
 					continue
 				}
-				n++
+				seen[j.path] = stampOf(fi)
+				b, err := gitx.ReadTextFile(full, maxIndexedBytes)
+				if err != nil {
+					continue
+				}
 				local = append(local, scanFile(j.path, b, l)...)
 			}
 			mu.Lock()
 			all = append(all, local...)
-			scanned += n
+			maps.Copy(stamps, seen)
 			mu.Unlock()
 		}()
 	}
@@ -217,17 +316,36 @@ func (ix *Index) scan() ([]Symbol, int, error) {
 	}
 	close(jobs)
 	wg.Wait()
+	return sortSymbols(all), stamps, nil
+}
 
-	sort.Slice(all, func(i, j int) bool {
-		if all[i].Name != all[j].Name {
-			return all[i].Name < all[j].Name
+func before(a, b Symbol) bool {
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	if a.File != b.File {
+		return a.File < b.File
+	}
+	return a.Line < b.Line
+}
+
+func sortSymbols(all []Symbol) []Symbol {
+	sort.Slice(all, func(i, j int) bool { return before(all[i], all[j]) })
+	return all
+}
+
+// merge joins two sorted tables, which a few changed files' symbols join the
+// rest's without sorting the whole table again.
+func merge(a, b []Symbol) []Symbol {
+	out := make([]Symbol, 0, len(a)+len(b))
+	for len(a) > 0 && len(b) > 0 {
+		if before(b[0], a[0]) {
+			out, b = append(out, b[0]), b[1:]
+		} else {
+			out, a = append(out, a[0]), a[1:]
 		}
-		if all[i].File != all[j].File {
-			return all[i].File < all[j].File
-		}
-		return all[i].Line < all[j].Line
-	})
-	return all, scanned, nil
+	}
+	return append(append(out, a...), b...)
 }
 
 func scanFile(path string, content []byte, l *lang) []Symbol {

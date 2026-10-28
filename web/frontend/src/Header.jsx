@@ -4,7 +4,7 @@ import { boot } from "./boot.js";
 import { blockedNote, branchRows, fetchNote, rowHint, rowLabel, switchDone, useBranchChoices } from "./Branches.jsx";
 import { cx, modKey, useDismiss } from "./util.js";
 import {
-  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconPin, IconSearch, IconSettings, IconUndo,
+  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconPad, IconPin, IconSearch, IconSettings, IconUndo,
 } from "./icons.jsx";
 
 const PR_MS = 60000;
@@ -158,7 +158,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, update, pr, onActions, onCloseTask,
+  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask,
 }) {
   const agent = mode === "agent";
   return (
@@ -215,6 +215,9 @@ export default function Header({
       >
         <IconComment size={14} />
         {comments > 0 && <span className="comments-count">{comments}</span>}
+      </button>
+      <button className={cx("icon", padOn && "on")} aria-pressed={padOn} onClick={onPad} title="Pad (Alt+P)">
+        <IconPad size={14} />
       </button>
       <button className="icon" onClick={onActions} title="Actions (Alt+A)">
         <IconBolt size={14} />

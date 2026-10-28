@@ -515,10 +515,12 @@ export function DiffBody({
   }, [onStartComment, onSymbol, path]);
 
   // In the phone app a finger picks lines instead, and a bar acts on them.
-  const [picking, endPick] = usePick(rootRef, useMedia(PHONE_APP) && !!setSelection, selection, setSelection);
+  const [picking, endPick, dragging] = usePick(rootRef, useMedia(PHONE_APP) && !!setSelection, selection, setSelection);
   const pickBar = picking && (
     <PickBar
       selection={selection}
+      atBox={!!rootRef.current?.closest(".agent-scroll, .prompt-body")}
+      held={dragging}
       lines={(selection.side === "old" ? fd.oldLines : fd.newLines).slice(selection.start - 1, selection.end)}
       onHunk={(() => {
         const h = hunkOf(fd, selection);

@@ -27,6 +27,9 @@ type codexSide struct {
 	broker *permit.Broker
 	saved  *store.Sessions
 	client *codex.Client
+	// instructions is what dv adds to a thread's developer instructions, given
+	// at each start and resume.
+	instructions func() string
 
 	mu        sync.Mutex
 	threads   map[string]*codexThread
@@ -266,7 +269,7 @@ func (c *codexSide) create() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	var r threadResponse
-	if err := c.client.Call(ctx, "thread/start", map[string]any{"cwd": c.root}, &r); err != nil {
+	if err := c.client.Call(ctx, "thread/start", c.withInstructions(map[string]any{"cwd": c.root}), &r); err != nil {
 		return "", err
 	}
 	t := c.thread(r.Thread.ID)
@@ -284,6 +287,15 @@ func (c *codexSide) create() (string, error) {
 		return "", err
 	}
 	return t.id, nil
+}
+
+func (c *codexSide) withInstructions(params map[string]any) map[string]any {
+	if c.instructions != nil {
+		if s := c.instructions(); s != "" {
+			params["developerInstructions"] = s
+		}
+	}
+	return params
 }
 
 // optionsFor is how long what a session starts with stands before it is asked again.
