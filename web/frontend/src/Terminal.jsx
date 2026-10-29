@@ -189,7 +189,7 @@ export const leavesArrows = (el) => {
   return !!term && !ownsKeys(term);
 };
 
-export default function TerminalView({ terms, shownId, active, theme, focus, onNew }) {
+export default function TerminalView({ terms, shownId, active, theme, focus, copyOnSelect, onNew }) {
   const [xterm, setXterm] = useState(null);
   useEffect(() => {
     loadXterm().then(setXterm, (e) => say("Could not load the terminal", e.message));
@@ -201,7 +201,10 @@ export default function TerminalView({ terms, shownId, active, theme, focus, onN
   const open = terms ? terms.filter((t) => opened.has(t.id)) : [];
   return (
     <div className="term-view" hidden={!active}>
-      {xterm && open.map((t) => <TermPane key={t.id} id={t.id} xterm={xterm} shown={t.id === shownId} active={active} theme={theme} focus={focus} />)}
+      {xterm &&
+        open.map((t) => (
+          <TermPane key={t.id} id={t.id} xterm={xterm} shown={t.id === shownId} active={active} theme={theme} focus={focus} copyOnSelect={copyOnSelect} />
+        ))}
       {terms?.length === 0 && (
         <div className="term-empty">
           <button className="btn" onClick={onNew}>
@@ -214,12 +217,14 @@ export default function TerminalView({ terms, shownId, active, theme, focus, onN
   );
 }
 
-function TermPane({ id, xterm, shown, active, theme, focus }) {
+function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
   const box = useRef(null);
   const live = useRef(null); // { term, fit, link }
   const visible = shown && active;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const copyOnSelectRef = useRef(copyOnSelect);
+  copyOnSelectRef.current = copyOnSelect;
 
   useEffect(() => {
     const term = new xterm.Terminal({
@@ -236,6 +241,12 @@ function TermPane({ id, xterm, shown, active, theme, focus }) {
     // What a program copies goes to this device's clipboard, as tmux's copy
     // mode sends it; asked for the clipboard, a program is told it is empty.
     term.loadAddon(new xterm.ClipboardAddon(undefined, { readText: () => "", writeText: (_, text) => copyText(text).catch(() => {}) }));
+    // xterm reports a mouse selection once, as the button is let go, so a drag
+    // copies once rather than at every step, and still within the gesture the
+    // browser wants for writing to the clipboard.
+    term.onSelectionChange(() => {
+      if (copyOnSelectRef.current && term.hasSelection()) copyText(term.getSelection()).catch(() => {});
+    });
     term.attachCustomKeyEventHandler((e) => {
       if (dvKey(e) || (shiftArrow(e) && !ownsKeys(term))) return false;
       // A Mac copies and pastes with Cmd, which the terminal leaves be.

@@ -798,7 +798,7 @@ const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
 // keys to toggle the diff with (keys false). Its tabs are its sections, and
 // actions, a folder page's, a tab of their own; tab is the one it opens on.
 export function SettingsOverlay({
-  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, phoneApp, notices, onNotices, hooks, onHooks, settings, onChange, onClose, keys = true,
+  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, phoneApp, notices, onNotices, hooks, onHooks, terminal, settings, onChange, onClose, keys = true,
   working = 0,
   update,
   actions,
@@ -816,6 +816,7 @@ export function SettingsOverlay({
     ["diff", "Diff"],
     ["notifications", "Notifications"],
     ["agent", "Agent"],
+    ...(terminal ? [["terminal", "Terminal"]] : []),
     ...(ask ? [["ask", "Ask"]] : []),
     ...(actions ? [["actions", "Actions"]] : []),
     ["server", "Server"],
@@ -995,6 +996,15 @@ export function SettingsOverlay({
               choices={OFF_ON}
             />
           </>
+        )}
+        {tab === "terminal" && (
+          <Setting
+            label="Copy on select"
+            note={`Text selected in a terminal goes to the clipboard as you let go of the mouse, without ${isMac ? "Cmd" : "Ctrl"}+C.`}
+            value={settings.copyOnSelect !== false}
+            onPick={(on) => onChange({ copyOnSelect: on ? undefined : false })}
+            choices={OFF_ON}
+          />
         )}
         {tab === "ask" && ask}
         {tab === "actions" && actions}

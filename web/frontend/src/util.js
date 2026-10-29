@@ -242,6 +242,7 @@ export function visualLength(line) {
 // the text is selected and copied the old way.
 export async function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const back = document.activeElement; // a terminal copying on select is still typed in
   const el = document.createElement("textarea");
   el.value = text;
   el.setAttribute("readonly", "");
@@ -250,6 +251,7 @@ export async function copyText(text) {
   el.select();
   const ok = document.execCommand("copy");
   el.remove();
+  back?.focus();
   if (!ok) throw new Error("The browser would not copy it.");
 }
 

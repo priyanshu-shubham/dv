@@ -2435,6 +2435,7 @@ export default function App() {
           onNotices={pickDesktopNotices}
           hooks={agent.available ? agent.hooks : null}
           onHooks={pickHooks}
+          terminal={modes.includes("terminal") && !phoneApp}
           settings={settings}
           onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onClose={closeOverlay}
@@ -2607,7 +2608,17 @@ export default function App() {
         </div>
 
         {agentVisited && <AgentView {...agentProps} active={mode === "agent"} />}
-        {termVisited && <TerminalView terms={terms} shownId={termId} active={mode === "terminal"} theme={theme} focus={termFocus} onNew={newTerminal} />}
+        {termVisited && (
+          <TerminalView
+            terms={terms}
+            shownId={termId}
+            active={mode === "terminal"}
+            theme={theme}
+            focus={termFocus}
+            copyOnSelect={settings.copyOnSelect !== false}
+            onNew={newTerminal}
+          />
+        )}
         {showComments && <CommentsPanel {...commentsProps} />}
       </div>
 
