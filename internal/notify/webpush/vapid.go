@@ -59,7 +59,9 @@ func (p *Push) authorization(v *vapid, endpoint string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	t, ok := p.tokens[audience]
-	if now := time.Now(); !ok || t.by != v || now.After(t.until.Add(-time.Hour)) {
+	// By the wall clock, as exp is: Go's monotonic one stops while a Mac
+	// sleeps, so overnight a token ran out that it still had hours left on.
+	if now := time.Now().Round(0); !ok || t.by != v || now.After(t.until.Add(-time.Hour)) {
 		t = token{until: now.Add(tokenLife), by: v}
 		if t.jwt, err = sign(v.key, audience, t.until); err != nil {
 			return "", err

@@ -158,6 +158,9 @@ func TestVAPID(t *testing.T) {
 	if again, _ := p.authorization(v, "https://fcm.googleapis.com/other"); again != header {
 		t.Fatal("a push service's token was made again")
 	}
+	if u := p.tokens["https://fcm.googleapis.com"].until; u != u.Round(0) {
+		t.Fatalf("a token's end is on the monotonic clock: %v", u)
+	}
 
 	// Kept sealed, for the user alone, and the same key to another dv.
 	b, _ := os.ReadFile(p.path())
