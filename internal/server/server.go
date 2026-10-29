@@ -27,6 +27,7 @@ import (
 	"dv/internal/permit"
 	"dv/internal/store"
 	"dv/internal/symindex"
+	"dv/internal/term"
 	"dv/internal/update"
 )
 
@@ -79,6 +80,7 @@ type Server struct {
 	permit *permit.Broker
 	agent  *agent.Manager
 	saved  *store.Sessions // what dv keeps of the sessions, the agent's too
+	terms  *term.Manager
 
 	notices     *notify.Folder
 	stopNotices context.CancelFunc
@@ -131,12 +133,14 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	s := &Server{
 		repo: repo, store: st, viewed: vw, notes: notes, prefs: prefs, user: user, index: ix,
 		permit: broker, agent: agent.New(repo.Root, broker, sessions), saved: sessions, notices: notices,
-		stopNotices: func() {},
+		terms: term.New(repo.Root), stopNotices: func() {},
 	}
 	s.agent.Suggests = PromptSuggestions(user)
 	s.agent.Instructions = AgentInstructions(user)
 	s.agent.CloseIdle = CloseIdleAfter(user)
 	s.agent.Unasked = UnaskedEdits(user)
+	// Before the page can ask, which would open a fresh terminal in their place.
+	s.terms.Restore()
 	if notices != nil {
 		notices.Serve(talk{s})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -167,8 +171,9 @@ func (s *Server) Repo() *gitx.Repo { return s.repo }
 // CommentsPath is the file the review's comments are written to.
 func (s *Server) CommentsPath() string { return s.store.Path() }
 
-// Close stops the Claude Code sessions dv is running.
+// Close stops the Claude Code sessions dv is running, and its terminals.
 func (s *Server) Close() {
+	s.terms.Close()
 	s.stopCommands()
 	s.stopNotices()
 	if s.notices != nil {
@@ -217,9 +222,9 @@ func (s *Server) Live() Live { return Live{Sessions: s.agent.Activity(), Request
 
 // InUse is whether anything goes on in the folder that letting it go would
 // stop or miss: a session running, here or in a terminal, a request waiting,
-// or an action's command.
+// an action's command, or a shell in the Terminal view.
 func (s *Server) InUse() bool {
-	if s.commandsRunning() {
+	if s.commandsRunning() || s.terms.Running() > 0 {
 		return true
 	}
 	for _, a := range s.agent.Activity() {
@@ -343,6 +348,14 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("GET /api/agent/sessions/{id}/tools/{tool}/live", Guarded(s.handleAgentTaskOutput))
 	mux.HandleFunc("GET /api/agent/sessions/{id}/agents/{tool}/events", Guarded(s.handleAgentSubagentEvents))
 
+	mux.HandleFunc("GET /api/terminals", Guarded(s.handleTerminals))
+	mux.HandleFunc("POST /api/terminals", Guarded(s.handleNewTerminal))
+	mux.HandleFunc("PATCH /api/terminals/{id}", Guarded(s.handleRenameTerminal))
+	mux.HandleFunc("DELETE /api/terminals/{id}", Guarded(s.handleCloseTerminal))
+	mux.HandleFunc("POST /api/terminals/{id}/start", Guarded(s.handleRestartTerminal))
+	mux.HandleFunc("POST /api/terminals/{id}/ticket", Guarded(s.handleTerminalTicket))
+	mux.HandleFunc("GET /api/terminals/{id}/attach", Guarded(s.handleAttachTerminal))
+
 	mux.Handle("GET /static/", Static())
 
 	// Every other path renders the SPA shell; the client owns routing.
@@ -389,10 +402,10 @@ var binaryStamp = func() string {
 
 func thisRun() Run { return Run{started, Version, binaryStamp, assetVersion} }
 
-// HandleRestart says which run this is, and on POST restarts, once the binary
-// installed has shown in a trial that it starts; if not, this dv keeps
-// running. It is the whole process's, a hub's folders and all, so a hub
-// serves it at its root too.
+// HandleRestart says which run this is, and what in the Terminal view a
+// restart would stop; and on POST restarts, once the binary installed has
+// shown in a trial that it starts; if not, this dv keeps running. It is the
+// whole process's, a hub's folders and all, so a hub serves it at its root too.
 func HandleRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		if err := update.Try(r.Context(), ""); err != nil {
@@ -401,7 +414,10 @@ func HandleRestart(w http.ResponseWriter, r *http.Request) {
 		}
 		restart()
 	}
-	writeJSON(w, http.StatusOK, thisRun())
+	writeJSON(w, http.StatusOK, struct {
+		Run
+		Terminals int `json:"terminals,omitempty"` // running a command
+	}{thisRun(), term.Busy()})
 }
 
 func restart() {

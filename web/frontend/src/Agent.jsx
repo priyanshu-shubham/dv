@@ -440,7 +440,7 @@ const sameModel = (a, b) => !!a && !!b && a.replace("[1m]", "") === b.replace("[
 
 // SessionName is a session's name on its card, renamed by double-clicking it
 // (the terminal's /rename). A session a terminal runs is its to rename.
-function SessionName({ title, hint, onRename }) {
+export function SessionName({ title, hint, onRename }) {
   const [draft, setDraft] = useState(null);
   if (draft === null) {
     return (

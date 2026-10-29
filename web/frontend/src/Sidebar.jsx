@@ -4,6 +4,7 @@ import { ancestorsOf, buildTree, dirPaths, ignoredDirs, visibleRows } from "./tr
 import { AttachButton, ThreadList } from "./Threads.jsx";
 import { Notes, openNotes, Pad } from "./Notes.jsx";
 import { SessionList } from "./Agent.jsx";
+import { TerminalList } from "./Terminal.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
   IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFilter, IconX,
@@ -17,11 +18,11 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 // The left rail: the mode, over what it lists. In the diff that is the changed
 // files; in Code mode it is the whole repository, with changed files marked
 // as they are in the diff. In Agent mode the tree's place is taken by the
-// sessions.
+// sessions, and in Terminal by the terminals.
 export default function Sidebar({
   meta, pr, right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
-  filtersPaused, onPauseFilters, onReset, agent, onWidth, modes, onMode, attached, uncommitted,
+  filtersPaused, onPauseFilters, onReset, agent, terminal, onWidth, modes, onMode, attached, uncommitted,
 }) {
   const code = mode === "code";
   const [filter, setFilter] = useState("");
@@ -88,7 +89,7 @@ export default function Sidebar({
   // folder, and a button apiece for a folder of 40,000 files took seconds to
   // lay out. Rows are all one height, which the stylesheet sets.
   const [win, setWin] = useState({ top: 0, height: 0, row: 24 });
-  const listMounted = mode !== "agent";
+  const listMounted = mode !== "agent" && mode !== "terminal";
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -187,6 +188,8 @@ export default function Sidebar({
       </div>
       {mode === "agent" ? (
         <SessionList {...agent} />
+      ) : mode === "terminal" ? (
+        <TerminalList {...terminal} />
       ) : (
         <>
           <div className="sidebar-filter">

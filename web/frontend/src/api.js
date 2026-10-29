@@ -16,7 +16,7 @@ async function req(path, opts = {}, at = base) {
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error(data?.error || `${res.status} ${res.statusText}`);
+  if (!res.ok) throw Object.assign(new Error(data?.error || `${res.status} ${res.statusText}`), { status: res.status });
   return data;
 }
 
@@ -381,4 +381,20 @@ export const api = {
   hubMakeDir: (into, name) => req("/api/hub/dirs", { method: "POST", body: JSON.stringify({ in: into, name }) }),
   hubClone: (source, into, name) => req("/api/hub/clones", { method: "POST", body: JSON.stringify({ source, into, name }) }),
   hubDismissJob: (id) => req(`/api/hub/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // terminals: { terminals: [{ id, name, named, dir, busy, command, since, output, ended, exit, tmux }],
+  // tmux: [{ name, flags, dir, here, windows, attached, activity }] }, the sessions no terminal shows.
+  terminals: () => req("/api/terminals"),
+  // newTerminal opens one, attached to a tmux session given one of the list's.
+  newTerminal: (session) =>
+    req("/api/terminals", { method: "POST", body: JSON.stringify(session ? { tmux: { session: session.name, flags: session.flags } } : {}) }),
+  renameTerminal: (id, name) => req(`/api/terminals/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  closeTerminal: (id) => req(`/api/terminals/${id}`, { method: "DELETE" }),
+  // restartTerminal starts a shell again in one whose shell has exited.
+  restartTerminal: (id) => req(`/api/terminals/${id}/start`, { method: "POST", body: "{}" }),
+  // terminalSocket is where to attach to a terminal, with a ticket good for one go.
+  terminalSocket: async (id) => {
+    const { ticket } = await req(`/api/terminals/${id}/ticket`, { method: "POST", body: "{}" });
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${base}/api/terminals/${id}/attach?ticket=${ticket}`;
+  },
 };

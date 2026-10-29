@@ -184,7 +184,7 @@ export default function FolderSwitcher({ mode }) {
       }
       if (!e.shiftKey || e.altKey || (e.metaKey && !isMac)) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod && (mode === "agent" || isTyping(e.target) || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])"))) return;
+      if (!mod && (mode === "agent" || mode === "terminal" || isTyping(e.target) || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])"))) return;
       e.preventDefault();
       e.stopPropagation();
       const started = { hold: e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "Shift", at: step, list: null, all: null, released: false };

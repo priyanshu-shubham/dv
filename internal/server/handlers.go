@@ -16,6 +16,7 @@ import (
 	"dv/internal/gitx"
 	"dv/internal/store"
 	"dv/internal/symindex"
+	"dv/internal/term"
 )
 
 // scopeFromRequest reads the scope the client is viewing. Callers get the
@@ -50,6 +51,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"commentsPath":  s.store.Path(),
 		"symbolStatus":  s.index.Status(),
 		"task":          s.task,
+		"terminal":      term.Available() == nil,
 	})
 }
 

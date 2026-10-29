@@ -7,7 +7,7 @@ import { CONTEXT_LINES } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
-import { cx, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
+import { cx, isMac, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
 import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
@@ -1507,11 +1507,17 @@ function UpdateCheck({ settings, onChange }) {
 
 const RESTART_WAIT_MS = 60000;
 
-// okToRestart asks first when a restart would stop sessions at work: working
-// is how many sessions dv runs are busy.
-export function okToRestart(working) {
-  const which = working === 1 ? "A session is" : `${working} sessions are`;
-  return !working || confirm(`${which} still working. Restart dv and stop ${working === 1 ? "it" : "them"}?`);
+// okToRestart asks first when a restart would stop sessions at work, or
+// commands in terminals: working is how many sessions dv runs are busy.
+export async function okToRestart(working) {
+  const running = await api.run().then((r) => r.terminals || 0, () => 0);
+  const what = [
+    working && (working === 1 ? "a session is still working" : `${working} sessions are still working`),
+    running && (running === 1 ? "a terminal is running a command" : `${running} terminals are running commands`),
+  ].filter(Boolean);
+  if (!what.length) return true;
+  const said = what.join(", and ");
+  return confirm(`${said[0].toUpperCase()}${said.slice(1)}. Restart dv and stop ${working + running === 1 ? "it" : "them"}?`);
 }
 
 // restartDv runs dv again from the binary installed now, or first installs
@@ -1539,8 +1545,8 @@ export async function restartDv(version) {
 // RestartRow restarts dv, or updates it to update, the newer release.
 function RestartRow({ working, update }) {
   const [state, setState] = useState(""); // "", "restarting", "updating", or what went wrong
-  const go = (install) => () => {
-    if (!okToRestart(working)) return;
+  const go = (install) => async () => {
+    if (!(await okToRestart(working))) return;
     setState(install ? "updating" : "restarting");
     restartDv(install && update.latest).catch((e) => setState(e.message));
   };
@@ -1598,7 +1604,8 @@ export function Setting({ label, note, value, onPick, choices }) {
 
 export function HelpOverlay({ onClose }) {
   const keys = [
-    ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent (with text selected, they extend it)"],
+    ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent, Terminal (with text selected, they extend it; in a terminal, unless what runs there is full screen or uses the mouse)"],
+    ["Ctrl+`", "The Terminal view, from anywhere; from it, back to where you were"],
     [`${modKey}+P`, "Go to file"],
     [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
     ["Alt+A", `Run an action (also ${modKey}+Shift+P, where the browser allows it)`],
@@ -1636,7 +1643,9 @@ export function HelpOverlay({ onClose }) {
     ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],
     ["Shift+Tab", "In the Agent view's message box, change the permission mode"],
     ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty; with text selected, they extend it)"],
-    ["Alt+N", "In the Agent view, a new session (from the message box too)"],
+    ["Shift+↑ / Shift+↓", "In the Terminal view, the previous / next terminal (in a terminal, unless what runs there is full screen, like vim or less, or uses the mouse, like fzf)"],
+    ["Alt+N", "In the Agent view, a new session (from the message box too); in the Terminal view, a new terminal"],
+    [isMac ? "Cmd+C / Cmd+V" : "Ctrl+C / Ctrl+V", `In a terminal, copy what is selected${isMac ? "" : " (Ctrl+C with nothing selected interrupts; Ctrl+Shift+C always copies)"} / paste`],
     ["Esc", "Back a step, or close what is open"],
     ["Shift+Esc", "Close whatever is open"],
   ];

@@ -236,9 +236,10 @@ export default function Header({
   );
 }
 
-// ModeSwitch is Diff, Files and Agent, at the top of the sidebar whose list
-// each of them fills; a folder outside git has no Diff. Files is Code mode,
-// by its name in the code. Agent counts what waits to go with the next message.
+// ModeSwitch is Diff, Files, Agent and Terminal, at the top of the sidebar
+// whose list each of them fills; a folder outside git has no Diff, and dv on
+// Windows no Terminal. Files is Code mode, by its name in the code. Agent
+// counts what waits to go with the next message.
 export function ModeSwitch({ mode, modes, onMode, attached, uncommitted }) {
   const agent = mode === "agent";
   return (
@@ -271,6 +272,16 @@ export function ModeSwitch({ mode, modes, onMode, attached, uncommitted }) {
           </span>
         )}
       </button>
+      {modes.includes("terminal") && (
+        <button
+          className={cx(mode === "terminal" && "on")}
+          aria-pressed={mode === "terminal"}
+          onClick={() => onMode("terminal")}
+          title="Shells in this folder (Ctrl+` from anywhere; Shift+←/→ steps through the modes)"
+        >
+          Terminal
+        </button>
+      )}
     </div>
   );
 }

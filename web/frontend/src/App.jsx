@@ -11,6 +11,7 @@ import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction,
 import { BranchPalette } from "./Branches.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
+import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
 import { pushable, subscribe, usePush } from "./phone/push.js";
@@ -34,8 +35,8 @@ const NO_THREADS = [];
 const NO_ATTACHED = [];
 const NO_ATTACHED_BY = {};
 const NO_SETTINGS = {};
-const MODES = ["diff", "code", "agent"];
-const FOLDER_MODES = ["code", "agent"];
+const MODES = ["diff", "code", "agent", "terminal"];
+const FOLDER_MODES = ["code", "agent", "terminal"];
 const NO_FILTER = { include: "", exclude: "" };
 
 // The phone app's shell is its own chunk, fetched only by a phone; the parts
@@ -154,16 +155,23 @@ export default function App() {
   // forward: entries are { path, line, top, scroll }, scroll noted on leaving.
   // A folder outside git has nothing to diff, so it opens on its files.
   const folder = meta?.git === false;
-  const modes = folder ? FOLDER_MODES : MODES;
-  // The phone app's home is Agent.
+  const modes = useMemo(() => (folder ? FOLDER_MODES : MODES).filter((m) => m !== "terminal" || meta?.terminal), [folder, meta?.terminal]);
+  // The phone app's home is Agent, and it has no Terminal.
   const [modePicked, setMode] = usePersisted("mode", phoneApp ? "agent" : "diff", { folder: true });
-  const mode = folder && modePicked === "diff" ? "code" : modePicked;
+  const mode = folder && modePicked === "diff" ? "code" : phoneApp && modePicked === "terminal" ? "agent" : modePicked;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   // Once opened, the Agent view stays, hidden in the other modes like they are
   // in it: drawing a long conversation again takes a second.
   const [agentVisited, setAgentVisited] = useState(mode === "agent");
   if (mode === "agent" && !agentVisited) setAgentVisited(true);
+  // So does the Terminal view, which keeps the terminals it showed attached.
+  const [termVisited, setTermVisited] = useState(mode === "terminal");
+  if (mode === "terminal" && !termVisited) setTermVisited(true);
+  const [terms, loadTerms, tmuxSessions] = useTerminals(mode === "terminal");
+  const [termPicked, setTermId] = usePersisted("terminal", "", { folder: true });
+  const termId = terms?.some((t) => t.id === termPicked) ? termPicked : terms?.[0]?.id || "";
+  const [termFocus, setTermFocus] = useState(0);
   const codeRef = useRef(null);
   const [lastCode, setLastCode] = usePersisted("codePath", "", { folder: true });
   const [codeNav, setCodeNav] = useState(() => {
@@ -944,7 +952,7 @@ export default function App() {
   // in Code mode the browser's own find stays: those draw every line.
   useEffect(() => {
     const onKey = (e) => {
-      if (promptRef.current || document.querySelector(".backdrop") || modeRef.current === "agent") return;
+      if (promptRef.current || document.querySelector(".backdrop") || modeRef.current === "agent" || modeRef.current === "terminal") return;
       if (modeRef.current === "code" && codeRef.current?.querySelector(".md-preview")) return;
       if (isFindKey(e)) {
         e.preventDefault();
@@ -1001,7 +1009,7 @@ export default function App() {
     (next, at) => {
       const from = modeRef.current;
       if (next === from) return;
-      if (next === "agent" || from === "agent") return setMode(next);
+      if ([next, from].some((m) => m === "agent" || m === "terminal")) return setMode(next);
       const a = at || captureAnchor(from === "diff" ? scrollRef.current : codeRef.current);
       if (next === "code") {
         const path = a?.path || activePath;
@@ -1394,8 +1402,8 @@ export default function App() {
       id: "restart",
       name: "Restart dv",
       note: "Runs it again from the version installed · also in Settings",
-      run: () => {
-        if (!okToRestart(working)) return;
+      run: async () => {
+        if (!(await okToRestart(working))) return;
         say("Restarting dv", "The page reloads once it is back.");
         restartDv().catch((e) => say("Could not restart dv", e.message));
       },
@@ -1467,12 +1475,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openOverlay]);
   // Going to a file and searching work from a text box too, by the platform's
-  // own modifier only: on a Mac, Ctrl+P and Ctrl+K move the caret there. A
-  // comment's box seeds its search itself.
+  // own modifier only: on a Mac, Ctrl+P and Ctrl+K move the caret there, as
+  // they do in a terminal everywhere. A comment's box seeds its search itself.
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
-      if (!isTyping(t) || e.altKey || (isMac ? !e.metaKey : !e.ctrlKey)) return;
+      if (!isTyping(t) || e.altKey || (isMac ? !e.metaKey : !e.ctrlKey || t.closest(".term-view"))) return;
       if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
       if (isSearchKey(e)) {
         if (t.closest(".composer")) return;
@@ -1512,6 +1520,84 @@ export default function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [padShown, openPad, leavePad]);
+
+  // Given a tmux session, the terminal opens on it.
+  const newTerminal = useCallback(
+    (session) =>
+      api.newTerminal(session?.name ? session : null).then(
+        (t) => {
+          setTermId(t.id);
+          setTermFocus((n) => n + 1);
+          loadTerms();
+        },
+        (e) => say("Could not open a terminal", e.message),
+      ),
+    [setTermId, loadTerms],
+  );
+  const closeTerminal = useCallback(
+    (id) =>
+      api.closeTerminal(id).then(
+        () => (loadTerms(), setTermFocus((n) => n + 1)),
+        (e) => say("Could not close the terminal", e.message),
+      ),
+    [loadTerms],
+  );
+  const renameTerminal = useCallback((id, name) => api.renameTerminal(id, name).then(loadTerms, (e) => say("Could not rename the terminal", e.message)), [loadTerms]);
+  // Coming to the Terminal view with none open opens one, to type in at once.
+  useEffect(() => {
+    if (mode !== "terminal") return;
+    let live = true;
+    loadTerms().then((list) => live && list?.length === 0 && newTerminal());
+    return () => (live = false);
+  }, [mode === "terminal"]);
+  // Ctrl+`, as in VS Code, goes to the Terminal view from anywhere, and from
+  // it back to where the reader was.
+  const beforeTerm = useRef(null);
+  if (mode !== "terminal") beforeTerm.current = mode;
+  useEffect(() => {
+    if (!modes.includes("terminal")) return;
+    const onKey = (e) => {
+      if (e.code !== "Backquote" || !e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (modeRef.current !== "terminal") return switchMode("terminal");
+      switchMode(modes.includes(beforeTerm.current) ? beforeTerm.current : modes[0]);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [modes, switchMode]);
+  // Shift+Up and Down go through the terminals, as through the Agent view's
+  // sessions, from a terminal too unless its program keeps them.
+  useEffect(() => {
+    if (mode !== "terminal" || !terms?.length) return;
+    const onKey = (e) => {
+      if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      if (isTyping(e.target) && !leavesArrows(e.target)) return;
+      if (selecting() || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const i = terms.findIndex((t) => t.id === termId);
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setTermId(terms[i < 0 ? 0 : (i + step + terms.length) % terms.length].id);
+      setTermFocus((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [mode, terms, termId, setTermId]);
+  // Alt+N there opens another, from a terminal too.
+  useEffect(() => {
+    if (mode !== "terminal") return;
+    const onKey = (e) => {
+      if (e.code !== "KeyN" || !e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      newTerminal();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [mode, newTerminal]);
 
   // A notice's session, from its toast or a notification clicked.
   const openNoticed = (id) => {
@@ -1882,11 +1968,12 @@ export default function App() {
     const onKey = (e) => {
       const mod = e.metaKey || e.ctrlKey;
       // Round the modes in the order the sidebar has them. The Agent view's
-      // message box nearly always has focus, so an empty one lets these by.
-      // Selected text keeps them, as does an overlay, which has the page.
+      // message box nearly always has focus, so an empty one lets these by,
+      // as does a terminal whose program leaves them. Selected text keeps
+      // them, as does an overlay, which has the page.
       if (e.shiftKey && !mod && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         if (selecting() || document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
-        if (!isTyping(e.target) || (e.target.closest(".agent-composer") && !e.target.value)) {
+        if (!isTyping(e.target) || (e.target.closest(".agent-composer") && !e.target.value) || leavesArrows(e.target)) {
           e.preventDefault();
           const i = modes.indexOf(mode) + (e.key === "ArrowRight" ? 1 : -1);
           switchMode(modes[(i + modes.length) % modes.length]);
@@ -1914,6 +2001,7 @@ export default function App() {
       if (mod || e.altKey) return;
       // The Agent view has keys of its own; these few mean the same there.
       if (mode === "agent" && !["?", "u", "w"].includes(e.key)) return;
+      if (mode === "terminal" && e.key !== "?") return;
 
       // A step between files goes through the changed ones. In Code mode it
       // starts from the open file, which need not be one of them.
@@ -2496,6 +2584,17 @@ export default function App() {
             onClose: closeSession,
             onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
           }}
+          terminal={{
+            terms,
+            sessions: tmuxSessions,
+            activeId: termId,
+            folder: meta?.repo,
+            onSelect: (id) => (setTermId(id), setTermFocus((n) => n + 1)),
+            onNew: () => newTerminal(),
+            onAttach: newTerminal,
+            onClose: closeTerminal,
+            onRename: renameTerminal,
+          }}
           onWidth={setSideWidth}
         />
 
@@ -2508,6 +2607,7 @@ export default function App() {
         </div>
 
         {agentVisited && <AgentView {...agentProps} active={mode === "agent"} />}
+        {termVisited && <TerminalView terms={terms} shownId={termId} active={mode === "terminal"} theme={theme} focus={termFocus} onNew={newTerminal} />}
         {showComments && <CommentsPanel {...commentsProps} />}
       </div>
 

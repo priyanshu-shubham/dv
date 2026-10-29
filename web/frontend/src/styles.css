@@ -8,6 +8,7 @@
 @import "@fontsource-variable/jetbrains-mono/wght-italic.css";
 /* The phone app's look, all of it under html.phone. */
 @import "./phone/phone.css";
+@import "@xterm/xterm/css/xterm.css";
 
 /* Regions are told apart by shade, and lines are kept for the few edges a
    shade cannot draw. Four grounds: --bg is the editor and every list or well
@@ -742,9 +743,12 @@ button.headref:hover {
   box-shadow: inset 0 0 0 1px var(--border-soft);
 }
 
+/* Shared out evenly, so the padding only matters in a narrow sidebar, where
+   four modes need all the room there is. */
 .sidebar-modes .seg > button {
   flex: 1;
   height: 26px;
+  padding: 0 4px;
   border-radius: calc(var(--r-lg) - 2px);
   color: var(--fg-2);
 }
@@ -4558,6 +4562,55 @@ body.resizing * {
 
 .agent-pane[hidden] {
   display: none;
+}
+
+/* The Terminal view: the terminal shown fills it, inset as the diff's files are. */
+.term-view {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.term-view[hidden],
+.term-pane[hidden] {
+  display: none;
+}
+
+/* Its size is what the terminal is fitted to. */
+.term-pane {
+  position: absolute;
+  inset: 12px 4px 4px 12px;
+}
+
+.term-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18vh;
+  font-size: var(--fs-xs);
+}
+
+/* What a terminal runs, a line of it as typed. */
+.session-last.term-command {
+  -webkit-line-clamp: 1;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  overflow-wrap: normal;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.term-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-failed {
+  color: var(--del);
 }
 
 /* The Ask panel: a conversation docked in the side panel, spaced for its width. */

@@ -16,6 +16,13 @@ browser - a phone's too.
   in your shell, as in the terminal, and the agent is sent what it printed.
   A reply can show a picture, video, PDF or a web page the agent made, live
   in place.
+- **Terminal** - shells in the folder, listed with what each is running and
+  where. Ctrl+` brings it up from anywhere, and back. The shells are dv's, not
+  the page's: a reload, or the page on another device, finds them as they
+  were, and they end when closed, on `exit`, or when dv stops. A terminal on
+  a tmux session attaches to it again when dv next opens the folder, the
+  sidebar lists the sessions none shows, to open one, and what tmux or another
+  program copies reaches the browser's clipboard. Not on Windows yet.
 
 Run `dv` in a git repository and it prints a URL. Comments are kept in a file
 inside the repository that git never sees. Outside git, the same page opens on
@@ -98,8 +105,8 @@ that finishes, or wants an answer, is told of wherever you are: on another
 folder's page or on the hub's own, named by its folder.
 
 - `-host 0.0.0.0` reaches the hub from other devices on your network, where
-  **anyone who can reach the port can add folders, clone and run Claude or Codex
-  in them**.
+  **anyone who can reach the port can add folders, clone, run Claude or Codex
+  in them, and open a shell**.
   Over plain http from another device, browsers allow neither desktop
   notifications nor pasting a copied image; a tunnel with https gives both.
 - Clones use your own git credentials and never stop to ask for a password or a
