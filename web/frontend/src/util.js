@@ -328,6 +328,9 @@ export const LRM = "\u200e";
 // or Claude's "".
 export const agentName = (agent) => (agent === "codex" ? "Codex" : "Claude");
 
+// Only followed in dv: another process has it open and dv was not let in too.
+export const heldElsewhere = (s) => s?.running === "terminal" && !s.shared;
+
 // workingLabel says which agents are at work in a folder, from its hub status.
 export const workingLabel = (open) => (open.codex && open.claude ? "Claude and Codex are working" : `${open.codex ? "Codex" : "Claude"} is working`);
 

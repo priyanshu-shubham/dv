@@ -181,6 +181,18 @@ func (s *Server) handleAgentKeep(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleAgentShare(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	if err := s.agent.Share(id); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // StartKept starts the sessions kept running, once this dv is where Claude
 // Code's prompts go.
 func (s *Server) StartKept() { s.agent.StartKept() }

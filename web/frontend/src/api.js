@@ -235,6 +235,8 @@ export const api = {
   agentTemporary: (id, temporary) => req(`/api/agent/sessions/${id}/temporary`, { method: "POST", body: JSON.stringify({ temporary }) }),
   // A kept session is never stopped for being idle, and starts with dv.
   agentKeep: (id, keep) => req(`/api/agent/sessions/${id}/keep`, { method: "POST", body: JSON.stringify({ keep }) }),
+  // Lets dv talk to a session a terminal has open, until it closes there or here.
+  agentShare: (id) => req(`/api/agent/sessions/${id}/share`, { method: "POST", body: "{}" }),
 
   // agentEvents follows a session: each update carries the items new or changed
   // since the last (all of them when `reset`) and what the session is doing.

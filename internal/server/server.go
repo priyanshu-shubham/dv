@@ -325,6 +325,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/agent/sessions/{id}/temporary", Guarded(s.handleAgentTemporary))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/ask", Guarded(s.handleAgentAsk))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/keep", Guarded(s.handleAgentKeep))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/share", Guarded(s.handleAgentShare))
 	mux.HandleFunc("GET /api/agent/sessions/{id}/events", Guarded(s.handleAgentEvents))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/messages", Guarded(s.handleAgentSend))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/shell", Guarded(s.handleAgentShell))

@@ -15,7 +15,7 @@ import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
-import { agentName, cx, duration, isTyping, limitWindow, LOST_MS, LRM, modKey, PHONE_APP, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useLasting, useMedia } from "./util.js";
+import { agentName, cx, duration, heldElsewhere, isTyping, limitWindow, LOST_MS, LRM, modKey, PHONE_APP, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useLasting, useMedia } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
@@ -708,7 +708,8 @@ export default function AgentView({
   shown.current = { items, live };
 
   const running = live?.running || session?.running || "";
-  const readOnly = running === "terminal";
+  const shared = !!(live?.shared || session?.shared);
+  const readOnly = running === "terminal" && !shared;
   // Not known while dv is out of reach; the rest of live is only what it was.
   // A command run with ! holds the session as a turn does.
   const shellRunning = !!live?.shell && !live.shell.error && !live.shell.stopped;
@@ -1307,6 +1308,18 @@ export default function AgentView({
   };
   const kept = !!session?.kept;
   const toggleKept = () => api.agentKeep(id, !kept).then(onChanged, (e) => setError(e.message));
+  const share = () => {
+    const ask = "Talk to this session here as well as in its terminal? Neither sees what's said in the other. Closing it here leaves it to the terminal again.";
+    if (confirm(ask)) api.agentShare(id).then(onChanged, (e) => setError(e.message));
+  };
+  const shareLink = agentKind !== "codex" && (
+    <>
+      {" "}
+      <button className="link" onClick={share}>
+        Talk to it here anyway
+      </button>
+    </>
+  );
   // The models are the agent's own, so what was picked goes with the agent.
   const pickAgent = (kind) => {
     setPicks({});
@@ -2131,7 +2144,7 @@ export default function AgentView({
           )}
           {/* As on its card: what closing does depends on what runs it, and says so. */}
           {!docked && (
-            <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, agentKind)}>
+            <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, agentKind, shared)}>
               <IconX size={13} />
             </button>
           )}
@@ -2319,6 +2332,8 @@ export default function AgentView({
           <button className="link" onClick={() => onHooks(true)}>
             Add them
           </button>
+          {" ·"}
+          {shareLink}
         </div>
       ) : readOnly ? (
         <>
@@ -2332,6 +2347,7 @@ export default function AgentView({
             {agentKind === "codex"
               ? "This session is open in a terminal. dv follows it, but only the terminal can talk to it or answer its prompts."
               : "This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it."}
+            {shareLink}
           </div>
         </>
       ) : (
@@ -2722,7 +2738,10 @@ function TaskOutput({ session, call, item }) {
 }
 
 // closeHint says what closing a session does, which depends on what runs it.
-function closeHint(running, temporary, agent) {
+function closeHint(running, temporary, agent, shared) {
+  if (shared) {
+    return "Stop talking to this session in dv. Its terminal has it to itself again.";
+  }
   if (running === "terminal") {
     return "Stop following this session in dv. It keeps running in its terminal, which goes back to being the only place it asks for permission.";
   }
@@ -4363,12 +4382,12 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
             key={s.title}
             title={s.title || s.prompt || "New session"}
             hint={s.title || s.prompt || ""}
-            onRename={s.running !== "terminal" ? (t) => onRename(s.id, t) : null}
+            onRename={!heldElsewhere(s) ? (t) => onRename(s.id, t) : null}
           />
           {isOpen(s) && (
             <button
               className="session-close"
-              title={closeHint(s.running, s.temporary, s.agent)}
+              title={closeHint(s.running, s.temporary, s.agent, s.shared)}
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(s.id);

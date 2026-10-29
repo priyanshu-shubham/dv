@@ -41,6 +41,9 @@ type sessionsDoc struct {
 	// Picks are the model and effort picked for a Claude Code session, which
 	// its transcript does not keep for a resume to start on.
 	Picks map[string]Pick `json:"picks,omitempty"`
+	// Shared are sessions dv talks to though another process has them open,
+	// by that process's pid: one that opens it later has it to itself again.
+	Shared map[string]int `json:"shared,omitempty"`
 }
 
 // Pick is a session's model and effort, "" for the user's settings'.
@@ -311,6 +314,35 @@ func (s *Sessions) SetVia(id, via string) error {
 			s.doc.Via = map[string]string{}
 		}
 		s.doc.Via[id] = via
+	}
+	return s.file.save(s.doc)
+}
+
+// SharedWith is the pid of the process dv shares a session with, 0 for none.
+func (s *Sessions) SharedWith(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return s.doc.Shared[id]
+}
+
+// SetShared shares a session with process pid, or stops sharing it at 0.
+func (s *Sessions) SetShared(id string, pid int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	if s.doc.Shared[id] == pid {
+		return nil
+	}
+	if pid == 0 {
+		delete(s.doc.Shared, id)
+	} else {
+		if s.doc.Shared == nil {
+			s.doc.Shared = map[string]int{}
+		}
+		s.doc.Shared[id] = pid
 	}
 	return s.file.save(s.doc)
 }

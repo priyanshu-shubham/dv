@@ -53,7 +53,7 @@ func (m *Manager) Shell(id, uuid, command string) error {
 	if command == "" {
 		return errors.New("there is no command to run")
 	}
-	if _, elsewhere := m.running()[id]; elsewhere && !m.isCodex(id) {
+	if !m.isCodex(id) && m.elsewhere(id) {
 		return errors.New("this session is open in a terminal; dv follows it, but only the terminal can talk to it")
 	}
 	m.mu.Lock()

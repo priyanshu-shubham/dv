@@ -23,7 +23,7 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, OUTPUT_KEY, PHONE_APP, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
+import { agentName, cx, globMatcher, heldElsewhere, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, OUTPUT_KEY, PHONE_APP, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
@@ -1629,7 +1629,7 @@ export default function App() {
   // What is added from Diff and Code goes to a session that can be written to:
   // the one last looked at or picked, open or not, else the first open one,
   // else a new one. The open sessions come with the requests, in every mode.
-  const writable = (s) => s && s.running !== "terminal";
+  const writable = (s) => s && !heldElsewhere(s);
   useEffect(() => {
     if (agentId && agentId !== attachPick && writable(agent.sessions.find((s) => s.id === agentId))) setAttachPick(agentId);
   }, [agentId, agent.sessions, attachPick, setAttachPick]);

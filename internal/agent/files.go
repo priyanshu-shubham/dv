@@ -101,10 +101,10 @@ type running struct {
 	Status     string `json:"status"` // busy | idle
 }
 
-// runningSessions are the sessions some live Claude Code process has open, by
-// session id. A process that died without cleaning up leaves its file behind,
-// so each one's pid is checked.
-func runningSessions() map[string]running {
+// runningSessions are the sessions some live Claude Code process other than
+// skip's has open, by session id. A process that died without cleaning up
+// leaves its file behind, so each one's pid is checked.
+func runningSessions(skip map[int]bool) map[string]running {
 	cfg, err := permit.ConfigDir()
 	if err != nil {
 		return nil
@@ -114,7 +114,7 @@ func runningSessions() map[string]running {
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		var r running
-		if err != nil || json.Unmarshal(b, &r) != nil || r.SessionID == "" || !alive(r.PID) {
+		if err != nil || json.Unmarshal(b, &r) != nil || r.SessionID == "" || skip[r.PID] || !alive(r.PID) {
 			continue
 		}
 		out[r.SessionID] = r

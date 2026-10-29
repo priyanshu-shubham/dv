@@ -3,7 +3,7 @@
 // offers what else can be done to it; swiped aside, it closes.
 import { useRef, useState } from "react";
 import { AgentIcon } from "../icons.jsx";
-import { agentName, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
+import { agentName, heldElsewhere, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
 import { Row, Sheet, useLongPress } from "./Sheet.jsx";
 import { Marks } from "./Session.jsx";
@@ -110,7 +110,7 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
       {held && (
         <Sheet onClose={() => setHeld(null)}>
           <div className="p-preview">{held.title || held.prompt || "New session"}</div>
-          {held.running !== "terminal" && (
+          {!heldElsewhere(held) && (
             <Row
               icon="edit"
               title="Rename"

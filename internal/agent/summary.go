@@ -26,6 +26,8 @@ type Session struct {
 	Busy    bool   `json:"busy,omitempty"`
 	Status  string `json:"status,omitempty"` // "compacting", when dv runs it and it is
 	Open    bool   `json:"open"`
+	// Shared is talked to from dv though another process has it open.
+	Shared bool `json:"shared,omitempty"`
 	// Temporary leaves the list once nothing has it open.
 	Temporary bool `json:"temporary,omitempty"`
 	// Kept is never stopped for being idle, and starts with dv.

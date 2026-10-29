@@ -980,6 +980,51 @@ func TestANewSessionOutlivesARestartBeforeItsFirstMessage(t *testing.T) {
 	}
 }
 
+// A session a terminal has open is dv's to talk to only once shared, and only
+// with that terminal: one that opens it later has it to itself again.
+func TestASharedSessionIsSharedWithOneTerminal(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+	os.MkdirAll(filepath.Join(cfg, "sessions"), 0o755)
+	holdBy := func(pid int) {
+		b, _ := json.Marshal(running{PID: pid, SessionID: "s", Entrypoint: "cli", Status: "idle"})
+		os.WriteFile(filepath.Join(cfg, "sessions", "1.json"), b, 0o644)
+	}
+	holdBy(os.Getpid())
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	again := func() { m.liveAt = time.Time{} }
+
+	if _, err := m.procFor("s"); err == nil {
+		t.Fatal("talked to a terminal's session before it was shared")
+	}
+	if err := m.Share("s"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.procFor("s"); err != nil {
+		t.Fatalf("shared, still refused: %v", err)
+	}
+	if rows := m.Sessions(); len(rows) != 1 || !rows[0].Shared || rows[0].Running != "terminal" || !rows[0].Open {
+		t.Fatalf("the shared row: %+v", rows)
+	}
+	m.procs = map[string]*proc{}
+
+	holdBy(os.Getppid())
+	again()
+	if _, err := m.procFor("s"); err == nil {
+		t.Fatal("still shared with a terminal that opened it later")
+	}
+	holdBy(os.Getpid())
+	again()
+	m.SetOpen("s", false)
+	if _, err := m.procFor("s"); err == nil || saved.SharedWith("s") != 0 {
+		t.Fatal("still shared once closed")
+	}
+}
+
 // The effort picked for a session is what it resumes with after dv restarts:
 // Claude Code's transcript keeps no record of it.
 func TestAPickedEffortOutlivesARestart(t *testing.T) {

@@ -186,6 +186,7 @@ func (m *Manager) Sessions() []Session {
 		}
 		row.ID, row.Open = id, opened[id] > 0
 		row.Running, row.Busy = where(procs[id], live[id])
+		row.Shared = m.shared(id, live[id])
 		row.Temporary, row.Kept = slices.Contains(temporary, id), slices.Contains(kept, id)
 		if row.Temporary && !row.Open && row.Running == "" {
 			delete(procs, id)
@@ -251,6 +252,7 @@ type Activity struct {
 	Title   string    `json:"title,omitempty"`
 	Running string    `json:"running,omitempty"`
 	Busy    bool      `json:"busy,omitempty"`
+	Shared  bool      `json:"shared,omitempty"`
 	Last    string    `json:"last,omitempty"` // Claude's, when it spoke last
 	Updated time.Time `json:"updated"`
 }
@@ -277,6 +279,7 @@ func (m *Manager) Activity() []Activity {
 		}
 		a := Activity{ID: id}
 		a.Running, a.Busy = where(procs[id], live[id])
+		a.Shared = m.shared(id, live[id])
 		if path := files[id]; path != "" {
 			if row, ok := m.row(path); ok {
 				a.Title, a.Updated = cmp.Or(row.Title, row.Prompt), row.Updated
@@ -380,17 +383,54 @@ func (m *Manager) running() map[string]running {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if time.Since(m.liveAt) > time.Second {
-		m.live, m.liveAt = runningSessions(), time.Now()
-		// dv's own processes list themselves too; those are dv's, not a terminal's.
-		for id, p := range m.procs {
+		// dv's own processes list themselves too; those are dv's, not a
+		// terminal's, and leaving them out first keeps a terminal sharing one.
+		own := map[int]bool{}
+		for _, p := range m.procs {
 			p.mu.Lock()
-			if p.cmd != nil && p.cmd.Process != nil && m.live[id].PID == p.cmd.Process.Pid {
-				delete(m.live, id)
+			if p.cmd != nil && p.cmd.Process != nil {
+				own[p.cmd.Process.Pid] = true
 			}
 			p.mu.Unlock()
 		}
+		m.live, m.liveAt = runningSessions(own), time.Now()
 	}
 	return m.live
+}
+
+// elsewhere is whether another process has a session open that dv may not
+// talk to as well.
+func (m *Manager) elsewhere(id string) bool {
+	r, ok := m.running()[id]
+	return ok && m.saved.SharedWith(id) != r.PID
+}
+
+// shared is whether dv talks to a session another process has open too.
+func (m *Manager) shared(id string, r running) bool {
+	return r.SessionID != "" && m.saved.SharedWith(id) == r.PID
+}
+
+// Share lets dv talk to a session another process has open, until that
+// process ends or the session is closed here. Neither process sees what the
+// other says: the one that writes after the other branches the conversation,
+// and the page shows the branch written last.
+func (m *Manager) Share(id string) error {
+	if m.isCodex(id) {
+		return errors.New("Codex lets only one process write to a session")
+	}
+	r, ok := m.running()[id]
+	if !ok {
+		return nil
+	}
+	if _, err := m.saved.Set(id, true); err != nil {
+		return err
+	}
+	if err := m.saved.SetShared(id, r.PID); err != nil {
+		return err
+	}
+	m.signal(id, false)
+	m.broker.Notify()
+	return nil
 }
 
 // Create starts a new session in the repository with agent, "codex" or Claude
@@ -489,6 +529,9 @@ func (m *Manager) SetOpen(id string, open bool) error {
 	}
 	if !open {
 		if err := m.saved.SetKept(id, false); err != nil {
+			return err
+		}
+		if err := m.saved.SetShared(id, 0); err != nil {
 			return err
 		}
 	}
@@ -600,7 +643,7 @@ func (m *Manager) procFor(id string) (*proc, error) {
 	if !ok || !within(row.Cwd, m.root) {
 		return nil, fmt.Errorf("no session %s in this repository", id)
 	}
-	if _, elsewhere := m.running()[id]; elsewhere {
+	if m.elsewhere(id) {
 		return nil, errors.New("this session is open in a terminal; dv follows it, but only the terminal can talk to it")
 	}
 	mode := m.modeOf(id)
@@ -915,7 +958,7 @@ func (m *Manager) Rename(id, title string) error {
 	if m.isCodex(id) {
 		return m.codex.thread(id).rename(title)
 	}
-	if _, elsewhere := m.running()[id]; elsewhere {
+	if m.elsewhere(id) {
 		return errors.New("this session is open in a terminal; rename it there with /rename")
 	}
 	m.mu.Lock()
@@ -1318,7 +1361,8 @@ type Live struct {
 	Found   bool   `json:"found"`             // the transcript exists yet
 	Running string `json:"running,omitempty"` // dv | terminal
 	Busy    bool   `json:"busy,omitempty"`
-	Model   string `json:"model"` // asked for; "" is the user's default
+	Shared  bool   `json:"shared,omitempty"` // see Session.Shared
+	Model   string `json:"model"`            // asked for; "" is the user's default
 	Using   string `json:"using,omitempty"`
 	// The model the transcript was last answered on, which a resumed session
 	// goes on with unless another is asked for.
@@ -1733,6 +1777,7 @@ func (m *Manager) update(id string, s *Sub) Update {
 	}
 	f.mu.Unlock()
 	u.Live.Running, u.Live.Busy = where(p, r)
+	u.Live.Shared = m.shared(id, r)
 	return u
 }
 
