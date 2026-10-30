@@ -1000,7 +1000,7 @@ export function SettingsOverlay({
         {tab === "terminal" && (
           <Setting
             label="Copy on select"
-            note={`Text selected in a terminal goes to the clipboard as you let go of the mouse, without ${isMac ? "Cmd" : "Ctrl"}+C.`}
+            note={`Text selected in a terminal goes to the clipboard as you let go of the mouse, without ${isMac ? "Cmd" : "Ctrl"}+C, and the terminal goes back to its prompt, as tmux does.`}
             value={settings.copyOnSelect !== false}
             onPick={(on) => onChange({ copyOnSelect: on ? undefined : false })}
             choices={OFF_ON}

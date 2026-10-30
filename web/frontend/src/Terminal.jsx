@@ -243,9 +243,28 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
     term.loadAddon(new xterm.ClipboardAddon(undefined, { readText: () => "", writeText: (_, text) => copyText(text).catch(() => {}) }));
     // xterm reports a mouse selection once, as the button is let go, so a drag
     // copies once rather than at every step, and still within the gesture the
-    // browser wants for writing to the clipboard.
+    // browser wants for writing to the clipboard. Then, as tmux leaves copy
+    // mode, the view goes back to the prompt; the selection goes too, or Ctrl+C
+    // would copy it, out of sight, instead of interrupting. A word or line
+    // taken by a double or triple click stays lit a moment first, as in tmux,
+    // or it would never be seen; the next press keeps it from going mid-drag.
+    const el = box.current;
+    let clicks = 0;
+    let settle = 0;
+    const press = (e) => {
+      clicks = e.detail;
+      clearTimeout(settle);
+    };
+    el.addEventListener("mousedown", press, true);
+    const settled = () => {
+      term.clearSelection();
+      term.scrollToBottom();
+    };
     term.onSelectionChange(() => {
-      if (copyOnSelectRef.current && term.hasSelection()) copyText(term.getSelection()).catch(() => {});
+      if (!copyOnSelectRef.current || !term.hasSelection()) return;
+      copyText(term.getSelection()).catch(() => {});
+      if (clicks > 1) settle = setTimeout(settled, 300);
+      else settled();
     });
     term.attachCustomKeyEventHandler((e) => {
       if (dvKey(e) || (shiftArrow(e) && !ownsKeys(term))) return false;
@@ -267,6 +286,8 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
     const link = attach(id, term, () => visibleRef.current);
     live.current = { term, fit, link };
     return () => {
+      clearTimeout(settle);
+      el.removeEventListener("mousedown", press, true);
       link.stop();
       term.dispose();
     };
