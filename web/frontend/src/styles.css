@@ -6551,6 +6551,14 @@ button.ghost.composer-add {
   color: var(--accent);
 }
 
+.session-folder {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-temporary {
   display: inline-flex;
   color: var(--fg-3);

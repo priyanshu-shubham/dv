@@ -1,13 +1,14 @@
 // The Agent tab's list: what waits on you first - in any of the hub's folders -
-// then what is at work here, then the rest. A row opens its session; held, it
-// offers what else can be done to it; swiped aside, it closes.
+// then what is at work here, then the rest open here, then what is open in the
+// other folders, then the rest. A row opens its session; held, it offers what
+// else can be done to it; swiped aside, it closes.
 import { useRef, useState } from "react";
 import { AgentIcon } from "../icons.jsx";
-import { agentName, heldElsewhere, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
+import { agentName, byLastSent, heldElsewhere, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
 import { Row, Sheet, useLongPress } from "./Sheet.jsx";
 import { Marks } from "./Session.jsx";
-import { say } from "../Notices.jsx";
+import { say, useOpenIn } from "../Notices.jsx";
 
 const isOpen = (s) => s.open || s.running === "dv";
 
@@ -15,35 +16,24 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
   const [held, setHeld] = useState(null); // the session long-pressed
   const [renaming, setRenaming] = useState(null);
   const [limits, setLimits] = useState(false);
+  const [away, closeAway] = useOpenIn(elsewhere);
   const asking = new Map();
   for (const r of requests) if (!asking.has(r.session)) asking.set(r.session, r);
 
-  // Waiting in other folders: their rows, and what each asks.
-  const away = [];
-  for (const f of elsewhere || []) {
-    for (const r of f.requests || []) {
-      if (away.some((a) => a.folder === f.slug && a.session.id === r.session)) continue;
-      const s = (f.sessions || []).find((x) => x.id === r.session) || { id: r.session, title: "", prompt: "" };
-      away.push({ folder: f.slug, name: f.name, session: s, req: r });
-    }
-  }
-
   const here = sessions.filter((s) => !asking.has(s.id));
-  const working = here.filter((s) => s.busy && isOpen(s));
-  // Last written first, as a chat app's are; those at work hold still, or two
-  // writing at once would trade places.
-  const open = here.filter((s) => isOpen(s) && !s.busy).sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated));
+  const working = here.filter((s) => s.busy && isOpen(s)).sort(byLastSent);
+  const open = here.filter((s) => isOpen(s) && !s.busy).sort(byLastSent);
   const recent = here.filter((s) => !isOpen(s));
 
-  const row = (s, { req, folder, name } = {}) => (
+  const row = (s, { req, f } = {}) => (
     <SessionRow
-      key={(folder || "") + s.id}
+      key={(f ? f.slug + "/" : "") + s.id}
       s={s}
       req={req}
-      folder={name}
-      onOpen={() => (folder ? openFolderSession(folder, s.id) : onOpen(s.id))}
-      onHold={folder ? null : () => setHeld(s)}
-      onSwipe={folder || !isOpen(s) ? null : () => onClose(s.id)}
+      folder={f?.name}
+      onOpen={() => (f ? openFolderSession(f.slug, s.id) : onOpen(s.id))}
+      onHold={f ? null : () => setHeld(s)}
+      onSwipe={f ? () => closeAway(f, s) : isOpen(s) ? () => onClose(s.id) : null}
     />
   );
 
@@ -56,7 +46,14 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
     );
   }
 
-  const waiting = [...sessions.filter((s) => asking.has(s.id)).map((s) => row(s, { req: asking.get(s.id) })), ...away.map((a) => row(a.session, a))];
+  const waiting = [
+    ...sessions
+      .filter((s) => asking.has(s.id))
+      .sort(byLastSent)
+      .map((s) => row(s, { req: asking.get(s.id) })),
+    ...away.filter((a) => a.req).map((a) => row(a.s, a)),
+  ];
+  const openAway = away.filter((a) => !a.req);
   const plans = usage.filter((u) => u.limits?.session || u.limits?.week);
   return (
     <div className="p-scroll p-sessions">
@@ -102,6 +99,8 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
       {working.map((s) => row(s))}
       {open.length > 0 && <div className="p-sec">Open</div>}
       {open.map((s) => row(s))}
+      {openAway.length > 0 && <div className="p-sec">Other folders</div>}
+      {openAway.map((a) => row(a.s, a))}
       {recent.length > 0 && <div className="p-sec">Recent</div>}
       {recent.map((s) => row(s))}
       {!sessions.length && !away.length && <div className="p-empty">No sessions here yet. Start one with New session.</div>}

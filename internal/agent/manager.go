@@ -247,14 +247,16 @@ func (m *Manager) Sessions() []Session {
 // Activity is what a session open in dv is doing, for word of it to reach the
 // reader wherever in the page, or out of it, they are.
 type Activity struct {
-	ID      string    `json:"id"`
-	Agent   string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
-	Title   string    `json:"title,omitempty"`
-	Running string    `json:"running,omitempty"`
-	Busy    bool      `json:"busy,omitempty"`
-	Shared  bool      `json:"shared,omitempty"`
-	Last    string    `json:"last,omitempty"` // Claude's, when it spoke last
-	Updated time.Time `json:"updated"`
+	ID        string    `json:"id"`
+	Agent     string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
+	Title     string    `json:"title,omitempty"`
+	Running   string    `json:"running,omitempty"`
+	Busy      bool      `json:"busy,omitempty"`
+	Shared    bool      `json:"shared,omitempty"`
+	Temporary bool      `json:"temporary,omitempty"`
+	Last      string    `json:"last,omitempty"` // Claude's, when it spoke last
+	Updated   time.Time `json:"updated"`
+	Sent      time.Time `json:"sent,omitzero"` // when the reader last wrote to it, if known
 }
 
 // Activity lists the sessions open in dv or run by it, newest first as the
@@ -282,18 +284,25 @@ func (m *Manager) Activity() []Activity {
 		a.Shared = m.shared(id, live[id])
 		if path := files[id]; path != "" {
 			if row, ok := m.row(path); ok {
-				a.Title, a.Updated = cmp.Or(row.Title, row.Prompt), row.Updated
+				a.Title, a.Updated, a.Sent = cmp.Or(row.Title, row.Prompt), row.Updated, row.Sent
 				if row.LastBy != "you" {
 					a.Last = row.Last
 				}
 			}
 		}
-		if p := procs[id]; a.Title == "" && p != nil {
+		if p := procs[id]; p != nil && (a.Title == "" || a.Updated.IsZero()) {
 			p.mu.Lock()
-			a.Title = p.title
+			a.Title = cmp.Or(a.Title, p.title)
+			if a.Updated.IsZero() {
+				a.Updated = p.lastUsed
+			}
 			p.mu.Unlock()
 		}
 		out = append(out, a)
+	}
+	temporary := m.saved.TemporaryIDs()
+	for i := range out {
+		out[i].Temporary = slices.Contains(temporary, out[i].ID)
 	}
 	slices.SortStableFunc(out, func(a, b Activity) int {
 		return cmp.Or(b.Updated.Compare(a.Updated), cmp.Compare(a.ID, b.ID))
@@ -371,6 +380,11 @@ func (m *Manager) row(path string) (Session, bool) {
 		return c.row, c.ok
 	}
 	row, ok := summarize(path)
+	// A long turn can push the last message sent out of the end summarize
+	// reads; looked at every second, the file was seen with it.
+	if hit && row.Sent.IsZero() && fi.Size() > c.size {
+		row.Sent = c.row.Sent
+	}
 	m.mu.Lock()
 	m.rows[path] = cachedRow{fi.Size(), fi.ModTime(), row, ok}
 	m.mu.Unlock()

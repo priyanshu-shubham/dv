@@ -333,6 +333,12 @@ export const agentName = (agent) => (agent === "codex" ? "Codex" : "Claude");
 // Only followed in dv: another process has it open and dv was not let in too.
 export const heldElsewhere = (s) => s?.running === "terminal" && !s.shared;
 
+// byLastSent orders open sessions the last written to first. By their last
+// activity instead, those at work would trade places as they go. Without the
+// time, as for a Codex session not written to since dv started, the session's
+// last activity stands in.
+export const byLastSent = (a, b) => Date.parse(b.sent || b.updated) - Date.parse(a.sent || a.updated);
+
 // workingLabel says which agents are at work in a folder, from its hub status.
 export const workingLabel = (open) => (open.codex && open.claude ? "Claude and Codex are working" : `${open.codex ? "Codex" : "Claude"} is working`);
 

@@ -180,6 +180,7 @@ func (c *codexSide) fill(row *Session, t *codexThread) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	row.Busy = row.Running == "dv" && t.active != ""
+	row.Sent = t.sent
 	row.Status = t.status
 	row.Context = t.context
 	if t.meta.Name != nil {
@@ -241,7 +242,7 @@ func (c *codexSide) activity(open []string) []Activity {
 			a.Last = text
 		}
 		t.mu.Lock()
-		a.Busy, a.Updated = running == "dv" && t.active != "", t.lastUsed
+		a.Busy, a.Updated, a.Sent = running == "dv" && t.active != "", t.lastUsed, t.sent
 		if t.meta.UpdatedAt > 0 {
 			a.Updated = time.Unix(t.meta.UpdatedAt, 0)
 		}

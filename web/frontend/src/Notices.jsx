@@ -2,13 +2,13 @@
 // page they are: a toast for a session not on screen, and a desktop
 // notification as well while the page is not in front of them, if they allowed
 // it. dv decides what to tell and when (internal/notify); the page shows it.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { cx, OUTPUT_KEY, PHONE_APP, useMedia } from "./util.js";
+import { agentName, byLastSent, cx, OUTPUT_KEY, PHONE_APP, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 // A request is two pulses, a turn's end a tick.
@@ -188,6 +188,51 @@ export function useHubActivity() {
 
 // waitingIn counts the requests waiting on the reader in folders' activity.
 export const waitingIn = (folders) => (folders || []).reduce((n, f) => n + (f.requests?.length || 0), 0);
+
+// openIn lists the sessions open in folders' activity as { f, s, req }, req
+// what one waits on the reader for: those waiting first, then the last written
+// to first. A request can come before its session is listed. One with no time
+// has neither a word said nor a process, and its own folder's list leaves it
+// out too.
+function openIn(folders) {
+  const out = [];
+  for (const f of folders || []) {
+    const asks = new Map();
+    for (const r of f.requests || []) if (!asks.has(r.session)) asks.set(r.session, r);
+    const listed = f.sessions || [];
+    for (const [id, req] of asks) out.push({ f, s: listed.find((s) => s.id === id) || { id }, req });
+    for (const s of listed) if (!asks.has(s.id) && Date.parse(s.updated) > 0) out.push({ f, s });
+  }
+  return out.sort((a, b) => !!b.req - !!a.req || byLastSent(a.s, b.s));
+}
+
+// useOpenIn is openIn(folders), and close(f, s), which closes a session there
+// as closing it in its folder would. The activity only says so at its next
+// look, so a closed session is left out until then, not shown again meanwhile.
+export function useOpenIn(folders) {
+  const [closing, setClosing] = useState(() => new Set());
+  const all = useMemo(() => openIn(folders), [folders]);
+  const key = ({ f, s }) => `${f.slug}/${s.id}`;
+  // Once gone from the activity it needs hiding no longer: opened again, it shows.
+  useEffect(() => {
+    setClosing((c) => {
+      const still = new Set(all.map(key).filter((k) => c.has(k)));
+      return still.size === c.size ? c : still;
+    });
+  }, [all]);
+  const close = async (f, s) => {
+    if (s.running === "dv" && s.busy && !confirm(`${agentName(s.agent)} is still working in this session. Stop it and close?`)) return;
+    const k = key({ f, s });
+    setClosing((c) => new Set(c).add(k));
+    try {
+      await api.agentOpen(s.id, false, f.slug);
+    } catch (e) {
+      say("Could not close the session", e.message);
+      setClosing((c) => new Set([...c].filter((x) => x !== k)));
+    }
+  };
+  return [all.filter((a) => !closing.has(key(a))), close];
+}
 
 // useAppBadge puts n on an installed dv's icon - in the taskbar, the dock, a
 // phone's launcher - and takes it off at none. A browser tab has none to mark.

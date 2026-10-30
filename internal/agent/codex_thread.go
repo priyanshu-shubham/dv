@@ -57,6 +57,7 @@ type codexThread struct {
 	watching bool
 	mark     fileMark
 	lastUsed time.Time
+	sent     time.Time // the last message dv sent it, since dv started
 }
 
 // askedSettings are what was picked in dv; nil is not picked. A model of ""
@@ -723,6 +724,7 @@ func (t *codexThread) send(uuid, text string, images []Image) (string, error) {
 	}
 	t.mu.Lock()
 	t.lastUsed = time.Now()
+	t.sent = t.lastUsed
 	t.mu.Unlock()
 	if strings.TrimSpace(text) == "/compact" {
 		if err := t.call("thread/compact/start", map[string]any{"threadId": t.id}, nil); err != nil {

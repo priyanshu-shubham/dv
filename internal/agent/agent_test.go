@@ -778,6 +778,19 @@ func TestSummaryTakesTheLatestTitleAndPrompt(t *testing.T) {
 	}
 }
 
+func TestSummarySentIsTheLastPromptsTime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	at := func(e map[string]any, ts string) map[string]any { e["timestamp"] = ts; return e }
+	asked := line(t, at(user("u1", "", "fix it"), "2026-10-30T09:00:00.125Z"))
+	again := line(t, at(user("u2", "a1", "and test it"), "2026-10-30T09:05:00.5Z"))
+	reply := line(t, at(assistant("a2", "u2", "msg_2", text("Done.")), "2026-10-30T09:20:00Z"))
+	os.WriteFile(path, []byte(asked+line(t, assistant("a1", "u1", "msg_1", text("Fixed.")))+again+reply), 0o644)
+	s, ok := summarize(path)
+	if want := time.Date(2026, 10, 30, 9, 5, 0, 5e8, time.UTC); !ok || !s.Sent.Equal(want) {
+		t.Fatalf("sent %v, want %v (listed %v)", s.Sent, want, ok)
+	}
+}
+
 func TestEditIsTheWholeFileWhenItWasKept(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(path, []byte(conversation(t)), 0o644)

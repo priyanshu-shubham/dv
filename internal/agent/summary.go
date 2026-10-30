@@ -38,6 +38,10 @@ type Session struct {
 	// How full its context is, as of the last reply the end of the file has.
 	Context *Context `json:"context,omitempty"`
 
+	// When the reader last wrote to it, if known: the end of a Claude Code
+	// transcript has it, and dv knows the Codex turns it started.
+	Sent time.Time `json:"sent,omitzero"`
+
 	used  int
 	model string
 }
@@ -130,7 +134,12 @@ func summarize(path string) (Session, bool) {
 		case r.Type == "system" && r.Subtype == "compact_boundary":
 			s.used = r.Compaction.After
 		default:
-			said(promptOf(r), "you")
+			if text := promptOf(r); text != "" {
+				said(text, "you")
+				if at, err := time.Parse(time.RFC3339, r.Timestamp); err == nil {
+					s.Sent = at
+				}
+			}
 		}
 		return true
 	})

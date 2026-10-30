@@ -24,7 +24,26 @@ import FindBar from "./FindBar.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
-import { agentName, cx, globMatcher, heldElsewhere, isFindKey, isMac, isSearchKey, isTyping, modKey, openFolderSession, OUTPUT_KEY, PHONE_APP, searchSeed, selecting, useDebounced, useMedia, usePersisted } from "./util.js";
+import {
+  agentName,
+  byLastSent,
+  cx,
+  globMatcher,
+  heldElsewhere,
+  isFindKey,
+  isMac,
+  isSearchKey,
+  isTyping,
+  modKey,
+  openFolderSession,
+  OUTPUT_KEY,
+  PHONE_APP,
+  searchSeed,
+  selecting,
+  useDebounced,
+  useMedia,
+  usePersisted,
+} from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
 import { setTabIcon, tabDot } from "./favicon.js";
@@ -1700,7 +1719,7 @@ export default function App() {
       if (isTyping(e.target) && !(e.target.matches(".agent-composer textarea") && !e.target.value)) return;
       if (selecting()) return;
       if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
-      const open = agent.sessions.filter((s) => s.open || s.running === "dv");
+      const open = agent.sessions.filter((s) => s.open || s.running === "dv").sort(byLastSent);
       if (!open.length) return;
       e.preventDefault();
       e.stopPropagation();
@@ -2578,6 +2597,7 @@ export default function App() {
             activeId: agentId,
             added: attachedLive,
             asking: askingSessions,
+            elsewhere,
             onSelect: selectSession,
             onNew: startSession,
             onNewWorktree: newWorktree,

@@ -13,9 +13,31 @@ import { PdfView } from "./Pdf.jsx";
 import { absolute, inlineFiles, inside, kindOf, splitShown } from "./shown.js";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
+import { useOpenIn } from "./Notices.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
-import { agentName, cx, duration, heldElsewhere, isTyping, limitWindow, LOST_MS, LRM, modKey, PHONE_APP, relTime, resetsWhen, splitPath, TOUCH, useCopy, useDismiss, useLasting, useMedia } from "./util.js";
+import {
+  agentName,
+  byLastSent,
+  cx,
+  duration,
+  heldElsewhere,
+  isTyping,
+  limitWindow,
+  LOST_MS,
+  LRM,
+  modKey,
+  openFolderSession,
+  PHONE_APP,
+  relTime,
+  resetsWhen,
+  splitPath,
+  TOUCH,
+  useCopy,
+  useDismiss,
+  useLasting,
+  useMedia,
+} from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
@@ -4346,10 +4368,25 @@ function SessionID({ id }) {
   );
 }
 
-// SessionList is the sidebar in Agent mode: sessions open in dv, then the rest
-// of the repository's, newest first. asking is the set of sessions with a
-// prompt or question waiting on the reader.
-export function SessionList({ sessions, available, usage, asking, activeId, added = {}, onSelect, onNew, onNewWorktree, onNewTask, onClose, onRename }) {
+// SessionList is the sidebar in Agent mode: sessions open in dv, the last
+// written to first, then those open in the hub's other folders, then the rest
+// of the repository's, newest first. asking is the set of sessions with a prompt or question waiting on the
+// reader; elsewhere, the other folders' activity.
+export function SessionList({
+  sessions,
+  available,
+  usage,
+  asking,
+  elsewhere,
+  activeId,
+  added = {},
+  onSelect,
+  onNew,
+  onNewWorktree,
+  onNewTask,
+  onClose,
+  onRename,
+}) {
   const [filter, setFilter] = useState("");
   // The card is where the session on screen is named, so it is kept in sight.
   const listRef = useRef(null);
@@ -4359,8 +4396,48 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
   const q = filter.trim().toLowerCase();
   const shown = q ? sessions.filter((s) => `${s.title} ${s.prompt} ${s.id}`.toLowerCase().includes(q)) : sessions;
   const isOpen = (s) => s.open || s.running === "dv";
-  const open = shown.filter(isOpen);
+  // As Shift+↑/↓ steps through them.
+  const open = shown.filter(isOpen).sort(byLastSent);
   const recent = shown.filter((s) => !isOpen(s));
+
+  const [away, closeAway] = useOpenIn(elsewhere);
+  const awayShown = q ? away.filter(({ f, s }) => `${s.title} ${s.id} ${f.name}`.toLowerCase().includes(q)) : away;
+
+  // Another folder's: opened, it takes the page to that folder.
+  const awayRow = ({ f, s, req }) => {
+    const go = () => openFolderSession(f.slug, s.id);
+    return (
+      <div key={f.slug + s.id} role="button" tabIndex={0} className="session-row" onClick={go} onKeyDown={(e) => e.key === "Enter" && go()}>
+        <div className="session-row-head">
+          <span className={cx("session-dot", s.running && "live-" + s.running, s.busy && "busy", req && "asking")} />
+          <SessionName title={s.title || "New session"} hint={`${s.title || "New session"}\nIn ${f.name}`} />
+          <button
+            className="session-close"
+            title={closeHint(s.running, s.temporary, s.agent, s.shared)}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeAway(f, s);
+            }}
+          >
+            <IconX size={11} />
+          </button>
+        </div>
+        {(req || s.last) && <div className="session-last">{req ? `Wants to ${req.headline}` : s.last}</div>}
+        <div className="session-meta">
+          {req ? (
+            <span className="session-asking">waiting on you</span>
+          ) : (
+            <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? "working" : "running in dv") : relTime(s.updated)}</span>
+          )}
+          <span className="session-agent" title={s.agent === "codex" ? "A Codex session" : "A Claude Code session"}>
+            <AgentIcon agent={s.agent} size={11} />
+          </span>
+          <span className="spacer" />
+          <span className="session-folder">{f.name}</span>
+        </div>
+      </div>
+    );
+  };
 
   // A card: what the session is, the last thing said in it, and how full it is.
   const row = (s) => {
@@ -4463,10 +4540,14 @@ export function SessionList({ sessions, available, usage, asking, activeId, adde
       <div className="file-list session-list" ref={listRef}>
         {open.length > 0 && <div className="session-group">Open</div>}
         {open.map(row)}
+        {awayShown.length > 0 && <div className="session-group">Other folders</div>}
+        {awayShown.map(awayRow)}
         {recent.length > 0 && <div className="session-group">Recent</div>}
         {recent.map(row)}
         {!available && <div className="empty">Neither the claude nor the codex CLI is on your PATH.</div>}
-        {available && shown.length === 0 && <div className="empty">{q ? "No sessions match." : "No sessions in this repository yet."}</div>}
+        {available && shown.length === 0 && !(q && awayShown.length) && (
+          <div className="empty">{q ? "No sessions match." : "No sessions in this repository yet."}</div>
+        )}
       </div>
       <div className="sidebar-foot">
         <span className="dim session-count">

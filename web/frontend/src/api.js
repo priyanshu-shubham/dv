@@ -229,7 +229,9 @@ export const api = {
   agentAsk: (id, ask) => req(`/api/agent/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ ask }) }),
 
   // Open sessions are the ones whose permission prompts come up in the page.
-  agentOpen: (id, open) => req(`/api/agent/sessions/${id}/open`, { method: "POST", body: JSON.stringify({ open }) }),
+  // folder is another of the hub's folders, the session's.
+  agentOpen: (id, open, folder) =>
+    req(`/api/agent/sessions/${id}/open`, { method: "POST", body: JSON.stringify({ open }) }, folder ? `/${folder}` : undefined),
   agentStart: (id) => req(`/api/agent/sessions/${id}/start`, { method: "POST", body: "{}" }),
   // A temporary session leaves the list once it is closed.
   agentTemporary: (id, temporary) => req(`/api/agent/sessions/${id}/temporary`, { method: "POST", body: JSON.stringify({ temporary }) }),
