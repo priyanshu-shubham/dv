@@ -22,7 +22,10 @@ browser - a phone's too.
   were, and they end when closed, on `exit`, or when dv stops. A terminal on
   a tmux session attaches to it again when dv next opens the folder, the
   sidebar lists the sessions none shows, to open one, and what tmux or another
-  program copies reaches the browser's clipboard. Not on Windows yet.
+  program copies reaches the browser's clipboard. On a phone, a row of keys
+  holds Esc, Tab, Ctrl, Alt and the arrows, a finger scrolls, pinches and picks
+  text to copy or ask a session about, and a terminal can tell you when its
+  command finishes. Not on Windows yet.
 
 Run `dv` in a git repository and it prints a URL. Comments are kept in a file
 inside the repository that git never sees. Outside git, the same page opens on

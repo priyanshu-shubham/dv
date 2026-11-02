@@ -452,25 +452,28 @@ export const api = {
   hubClone: (source, into, name) => req("/api/hub/clones", { method: "POST", body: JSON.stringify({ source, into, name }) }),
   hubDismissJob: (id) => req(`/api/hub/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  // terminals: { terminals: [{ id, name, named, dir, busy, command, since, output, ended, exit, tmux }],
+  // terminals: { terminals: [{ id, name, named, dir, busy, command, since, output, ended, exit, tmux, notify }],
   // tmux: [{ name, flags, dir, here, windows, attached, activity }] }, the sessions no terminal shows.
   terminals: () => req("/api/terminals"),
   // newTerminal opens one, attached to a tmux session given one of the list's.
   newTerminal: (session) =>
     req("/api/terminals", { method: "POST", body: JSON.stringify(session ? { tmux: { session: session.name, flags: session.flags } } : {}) }),
   renameTerminal: (id, name) => req(`/api/terminals/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  // notifyTerminal has the reader told, once, when what runs in it ends.
+  notifyTerminal: (id, notify) => req(`/api/terminals/${id}`, { method: "PATCH", body: JSON.stringify({ notify }) }),
   closeTerminal: (id) => req(`/api/terminals/${id}`, { method: "DELETE" }),
   // restartTerminal starts a shell again in one whose shell has exited.
   restartTerminal: (id) => req(`/api/terminals/${id}/start`, { method: "POST", body: "{}" }),
   // terminalSocket is where to attach to a terminal, with a ticket good for one go.
-  // mark, { epoch, at }, is where what the page has of it ends, for only what came after.
-  terminalSocket: async (id, mark) => {
+  // mark, { epoch, at }, is where what the page has of it ends, for only what
+  // came after; without one, most bounds the bytes of what came before.
+  terminalSocket: async (id, mark, most) => {
     const { ticket } = await req(`/api/terminals/${id}/ticket`, { method: "POST", body: "{}" });
     const p = new URLSearchParams({ ticket });
     if (mark) {
       p.set("epoch", mark.epoch);
       p.set("at", String(mark.at));
-    }
+    } else if (most) p.set("most", String(most));
     return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${base}/api/terminals/${id}/attach?${p}`;
   },
 };

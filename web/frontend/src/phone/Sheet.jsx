@@ -21,8 +21,9 @@ function useTapAway(away) {
 }
 
 // Sheet slides up from the foot. A tap outside, Back, or a drag down by its
-// handle puts it away.
-export function Sheet({ title, onClose, foot, className, children }) {
+// handle puts it away. aside sits at the title's end; head under it, staying
+// put as the body scrolls.
+export function Sheet({ title, aside, head, onClose, foot, className, children }) {
   const ref = useRef(null);
   const [shown, setShown] = useState(false);
   const [dy, setDy] = useState(0);
@@ -60,8 +61,15 @@ export function Sheet({ title, onClose, foot, className, children }) {
       <div className={cx("p-sheet", shown && "open", dy > 0 && "dragging", className)} style={dy ? { transform: `translateY(${dy}px)` } : undefined}>
         <div className="p-grab" {...grab}>
           <div className="p-handle" />
-          {title && <div className="p-sheet-title">{title}</div>}
+          {title && (
+            <div className="p-sheet-title">
+              <span>{title}</span>
+              {/* Its own tap, not the start of a drag. */}
+              {aside && <span onPointerDown={(e) => e.stopPropagation()}>{aside}</span>}
+            </div>
+          )}
         </div>
+        {head}
         <div className="p-sheet-body">{children}</div>
         {foot && <div className="p-sheet-foot">{foot}</div>}
       </div>
@@ -136,6 +144,46 @@ export function Choice({ title, sub, on, onClick }) {
       </span>
     </button>
   );
+}
+
+// useSwipe has a row closed by swiping it aside past a third of its width:
+// ref goes on the row's frame, touch and dx's transform on the row itself.
+export function useSwipe(onSwipe) {
+  const ref = useRef(null);
+  const swipe = useRef(null);
+  const [dx, setDx] = useState(0);
+  const far = () => Math.abs(dx) > (ref.current?.offsetWidth || 360) / 3;
+  const touch = onSwipe && {
+    onTouchStart: (e) => (swipe.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, on: false }),
+    onTouchMove: (e) => {
+      const w = swipe.current;
+      if (!w) return;
+      const x = e.touches[0].clientX - w.x;
+      const y = e.touches[0].clientY - w.y;
+      if (!w.on) {
+        if (Math.abs(y) > 12) return void (swipe.current = null);
+        if (Math.abs(x) < 12) return;
+        w.on = true;
+      }
+      setDx(x);
+    },
+    onTouchEnd: () => {
+      const w = swipe.current;
+      swipe.current = null;
+      if (!w?.on) return;
+      if (far()) {
+        navigator.vibrate?.(10);
+        setDx(Math.sign(dx) * 999);
+        setTimeout(() => (onSwipe(), setDx(0)), 160);
+      } else setDx(0);
+    },
+    // Taken by the system - Android's edge swipe for Back - it settles back.
+    onTouchCancel: () => {
+      swipe.current = null;
+      setDx(0);
+    },
+  };
+  return { ref, dx, armed: far(), touch };
 }
 
 const LONG_MS = 450;

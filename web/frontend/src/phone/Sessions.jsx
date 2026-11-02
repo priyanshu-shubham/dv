@@ -2,11 +2,11 @@
 // then what is at work here, then the rest open here, then what is open in the
 // other folders, then the rest. A row opens its session; held, it offers what
 // else can be done to it; swiped aside, it closes.
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { AgentIcon } from "../icons.jsx";
 import { agentName, byLastSent, heldElsewhere, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
-import { Row, Sheet, useLongPress } from "./Sheet.jsx";
+import { Row, Sheet, useLongPress, useSwipe } from "./Sheet.jsx";
 import { Marks } from "./Session.jsx";
 import { say, useOpenIn } from "../Notices.jsx";
 
@@ -149,9 +149,7 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
 // SessionRow is one session: its agent, its name, the last thing said or what
 // it asks, and how long ago. Swiped past a third of its width, it closes.
 function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
-  const ref = useRef(null);
-  const swipe = useRef(null);
-  const [dx, setDx] = useState(0);
+  const { ref, dx, armed, touch } = useSwipe(onSwipe);
   const hold = useLongPress(() => onHold?.());
   const status = req ? (
     <span className="p-badge-text warn">Needs you</span>
@@ -161,38 +159,6 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
   const last = s.last && s.last.replace(/\*\*|__|`/g, "");
   const what = req ? `Wants to ${req.headline}` : last ? (s.lastBy === "you" ? `You: ${last}` : last) : s.prompt;
   const when = s.running === "terminal" ? "terminal" : s.busy && isOpen(s) ? s.status || "working" : relTime(s.updated);
-
-  const touch = onSwipe && {
-    onTouchStart: (e) => (swipe.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, on: false }),
-    onTouchMove: (e) => {
-      const w = swipe.current;
-      if (!w) return;
-      const x = e.touches[0].clientX - w.x;
-      const y = e.touches[0].clientY - w.y;
-      if (!w.on) {
-        if (Math.abs(y) > 12) return void (swipe.current = null);
-        if (Math.abs(x) < 12) return;
-        w.on = true;
-      }
-      setDx(x);
-    },
-    onTouchEnd: () => {
-      const w = swipe.current;
-      swipe.current = null;
-      if (!w?.on) return;
-      if (Math.abs(dx) > (ref.current?.offsetWidth || 360) / 3) {
-        navigator.vibrate?.(10);
-        setDx(Math.sign(dx) * 999);
-        setTimeout(() => (onSwipe(), setDx(0)), 160);
-      } else setDx(0);
-    },
-    // Taken by the system - Android's edge swipe for Back - it settles back.
-    onTouchCancel: () => {
-      swipe.current = null;
-      setDx(0);
-    },
-  };
-  const armed = Math.abs(dx) > (ref.current?.offsetWidth || 360) / 3;
 
   return (
     <div className={cx("p-swipe", armed && "armed")} ref={ref}>
@@ -252,7 +218,7 @@ function Limit({ limit, minutes }) {
   );
 }
 
-function Rename({ s, onRename, onClose }) {
+export function Rename({ s, onRename, onClose }) {
   const [title, setTitle] = useState(s.title || s.prompt || "");
   const save = () => {
     if (title.trim()) onRename(s.id, title.trim());

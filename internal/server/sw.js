@@ -28,7 +28,7 @@ self.addEventListener("push", (event) => {
           body: n.body || "",
           tag,
           // id is the notice's, which a page closes the notification by.
-          data: { id: n.id, url: n.url || "/", session: n.session, folder: n.folder, action: n.action },
+          data: { id: n.id, url: n.url || "/", session: n.session, folder: n.folder, action: n.action, terminal: n.terminal },
           // dv puts both before this file as data (HandleWorker).
           icon: ICON,
           badge: BADGE,
@@ -43,17 +43,17 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const { url = "/", session, folder, action } = event.notification.data || {};
+  const { url = "/", session, folder, action, terminal } = event.notification.data || {};
   // A hub has each folder at /<slug>/; a lone dv has its one at /.
   const base = folder ? `/${folder}/` : "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (pages) => {
-      // The app open on the folder is told which session, or command's
-      // output, rather than loaded again; of neither - the test - it is the place.
+      // The app open on the folder is told which session, command's output or
+      // terminal, rather than loaded again; of none - the test - it is the place.
       const page = pages.find((p) => new URL(p.url).pathname.startsWith(base));
       if (page) {
         await page.focus().catch(() => {});
-        if (session || action) page.postMessage({ type: "dv:open", session, action });
+        if (session || action || terminal) page.postMessage({ type: "dv:open", session, action, terminal });
         return;
       }
       // Open on another of the hub's folders, it goes there, rather than a

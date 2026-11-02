@@ -40,6 +40,7 @@ import {
   PHONE_APP,
   searchSeed,
   selecting,
+  TERMINAL_KEY,
   useDebounced,
   useMedia,
   usePersisted,
@@ -61,6 +62,7 @@ const NO_FILTER = { include: "", exclude: "" };
 // The phone app's shell is its own chunk, fetched only by a phone; the parts
 // it shares with the page's views come with them.
 const Phone = lazy(() => import("./phone/Phone.jsx"));
+const ActionsSheet = lazy(() => import("./phone/ActionsSheet.jsx"));
 
 export default function App() {
   const [meta, setMeta] = useState(null);
@@ -175,9 +177,9 @@ export default function App() {
   // A folder outside git has nothing to diff, so it opens on its files.
   const folder = meta?.git === false;
   const modes = useMemo(() => (folder ? FOLDER_MODES : MODES).filter((m) => m !== "terminal" || meta?.terminal), [folder, meta?.terminal]);
-  // The phone app's home is Agent, and it has no Terminal.
+  // The phone app's home is Agent.
   const [modePicked, setMode] = usePersisted("mode", phoneApp ? "agent" : "diff", { folder: true });
-  const mode = folder && modePicked === "diff" ? "code" : phoneApp && modePicked === "terminal" ? "agent" : modePicked;
+  const mode = folder && modePicked === "diff" ? "code" : modePicked;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   // Once opened, the Agent view stays, hidden in the other modes like they are
@@ -1433,9 +1435,10 @@ export default function App() {
 
   // An action run from outside the Agent view, or in a session of its own,
   // happens out of sight, so the page says it went.
+  // keep leaves the list open, as a phone's is for a command to be watched.
   const doAction = useCallback(
-    (a) => {
-      closeOverlay();
+    (a, keep) => {
+      if (!keep) closeOverlay();
       if (a.run) return a.run();
       if (a.builtin) {
         api.pull(a.builtin === "main").then(
@@ -1447,7 +1450,7 @@ export default function App() {
       if (a.kind === "command") {
         runAction(a).then(
           () =>
-            say(`${a.name} started`, "You are told how it ends; Alt+A lists it while it runs.", [
+            say(`${a.name} started`, `You are told how it ends; ${phoneApp ? "⚡" : "Alt+A"} lists it while it runs.`, [
               { label: "Output", opens: true, run: () => openOverlay({ type: "output", id: a.id }) },
             ]),
           (e) => say(`Could not run ${a.name}`, e.message),
@@ -1544,14 +1547,32 @@ export default function App() {
   const newTerminal = useCallback(
     (session) =>
       api.newTerminal(session?.name ? session : null).then(
-        (t) => {
+        async (t) => {
           setTermId(t.id);
           setTermFocus((n) => n + 1);
-          loadTerms();
+          // Listed before it is shown, or the phone's screen takes it for gone.
+          await loadTerms();
+          return t;
         },
         (e) => say("Could not open a terminal", e.message),
       ),
     [setTermId, loadTerms],
+  );
+  const notifyTerminal = useCallback(
+    (id, on) => api.notifyTerminal(id, on).then(loadTerms, (e) => say(on ? "Could not ask to be told" : "Could not take that back", e.message)),
+    [loadTerms],
+  );
+  // openTerminal shows one, as its notice asks; showTerm tells the phone app
+  // to open its screen.
+  const [showTerm, setShowTerm] = useState(0);
+  const openTerminal = useCallback(
+    (id) => {
+      setTermId(id);
+      switchMode("terminal");
+      setTermFocus((n) => n + 1);
+      setShowTerm((n) => n + 1);
+    },
+    [setTermId, switchMode],
   );
   const closeTerminal = useCallback(
     (id) =>
@@ -1562,9 +1583,10 @@ export default function App() {
     [loadTerms],
   );
   const renameTerminal = useCallback((id, name) => api.renameTerminal(id, name).then(loadTerms, (e) => say("Could not rename the terminal", e.message)), [loadTerms]);
-  // Coming to the Terminal view with none open opens one, to type in at once.
+  // Coming to the Terminal view with none open opens one, to type in at once;
+  // a phone's tab lists them, to be read more than typed in.
   useEffect(() => {
-    if (mode !== "terminal") return;
+    if (mode !== "terminal" || phoneApp) return;
     let live = true;
     loadTerms().then((list) => live && list?.length === 0 && newTerminal());
     return () => (live = false);
@@ -1644,12 +1666,17 @@ export default function App() {
     },
     open: openNoticed,
     output: (id) => openOverlay({ type: "output", id }),
+    terminal: openTerminal,
   });
-  // A command's notification that opened the page shows its output.
+  // A command's notification that opened the page shows its output; a
+  // terminal's, the terminal.
   useEffect(() => {
     const id = sessionStorage.getItem(OUTPUT_KEY);
     sessionStorage.removeItem(OUTPUT_KEY);
     if (id) openOverlay({ type: "output", id });
+    const term = sessionStorage.getItem(TERMINAL_KEY);
+    sessionStorage.removeItem(TERMINAL_KEY);
+    if (term) openTerminal(term);
   }, []);
   // Desktop notifications are the browser's to allow, asked when turned on.
   // Hooks are asked after with the sessions, but Settings opens in any mode.
@@ -1687,11 +1714,12 @@ export default function App() {
     const onMessage = (e) => {
       if (e.data?.type !== "dv:open") return;
       if (e.data.action) openOverlay({ type: "output", id: e.data.action });
+      else if (e.data.terminal) openTerminal(e.data.terminal);
       else if (e.data.session && !phoneApp) openNotified.current(e.data.session);
     };
     sw.addEventListener("message", onMessage);
     return () => sw.removeEventListener("message", onMessage);
-  }, [phoneApp, openOverlay]);
+  }, [phoneApp, openOverlay, openTerminal]);
 
   const dot = tabDot(notices);
   // The waiting note trails so a narrow tab still shows which repository it
@@ -1837,11 +1865,12 @@ export default function App() {
     },
     [attach, attachTo],
   );
-  // sendNote puts a note in a session's message box, after what is typed there.
-  const sendNote = useCallback(
-    (note, to = attachTo) => {
+  // sendText puts text in a session's message box, after what is typed there:
+  // a note, or what a terminal printed.
+  const sendText = useCallback(
+    (text, to = attachTo) => {
       const key = "draft:" + (to || "new");
-      setPref("repo", key, [readPref("repo", key, ""), noteText(note)].filter((t) => t.trim()).join("\n\n"), "");
+      setPref("repo", key, [readPref("repo", key, ""), text].filter((t) => t.trim()).join("\n\n"), "");
       setBoxFocus((n) => n + 1);
       if (to === "") return openAdded();
       setStack([]);
@@ -1850,6 +1879,7 @@ export default function App() {
     },
     [attachTo, openAdded, setAgentId, switchMode],
   );
+  const sendNote = useCallback((note, to) => sendText(noteText(note), to), [sendText]);
   // Discarding is offered where the diff is your uncommitted work, the working
   // tree against the last commit: elsewhere it would undo something else.
   const uncommitted = diff?.scope?.kind === "working" || diff?.scope?.picked === "working";
@@ -2425,17 +2455,30 @@ export default function App() {
         />
       )}
       {overlay?.type === "help" && <HelpOverlay onClose={closeOverlay} />}
-      {overlay?.type === "actions" && (
-        <ActionsPalette
-          meta={meta}
-          session={agentId}
-          extra={pageActions}
-          onRun={doAction}
-          onEdit={() => openOverlay({ type: "settings", tab: "actions" })}
-          onOutput={(id) => openOverlay({ type: "output", id })}
-          onClose={closeOverlay}
-        />
-      )}
+      {overlay?.type === "actions" &&
+        (phoneApp ? (
+          <Suspense fallback={null}>
+            <ActionsSheet
+              meta={meta}
+              session={agentId}
+              extra={pageActions}
+              onRun={doAction}
+              onEdit={() => openOverlay({ type: "settings", tab: "actions" })}
+              onOutput={(id) => openOverlay({ type: "output", id })}
+              onClose={closeOverlay}
+            />
+          </Suspense>
+        ) : (
+          <ActionsPalette
+            meta={meta}
+            session={agentId}
+            extra={pageActions}
+            onRun={doAction}
+            onEdit={() => openOverlay({ type: "settings", tab: "actions" })}
+            onOutput={(id) => openOverlay({ type: "output", id })}
+            onClose={closeOverlay}
+          />
+        ))}
       {overlay?.type === "output" && <CommandOutput id={overlay.id} onClose={closeOverlay} />}
       {overlay?.type === "branch" && <BranchPalette meta={meta} onDone={(msg) => (closeOverlay(), say(msg))} onClose={closeOverlay} />}
       {overlay?.type === "settings" && (
@@ -2520,6 +2563,19 @@ export default function App() {
               openOverlay,
               openSearch,
               pull: () => doAction({ builtin: "pull", name: `Pull ${meta?.head?.branch || ""}` }),
+              terminal: {
+                terms,
+                sessions: tmuxSessions,
+                id: termId,
+                show: showTerm,
+                theme: "dark", // as the phone app is, whatever Settings say
+                onSelect: setTermId,
+                onNew: newTerminal,
+                onClose: closeTerminal,
+                onRename: renameTerminal,
+                onNotify: notifyTerminal,
+                onAsk: (text) => sendText("```\n" + text.replace(/\s+$/, "") + "\n```"),
+              },
             }}
           />
         </Suspense>

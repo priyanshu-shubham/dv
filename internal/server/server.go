@@ -142,6 +142,7 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	s.agent.Instructions = AgentInstructions(user)
 	s.agent.CloseIdle = CloseIdleAfter(user)
 	s.agent.Unasked = UnaskedEdits(user)
+	s.terms.OnFinish(s.terminalFinished)
 	// Before the page can ask, which would open a fresh terminal in their place.
 	s.terms.Restore()
 	if notices != nil {
@@ -354,7 +355,7 @@ func (s *Server) Handler(base string) http.Handler {
 
 	mux.HandleFunc("GET /api/terminals", Guarded(s.handleTerminals))
 	mux.HandleFunc("POST /api/terminals", Guarded(s.handleNewTerminal))
-	mux.HandleFunc("PATCH /api/terminals/{id}", Guarded(s.handleRenameTerminal))
+	mux.HandleFunc("PATCH /api/terminals/{id}", Guarded(s.handleChangeTerminal))
 	mux.HandleFunc("DELETE /api/terminals/{id}", Guarded(s.handleCloseTerminal))
 	mux.HandleFunc("POST /api/terminals/{id}/start", Guarded(s.handleRestartTerminal))
 	mux.HandleFunc("POST /api/terminals/{id}/ticket", Guarded(s.handleTerminalTicket))

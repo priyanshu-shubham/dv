@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { usePref } from "./prefs.js";
-import { cx, PHONE_APP, useMedia } from "./util.js";
+import { cx } from "./util.js";
 import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
 import { IconAsk, IconBolt, IconPlus, IconX } from "./icons.jsx";
@@ -20,7 +20,7 @@ const EDIT = { edit: true };
 
 // builtIns are dv's own, where they apply: pulling the branch checked out,
 // and bringing the trunk up to date from another; both only fast-forward.
-function builtIns(meta) {
+export function builtIns(meta) {
   const branch = meta?.head?.branch;
   const trunk = meta?.defaultBranch;
   if (!meta?.remote) return [];
@@ -30,7 +30,7 @@ function builtIns(meta) {
   ].filter(Boolean);
 }
 
-function useActions() {
+export function useActions() {
   const [repo, setRepo] = usePref("repo", "actions", NONE);
   const [user, setUser] = usePref("user", "actions", NONE);
   const all = useMemo(() => [...repo.map((a) => ({ ...a, scope: "repo" })), ...user.map((a) => ({ ...a, scope: "user" }))], [repo, user]);
@@ -41,7 +41,7 @@ function useActions() {
 // for its models by the first listing, so they can come a moment after it.
 // The last answer is kept, so the list opens on it rather than redrawing.
 let choices = null;
-function useAgentChoices() {
+export function useAgentChoices() {
   const [info, setInfo] = useState(choices);
   useEffect(() => {
     let live = true;
@@ -66,8 +66,9 @@ const modelsFor = (a, info) => (a.agent === "codex" ? info?.codex?.models : info
 
 // describe is what an action does, in the few words under its name, from the
 // action alone where it can be: the model's label is kept with it.
-function describe(a, info) {
-  if (a.note) return a.note;
+export function describe(a, info) {
+  // The page's own say what they do, or that it goes without saying.
+  if (a.note !== undefined) return a.note;
   if (a.builtin) return "Built in · only when it fast-forwards";
   if (a.kind === "command") return "Runs " + a.command.trim().split("\n")[0];
   if (a.where === "current") return a.draft ? "Current session · into its message box" : "Current session";
@@ -99,7 +100,7 @@ export function runAction(a, session) {
 // useRunning follows the command actions under way, by id, while the list is
 // open, with the time it was when they were last looked at, and those whose
 // output dv keeps.
-function useRunning() {
+export function useRunning() {
   const [state, setState] = useState({ running: {}, ran: new Set(), at: Date.now() });
   const look = useCallback(
     () =>
@@ -117,14 +118,17 @@ function useRunning() {
   return { ...state, look };
 }
 
-function elapsed(from, at) {
+export function elapsed(from, at) {
   const s = Math.max(0, Math.round((at - Date.parse(from)) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+// ready is whether a can run now: one for the current session needs one.
+export const ready = (a, session) => a.kind === "command" || a.builtin || a.run || a.where !== "current" || !!session;
+
 // ActionsPalette is Alt+A: the actions, found by name, run with Enter. One for
 // the current session waits for there to be one; Enter on a command running
-// stops it. A command that has run offers its output.
+// stops it. A command that has run offers its output. A phone has ActionsSheet.
 export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onOutput, onClose }) {
   const { all } = useActions();
   const info = useAgentChoices();
@@ -132,22 +136,20 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
   const [q, setQ] = useState("");
   const shown = [...all, ...builtIns(meta), ...extra].filter((a) => a.name.toLowerCase().includes(q.trim().toLowerCase()));
   const rows = [...shown, EDIT];
-  const ready = (a) => a.kind === "command" || a.builtin || a.run || a.where !== "current" || !!session;
+  const canRun = (a) => ready(a, session);
   const stop = (a) => api.stopAction(a.id).then(look, () => {});
-  const pick = (row) => (row === EDIT ? onEdit() : running[row.id] ? stop(row) : ready(row) && onRun(row));
+  const pick = (row) => (row === EDIT ? onEdit() : running[row.id] ? stop(row) : canRun(row) && onRun(row));
   const { sel, setSel, onKey, listRef } = usePaletteNav(rows.length, (i) => pick(rows[i]));
   const note = (a) => {
     if (running[a.id]) return `Running for ${elapsed(running[a.id].started, at)} · Enter stops it`;
-    return ready(a) ? describe(a, info) : "Open a session in the Agent view first";
+    return canRun(a) ? describe(a, info) : "Open a session in the Agent view first";
   };
-  // A phone's keyboard would come up over the list, which is what is tapped there.
-  const phone = useMedia(PHONE_APP);
   return (
     <Modal onClose={onClose} className="palette">
       <div className="palette-input">
         <IconBolt size={15} />
         <input
-          autoFocus={!phone}
+          autoFocus
           value={q}
           placeholder="Run an action..."
           onChange={(e) => {
@@ -161,7 +163,7 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
         {shown.map((a, i) => (
           <div className="action-line" key={(a.scope || "") + a.id}>
             <button
-              className={cx("palette-row", "action-row", i === sel && "on", !ready(a) && "unready", running[a.id] && "running")}
+              className={cx("palette-row", "action-row", i === sel && "on", !canRun(a) && "unready", running[a.id] && "running")}
               onMouseMove={() => setSel(i)}
               onClick={() => pick(a)}
               title={a.kind === "command" ? a.command : a.prompt}

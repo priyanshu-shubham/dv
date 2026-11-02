@@ -4,7 +4,9 @@ import { boot } from "./boot.js";
 import { SessionName } from "./Agent.jsx";
 import { IconPlus, IconX } from "./icons.jsx";
 import { say } from "./Notices.jsx";
-import { copyText, cx, duration, isMac, relTime } from "./util.js";
+import { copyText, cx, duration, isMac, relTime, useLasting } from "./util.js";
+import { Icon } from "./phone/icons.jsx";
+import { Picked, touchTerm } from "./phone/TermTouch.jsx";
 
 // The Terminal view: shells dv runs in the folder. The sidebar lists them with
 // what each is running; the one picked fills the rest. The shells are dv's, so
@@ -26,18 +28,27 @@ export function useTerminals(watch) {
       ),
     [],
   );
+  // Each after the last is answered, so a slow link isn't asked faster than it answers.
   useEffect(() => {
     if (!watch) return;
     let timer = 0;
-    const tick = () => {
-      if (!document.hidden) load();
-      timer = setTimeout(tick, POLL_MS);
+    let live = true;
+    const tick = async () => {
+      if (!document.hidden) await load();
+      if (live) timer = setTimeout(tick, POLL_MS);
     };
     tick();
-    return () => clearTimeout(timer);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
   }, [watch, load]);
   return [list, load, sessions];
 }
+
+// termDoing is what a terminal is at, in a line.
+export const termDoing = (t) =>
+  t.ended ? "exited" : t.tmux ? `tmux ${t.tmux}${t.command ? ` · ${t.command}` : ""}` : t.busy ? t.command || "running a command" : "at the prompt";
 
 export function TerminalList({ terms, sessions = [], activeId, folder, onSelect, onNew, onAttach, onClose, onRename }) {
   const [filter, setFilter] = useState("");
@@ -71,8 +82,6 @@ export function TerminalList({ terms, sessions = [], activeId, folder, onSelect,
     </div>
   );
   // Redrawn each poll, which keeps "running 14s" counting.
-  const doing = (t) =>
-    t.ended ? "exited" : t.tmux ? `tmux ${t.tmux}${t.command ? ` · ${t.command}` : ""}` : t.busy ? t.command || "running a command" : "at the prompt";
   const row = (t) => (
     <div
       key={t.id}
@@ -97,8 +106,8 @@ export function TerminalList({ terms, sessions = [], activeId, folder, onSelect,
         </button>
       </div>
       {/* One line of it, all of it on hover. */}
-      <div className={cx("session-last", t.busy && t.command && "term-command")} title={t.busy && t.command ? doing(t) : undefined}>
-        {doing(t)}
+      <div className={cx("session-last", t.busy && t.command && "term-command")} title={t.busy && t.command ? termDoing(t) : undefined}>
+        {termDoing(t)}
       </div>
       <div className="session-meta">
         <span className="term-dir">{t.dir || folder}</span>
@@ -193,7 +202,17 @@ export const leavesArrows = (el) => {
   return !!term && !ownsKeys(term);
 };
 
-export default function TerminalView({ terms, shownId, active, theme, focus, copyOnSelect, onNew }) {
+// termFor is the xterm showing terminal id, for what types into it from outside.
+const byId = new Map();
+export const termFor = (id) => byId.get(id);
+
+// What a phone asks for of a terminal's past when it first attaches: a slow
+// link would take a while over all dv keeps.
+const PHONE_MOST = 256 << 10;
+
+// In the phone app, phone is { fontSize, onFontSize, input, onAsk }: input.current
+// changes what is typed - the keys row's Ctrl held - and onAsk takes text picked.
+export default function TerminalView({ terms, shownId, active, theme, focus, copyOnSelect, onNew, phone }) {
   const [xterm, setXterm] = useState(null);
   useEffect(() => {
     loadXterm().then(setXterm, (e) => say("Could not load the terminal", e.message));
@@ -207,9 +226,19 @@ export default function TerminalView({ terms, shownId, active, theme, focus, cop
     <div className="term-view" hidden={!active}>
       {xterm &&
         open.map((t) => (
-          <TermPane key={t.id} id={t.id} xterm={xterm} shown={t.id === shownId} active={active} theme={theme} focus={focus} copyOnSelect={copyOnSelect} />
+          <TermPane
+            key={t.id}
+            id={t.id}
+            xterm={xterm}
+            shown={t.id === shownId}
+            active={active}
+            theme={theme}
+            focus={focus}
+            copyOnSelect={copyOnSelect}
+            phone={phone}
+          />
         ))}
-      {terms?.length === 0 && (
+      {terms?.length === 0 && !phone && (
         <div className="term-empty">
           <button className="btn" onClick={onNew}>
             New terminal
@@ -221,19 +250,26 @@ export default function TerminalView({ terms, shownId, active, theme, focus, cop
   );
 }
 
-function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
+function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, phone }) {
   const box = useRef(null);
-  const live = useRef(null); // { term, fit, link }
+  const live = useRef(null); // { term, fit, link, touch }
   const visible = shown && active;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const copyOnSelectRef = useRef(copyOnSelect);
   copyOnSelectRef.current = copyOnSelect;
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
+  const [term, setTerm] = useState(null);
+  const [down, setDown] = useState(false); // the connection, while it is being made again
+  const [back, setBack] = useState(false); // scrolled back from the end
+  const [picked, setPicked] = useState(null);
+  const [readout, setReadout] = useState("");
 
   useEffect(() => {
     const term = new xterm.Terminal({
       fontFamily: FONT,
-      fontSize: 12,
+      fontSize: phoneRef.current?.fontSize || 12,
       lineHeight: 1.3,
       scrollback: 10000,
       cursorBlink: true,
@@ -305,12 +341,41 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
     });
     term.open(box.current);
     xterms.set(box.current, term);
-    const link = attach(id, term, () => visibleRef.current);
-    live.current = { term, fit, link };
+    byId.set(id, term);
+    const link = attach(id, term, () => visibleRef.current, {
+      most: phoneRef.current ? PHONE_MOST : 0,
+      onDown: setDown,
+      input: (d) => phoneRef.current?.input?.current?.(d) ?? d,
+    });
+    const scrolled = term.onScroll(() => {
+      const b = term.buffer.active;
+      setBack(b.viewportY < b.baseY);
+    });
+    // A phone's own: a finger instead of the mouse, and the size it sets kept.
+    const touch =
+      phoneRef.current &&
+      touchTerm(el, term, {
+        picked: setPicked,
+        sized: (px, done) => {
+          term.options.fontSize = px;
+          fit.fit();
+          link.size();
+          setReadout(`${px}px · ${term.cols} columns`);
+          if (done) {
+            setTimeout(() => setReadout(""), 900);
+            phoneRef.current?.onFontSize(px);
+          }
+        },
+      });
+    live.current = { term, fit, link, touch };
+    setTerm(term);
     return () => {
       clearTimeout(settle);
       el.removeEventListener("mousedown", press, true);
+      touch?.stop();
+      scrolled.dispose();
       link.stop();
+      if (byId.get(id) === term) byId.delete(id);
       term.dispose();
     };
   }, [id, xterm]);
@@ -319,10 +384,19 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
     live.current.term.options.theme = PALETTES[theme] || PALETTES.dark;
   }, [theme]);
 
-  // The page showing a terminal sets its size.
+  const fontSize = phone?.fontSize;
+  useEffect(() => {
+    const { term, fit, link } = live.current;
+    if (!fontSize || term.options.fontSize === fontSize) return;
+    term.options.fontSize = fontSize;
+    if (visibleRef.current && box.current?.clientWidth) (fit.fit(), link.size());
+  }, [fontSize]);
+
+  // The page showing a terminal sets its size; another page having set it
+  // since - a phone, narrower - it sets it again as the reader comes back.
   useEffect(() => {
     if (!visible) return;
-    const { fit, link } = live.current;
+    const { term, fit, link } = live.current;
     const refit = () => {
       if (!box.current?.clientWidth) return;
       fit.fit();
@@ -331,20 +405,50 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
     refit();
     const ro = new ResizeObserver(refit);
     ro.observe(box.current);
-    return () => ro.disconnect();
+    const again = () => !document.hidden && link.size();
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    term.textarea?.addEventListener("focus", again);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+      term.textarea?.removeEventListener("focus", again);
+    };
   }, [visible]);
 
+  // A phone's keyboard comes up only at a tap: opened, a terminal is read first.
   useEffect(() => {
-    if (visible) live.current.term.focus();
+    if (visible && !phoneRef.current) live.current.term.focus();
   }, [visible, focus]);
 
-  return <div className="term-pane" hidden={!shown} ref={box} />;
+  // Lost a while, not a moment, as a phone's connection is as it changes network.
+  const lost = useLasting(down, 1500);
+  return (
+    <>
+      <div className="term-pane" hidden={!shown} ref={box} />
+      {shown && lost && <div className="term-link">Reconnecting · what you type is sent once it's back</div>}
+      {shown && phone && back && !picked && (
+        <button className="term-latest" onClick={() => live.current.term.scrollToBottom()}>
+          <Icon name="down" size={18} />
+          Latest
+        </button>
+      )}
+      {shown && readout && <div className="term-readout">{readout}</div>}
+      {shown && term && picked && <Picked term={term} picked={picked} onPick={(p) => live.current.touch.pick(p)} onAsk={(t) => phoneRef.current?.onAsk(t)} />}
+    </>
+  );
 }
+
+// What is typed while the connection is down is held for it, up to this much.
+const HOLD_BYTES = 16 << 10;
 
 // attach follows terminal id into term, and sends it what is typed, coming
 // back after a drop - dv restarting, a laptop waking - until stopped or the
-// terminal is closed.
-function attach(id, term, isShown) {
+// terminal is closed. most bounds what it is sent of the past when it first
+// attaches; onDown is told when the connection goes and is back; input may
+// change what is typed before it is sent.
+function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) => d } = {}) {
   let ws = null;
   let stopped = false;
   let timer = 0;
@@ -358,10 +462,25 @@ function attach(id, term, isShown) {
   // sent only what came after; and when dv was last heard from.
   let mark = null;
   let heard = 0;
+  let held = []; // typed while the connection was down
+  let heldBytes = 0;
   const encode = new TextEncoder();
 
   const send = (data) => ws?.readyState === WebSocket.OPEN && ws.send(data);
-  const size = () => send(JSON.stringify({ cols: term.cols, rows: term.rows }));
+  const hold = (bytes) => {
+    if (heldBytes + bytes.length > HOLD_BYTES) return;
+    held.push(bytes);
+    heldBytes += bytes.length;
+  };
+  const type = (bytes) => send(bytes) !== false || hold(bytes);
+  // A pinch, or a phone's keyboard coming up, sizes it at every frame; the
+  // shell is told once it settles.
+  let sizing = 0;
+  const sendSize = () => send(JSON.stringify({ cols: term.cols, rows: term.rows }));
+  const size = () => {
+    clearTimeout(sizing);
+    sizing = setTimeout(sendSize, 120);
+  };
   const again = () => {
     timer = setTimeout(open, wait);
     wait = Math.min(Math.max(wait * 2, 500), 5000);
@@ -377,6 +496,7 @@ function attach(id, term, isShown) {
     sock.close();
     clearTimeout(timer);
     wait = 0;
+    onDown(true);
     open();
   };
   // Doubled each time silence is what dropped it, until dv is heard: a
@@ -395,7 +515,7 @@ function attach(id, term, isShown) {
   const open = async () => {
     let url;
     try {
-      url = await api.terminalSocket(id, mark);
+      url = await api.terminalSocket(id, mark, most);
     } catch (e) {
       // Gone, as dv restarting takes its shells; the list will catch up.
       return stopped || e.status === 404 || again();
@@ -407,7 +527,7 @@ function attach(id, term, isShown) {
       wait = 0;
       heard = Date.now();
       replaying = true;
-      if (isShown()) size();
+      if (isShown()) sendSize();
     };
     sock.onmessage = (e) => {
       heard = Date.now();
@@ -425,7 +545,13 @@ function attach(id, term, isShown) {
       }
       if (s.attached) {
         mark = { epoch: s.epoch, at: s.at };
-        term.write("", () => (replaying = false));
+        term.write("", () => {
+          replaying = false;
+          for (const b of held) send(b);
+          held = [];
+          heldBytes = 0;
+          onDown(false);
+        });
         // Taken up where it was, it may have started again since, unseen here.
         if (!s.ended) ended = false;
       }
@@ -438,13 +564,16 @@ function attach(id, term, isShown) {
     sock.onclose = (e) => {
       if (ws === sock) ws = null;
       if (stopped || e.code === 4000) return;
+      onDown(true);
       again();
     };
   };
 
   term.onData((d) => {
-    if (replaying) return;
-    if (!ended) return send(encode.encode(d));
+    // The terminal's answers to what the replay asks of it all start with an
+    // escape, and are not sent; what is typed meanwhile, but for such keys, waits.
+    if (replaying) return void (!ended && !d.startsWith("\x1b") && hold(encode.encode(input(d))));
+    if (!ended) return type(encode.encode(input(d)));
     if (d.includes("\r") && !starting) {
       starting = true;
       api.restartTerminal(id).then(
@@ -453,13 +582,14 @@ function attach(id, term, isShown) {
       );
     }
   });
-  term.onBinary((d) => !replaying && !ended && send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
+  term.onBinary((d) => !replaying && !ended && type(Uint8Array.from(d, (c) => c.charCodeAt(0))));
   open();
   return {
     size,
     stop() {
       stopped = true;
       clearTimeout(timer);
+      clearTimeout(sizing);
       clearInterval(watch);
       document.removeEventListener("visibilitychange", back);
       window.removeEventListener("online", online);

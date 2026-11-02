@@ -74,6 +74,8 @@ func (c *Conversation) keyboard(n notify.Notice, open bool) [][]Button {
 	}
 	if n.Session != "" {
 		path += "?session=" + url.QueryEscape(n.Session)
+	} else if n.Terminal != "" {
+		path += "?terminal=" + url.QueryEscape(n.Terminal)
 	}
 	if link := LinkTo(c.p.Origin(), path); link != "" {
 		rows = append(rows, []Button{{Text: "Open in dv", URL: link}})

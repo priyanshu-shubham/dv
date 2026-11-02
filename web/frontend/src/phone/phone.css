@@ -276,6 +276,7 @@ html.phone ::-webkit-scrollbar {
 
 .p-nav-item {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -291,6 +292,7 @@ html.phone ::-webkit-scrollbar {
   display: grid;
   place-items: center;
   width: 64px;
+  max-width: 100%;
   height: 32px;
   border-radius: 16px;
   transition: background-color 0.2s;
@@ -1096,7 +1098,10 @@ html.phone ::-webkit-scrollbar {
 }
 
 .p-sheet-title {
-  padding: 0 24px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 12px 24px;
   color: var(--fg);
   font-size: 22px;
   line-height: 1.3;
@@ -2348,6 +2353,273 @@ html.phone .notice .notice-actions button {
   color: #0b57d0;
   background: none;
   font-weight: 500;
+}
+
+/* ---- Actions ---- */
+
+.p-search-field {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  margin: 0 16px 8px;
+  padding: 0 16px;
+  border-radius: 24px;
+  background: var(--m-high);
+  color: var(--fg-3);
+}
+
+.p-search-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  font: 16px var(--font-ui);
+}
+
+.p-actions .p-sec {
+  padding-inline: 24px;
+}
+
+.p-actions .p-tiles {
+  padding-bottom: 4px;
+}
+
+.p-tile.on {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+.p-one-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p-action {
+  min-height: 64px;
+  cursor: pointer;
+}
+
+.p-action:active {
+  background: var(--bg-hover);
+}
+
+.p-action-command {
+  color: var(--fg-3);
+  font: 12.5px var(--font-mono);
+}
+
+.p-action.unready .p-lead,
+.p-action.unready .p-row-title {
+  opacity: 0.5;
+}
+
+.p-lead.cmd {
+  color: var(--accent);
+}
+
+/* A command at work: a ring round its icon. */
+.p-lead.running {
+  position: relative;
+}
+
+.p-lead.running::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: p-spin 1s linear infinite;
+}
+
+@keyframes p-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.p-chip.stop {
+  background: #8c1d18;
+  box-shadow: none;
+  color: #f9dedc;
+}
+
+/* ---- Terminals ---- */
+
+.p-lead.hollow {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--border);
+}
+
+.p-term-doing,
+.p-term-dir {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p-term-doing.mono {
+  font-size: 13px;
+}
+
+.p-term-dir {
+  margin-top: 2px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+
+.p-failed {
+  color: var(--m-error);
+}
+
+.p-title-sub .mono {
+  font-size: 11.5px;
+}
+
+/* The terminal's own black, round the part of a row it is fitted short of. */
+.p-screen.p-term > .term-view {
+  flex: 1;
+  min-height: 0;
+  background: #0a0a0a;
+}
+
+/* A finger's, every gesture: TermTouch has them. */
+.p-screen.p-term .term-pane {
+  inset: 4px 4px 4px 8px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.term-latest,
+.term-readout {
+  position: absolute;
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 16px;
+  background: var(--m-highest);
+  color: var(--fg);
+  font-size: 13px;
+  box-shadow: var(--shadow-pop);
+}
+
+.term-latest {
+  bottom: 12px;
+  height: 32px;
+  padding: 0 14px 0 10px;
+}
+
+.term-readout {
+  top: 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* A picked range's ends, hung under its first and last cells. */
+.term-handle {
+  position: absolute;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  background: var(--accent);
+  touch-action: none;
+}
+
+.term-handle.start {
+  transform: translateX(-100%);
+  border-radius: 50% 0 50% 50%;
+}
+
+.term-handle.end {
+  border-radius: 0 50% 50% 50%;
+}
+
+.p-pickbar.at-keys {
+  bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+/* The keys a phone's keyboard lacks, three pages of them swiped through. */
+.p-keys {
+  flex: none;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--m-surface);
+}
+
+.p-keys-pages {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+}
+
+.p-keys-page {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 4px 4px;
+  scroll-snap-align: start;
+}
+
+.p-key {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--m-high);
+  color: var(--fg);
+  font: 13px var(--font-mono);
+}
+
+.p-key.word {
+  font: 500 12px var(--font-ui);
+}
+
+.p-key:active {
+  background: var(--m-highest);
+}
+
+.p-key.stop {
+  color: var(--m-error);
+}
+
+.p-key.on,
+.p-key.kept {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.p-key.kept {
+  box-shadow: inset 0 -3px 0 var(--accent-fg);
+}
+
+.p-keys-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 2px 0 6px;
+}
+
+.p-keys-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-4);
+}
+
+.p-keys-dots i.on {
+  background: var(--fg-2);
 }
 
 @media (prefers-reduced-motion: reduce) {

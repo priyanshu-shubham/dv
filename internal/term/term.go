@@ -46,6 +46,25 @@ type Info struct {
 	// Tmux is the session a tmux client in front shows, whose active pane
 	// Command and Dir are then about.
 	Tmux string `json:"tmux,omitempty"`
+	// Notify is the reader waiting to be told when what runs next ends.
+	Notify bool `json:"notify,omitempty"`
+
+	alt bool
+}
+
+// FullScreen is whether a program has the whole screen, as Attach found it.
+func (i Info) FullScreen() bool { return i.alt }
+
+// Finished is what a terminal the reader asked about tells of: the command
+// that ended, or the shell itself. A command's exit status is the shell's
+// alone to know.
+type Finished struct {
+	ID, Name string
+	Command  string
+	Took     time.Duration
+	Ended    bool // the shell, with Exit
+	Exit     int
+	Tail     string // the last lines it printed, as plain text
 }
 
 // Event is what a page attached is sent: output, or the shell ending or
@@ -67,7 +86,13 @@ type Manager struct {
 
 	keepMu sync.Mutex
 	kept   []keptTerm // as last written
+
+	onFinish func(Finished)
 }
+
+// OnFinish sets what is told of a terminal the reader asked to hear from,
+// before any is opened.
+func (m *Manager) OnFinish(f func(Finished)) { m.onFinish = f }
 
 type ticket struct {
 	term    string
@@ -257,6 +282,23 @@ type Terminal struct {
 	gone     bool // closed by the reader
 	cols     int
 	rows     int
+
+	notify bool
+	// Where, as total counts, the reader last pressed Enter at the prompt, and
+	// the shell's own output began since a command's last. Who had the
+	// terminal as it was read tells the two apart, if not for a command quick
+	// enough to be done by then. prompt is the fewest lines a prompt has taken.
+	typedAt, shellFrom int64
+	inCmd              bool
+	prompt             int
+	// A command the shell has the terminal back from, told of once it keeps it
+	// for a tick: between the two of `a; b` it has it for a moment.
+	ending *ending
+}
+
+type ending struct {
+	command string
+	since   time.Time
 }
 
 func (t *Terminal) ID() string { return t.id }
@@ -267,6 +309,7 @@ func (t *Terminal) Info() Info {
 	info := Info{
 		ID: t.id, Name: cmp.Or(t.name, filepath.Base(t.shell)), Named: t.name != "", Dir: t.dir,
 		Busy: !t.ended && t.fg != t.pid, Command: t.command, Since: t.since, Output: t.output, Ended: t.ended, Exit: t.exit,
+		Notify: t.notify,
 	}
 	if c := t.tmux; c != nil && c.session != "" {
 		info.Tmux, info.Command, info.Dir = c.session, c.command, c.dir
@@ -280,6 +323,26 @@ func (t *Terminal) Rename(name string) {
 	t.name = name
 	t.mu.Unlock()
 	t.m.keep()
+}
+
+// Notify has the reader told when the command running ends, or the next one
+// if none is, or the shell; once.
+func (t *Terminal) Notify(on bool) {
+	t.mu.Lock()
+	t.notify = on
+	t.mu.Unlock()
+}
+
+// finished tells of what ended, if the reader asked; under t.mu, it returns
+// what does the telling, to be called once that is let go.
+func (t *Terminal) finished(f Finished) func() {
+	tell := t.m.onFinish
+	if !t.notify || t.gone || tell == nil {
+		return func() {}
+	}
+	t.notify = false
+	f.ID, f.Name = t.id, cmp.Or(t.name, filepath.Base(t.shell))
+	return func() { tell(f) }
 }
 
 // Restart starts a shell again in a terminal whose shell has exited, where
@@ -333,12 +396,13 @@ func (t *Terminal) start(dir string) error {
 	t.shell, t.pty, t.pid, t.stop, t.dir = shell, f, cmd.Process.Pid, stop, dir
 	t.fg, t.command, t.since, t.tmux = cmd.Process.Pid, "", time.Now().UTC(), nil
 	t.ended, t.exit, t.alt = false, 0, false
+	t.inCmd, t.ending, t.typedAt, t.shellFrom = false, nil, t.total, t.total
 	t.mu.Unlock()
 
 	read := make(chan struct{})
 	go func() {
 		defer close(read)
-		t.read(f)
+		t.read(f, cmd.Process.Pid)
 	}()
 	go t.watch(f, cmd.Process.Pid, stop)
 	go func() {
@@ -356,18 +420,24 @@ func (t *Terminal) start(dir string) error {
 		}
 		t.mu.Lock()
 		t.ended, t.exit, t.command, t.since = true, code, "", time.Now().UTC()
+		tell := t.finished(Finished{Ended: true, Exit: code, Tail: plainTail(t.out, tailLines)})
 		t.mu.Unlock()
 		t.send(Event{Ended: true, Exit: code})
+		tell()
 	}()
 	return nil
 }
 
-func (t *Terminal) read(f *os.File) {
+// tailLines is how much of what a command printed its notice quotes.
+const tailLines = 20
+
+func (t *Terminal) read(f *os.File, shell int) {
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := f.Read(buf)
 		if n > 0 {
-			t.printed(bytes.Clone(buf[:n]))
+			fg := foreground(f)
+			t.printed(bytes.Clone(buf[:n]), fg > 0 && fg != shell)
 		}
 		if err != nil {
 			return
@@ -388,9 +458,14 @@ func lastOf(p []byte, seqs [][]byte) int {
 	return i
 }
 
-func (t *Terminal) printed(p []byte) {
+// printed keeps p, which came while a command had the terminal if cmd.
+func (t *Terminal) printed(p []byte, cmd bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if !cmd && t.inCmd {
+		t.shellFrom = t.total
+	}
+	t.inCmd = cmd
 	t.out = append(t.out, p...)
 	t.total += int64(len(p))
 	// Let run to twice what is kept between trims, so a flood of output is not
@@ -416,6 +491,15 @@ func (t *Terminal) printed(p []byte) {
 func (t *Terminal) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	f, ended := t.pty, t.ended
+	// Enter at the prompt: what comes next is the command's, then a prompt as
+	// tall as this one.
+	if !ended && t.fg == t.pid && !t.alt && bytes.ContainsAny(p, "\r\n") {
+		start := t.total - int64(len(t.out))
+		if n := promptLines(t.out[max(t.shellFrom, start)-start:]); n > 0 && (t.prompt == 0 || n < t.prompt) {
+			t.prompt = n
+		}
+		t.typedAt = t.total
+	}
 	t.mu.Unlock()
 	if f == nil || ended {
 		return 0, errors.New("its shell has exited")
@@ -476,7 +560,7 @@ func (t *Terminal) Attach(from Mark) (w *Watcher, back []byte, resumed bool, mar
 	if from.Epoch == t.epoch && from.At >= start && from.At <= t.total {
 		back, resumed = t.out[from.At-start:], true
 	}
-	return w, bytes.Clone(back), resumed, Mark{t.epoch, t.total}, Info{Ended: t.ended, Exit: t.exit}
+	return w, bytes.Clone(back), resumed, Mark{t.epoch, t.total}, Info{Ended: t.ended, Exit: t.exit, alt: t.alt}
 }
 
 func (w *Watcher) Close() {
@@ -524,7 +608,15 @@ func (t *Terminal) watch(f *os.File, pid int, stop <-chan struct{}) {
 			t.dir = dir
 		}
 		c, looked := t.tmux, len(t.watchers) > 0
+		tell := func() {}
+		if e := t.ending; e != nil && !changed && fg == pid {
+			t.ending = nil
+			start := t.total - int64(len(t.out))
+			tail := commandTail(t.out[max(t.typedAt, start)-start:], max(t.prompt, 1), tailLines)
+			tell = t.finished(Finished{Command: e.command, Took: time.Since(e.since), Tail: tail})
+		}
 		t.mu.Unlock()
+		tell()
 		if changed {
 			var args []string
 			if fg != pid {
@@ -534,7 +626,15 @@ func (t *Terminal) watch(f *os.File, pid int, stop <-chan struct{}) {
 			command := display(args)
 			t.mu.Lock()
 			if !t.ended {
-				t.fg, t.command, t.since, t.tmux = fg, command, time.Now().UTC(), c
+				since := time.Now().UTC()
+				switch {
+				case fg == pid && t.fg != pid && t.tmux == nil:
+					t.ending = &ending{t.command, t.since}
+				case fg != pid && t.ending != nil:
+					// The next of a run of them: it ends when they all have.
+					since, t.ending = t.ending.since, nil
+				}
+				t.fg, t.command, t.since, t.tmux = fg, command, since, c
 			}
 			t.mu.Unlock()
 			if c == nil {

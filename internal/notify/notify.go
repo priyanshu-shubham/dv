@@ -27,20 +27,21 @@ const (
 
 // A Notice is one thing to tell the reader.
 type Notice struct {
-	ID      string    `json:"id"`
-	Kind    string    `json:"kind"`
-	Folder  string    `json:"folder,omitempty"` // its slug in a hub
-	Place   string    `json:"place"`            // the folder's name
-	Session string    `json:"session"`
-	Agent   string    `json:"agent,omitempty"`   // "codex"; "" is Claude Code
-	Request string    `json:"request,omitempty"` // an Ask's, which its folder's page answers in a window of its own
-	Action  string    `json:"action,omitempty"`  // a command action's, whose output its folder's page shows
-	Title   string    `json:"title"`             // "Claude wants to run a command"
-	Where   string    `json:"where"`             // the session's title
-	Body    string    `json:"body,omitempty"`    // the command or question, or what the agent said last
-	Format  string    `json:"format,omitempty"`  // Body's: Code, Markdown, or plain text
-	Choices []string  `json:"choices,omitempty"` // answers a provider can offer
-	At      time.Time `json:"at"`
+	ID       string    `json:"id"`
+	Kind     string    `json:"kind"`
+	Folder   string    `json:"folder,omitempty"` // its slug in a hub
+	Place    string    `json:"place"`            // the folder's name
+	Session  string    `json:"session"`
+	Agent    string    `json:"agent,omitempty"`    // "codex"; "" is Claude Code
+	Request  string    `json:"request,omitempty"`  // an Ask's, which its folder's page answers in a window of its own
+	Action   string    `json:"action,omitempty"`   // a command action's, whose output its folder's page shows
+	Terminal string    `json:"terminal,omitempty"` // a terminal's, which its folder's page shows
+	Title    string    `json:"title"`              // "Claude wants to run a command"
+	Where    string    `json:"where"`              // the session's title
+	Body     string    `json:"body,omitempty"`     // the command or question, or what the agent said last
+	Format   string    `json:"format,omitempty"`   // Body's: Code, Markdown, or plain text
+	Choices  []string  `json:"choices,omitempty"`  // answers a provider can offer
+	At       time.Time `json:"at"`
 	// Loud asks the pages for a desktop notification: nobody was at one as it
 	// came, or it has been sent on since.
 	Loud bool `json:"loud,omitempty"`

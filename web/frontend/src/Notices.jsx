@@ -8,7 +8,7 @@ import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { agentName, byLastSent, cx, OUTPUT_KEY, PHONE_APP, useMedia } from "./util.js";
+import { agentName, byLastSent, cx, OUTPUT_KEY, PHONE_APP, TERMINAL_KEY, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 // A request is two pulses, a turn's end a tick.
@@ -299,10 +299,11 @@ function usePresence() {
 // reader. looking is the session on screen in the Agent view, asking the Ask
 // panel's when it shows; review opens a request of this page's folder in its
 // window, open goes to one of its sessions, go to a session in another of
-// the hub's folders, and output shows a command action's. In the phone app a
+// the hub's folders, output shows a command action's and terminal one of its
+// terminals. In the phone app a
 // request is answered in its session, so that is where its notice goes. It
 // returns the notices open.
-export function useNotices({ looking, asking: askOpen, desktop, review, open, go, output, phone, buzz, sound }) {
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go, output, terminal, phone, buzz, sound }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
@@ -310,7 +311,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
   const told = useRef(new Map()); // desktop notifications, by notice
   const alerted = useRef(new Set()); // buzzed or chimed for, once each
   const now = useRef();
-  now.current = { desktop, review, open, go, output };
+  now.current = { desktop, review, open, go, output, terminal };
 
   useEffect(() => {
     const ids = new Set(notices.map((n) => n.id));
@@ -332,12 +333,14 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
       const asking = n.kind === "ask";
       const session = n.where || (asking ? "a new session" : "A session");
       const where = own ? session : `${n.place}: ${session}`;
-      // A command an action ran has no session, only its output in its folder.
+      // A command an action ran has no session, only its output in its folder;
+      // nor does one run in a terminal.
       const goThere = () => {
         if (n.session) own ? now.current.open(n.session) : now.current.go(n.folder, n.session);
-        else if (own) n.action && now.current.output(n.action);
+        else if (own) n.action ? now.current.output(n.action) : n.terminal && now.current.terminal(n.terminal);
         else {
           if (n.action) sessionStorage.setItem(OUTPUT_KEY, n.action);
+          if (n.terminal) sessionStorage.setItem(TERMINAL_KEY, n.terminal);
           location.href = `/${n.folder}/`;
         }
       };
@@ -373,7 +376,9 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
         ? own
           ? n.action
             ? [{ label: "Output", opens: true, run: goThere }]
-            : []
+            : n.terminal
+              ? [{ label: "Open terminal", opens: true, run: goThere }]
+              : []
           : [{ label: "Open folder", opens: true, run: goThere }]
         : !asking
         ? [{ label: "Open session", opens: true, run: goThere }]

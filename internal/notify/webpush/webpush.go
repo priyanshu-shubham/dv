@@ -100,14 +100,15 @@ func (p *Push) send(ctx context.Context, n notify.Notice) {
 
 // message is what a device's notification is made from.
 type message struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`
-	Title   string `json:"title"`
-	Body    string `json:"body"`
-	URL     string `json:"url"`
-	Folder  string `json:"folder,omitempty"`
-	Session string `json:"session,omitempty"`
-	Action  string `json:"action,omitempty"`
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	URL      string `json:"url"`
+	Folder   string `json:"folder,omitempty"`
+	Session  string `json:"session,omitempty"`
+	Action   string `json:"action,omitempty"`
+	Terminal string `json:"terminal,omitempty"`
 }
 
 // A message is held well inside the 4 KB a push service carries, as a
@@ -129,6 +130,8 @@ func messageOf(n notify.Notice) message {
 		path += "?session=" + url.QueryEscape(n.Session)
 	} else if n.Action != "" {
 		path += "?output=" + url.QueryEscape(n.Action)
+	} else if n.Terminal != "" {
+		path += "?terminal=" + url.QueryEscape(n.Terminal)
 	}
 	body := clip(n.Where, titleChars)
 	if line := excerpt(n.Body, n.Format); line != "" && body != "" {
@@ -136,7 +139,7 @@ func messageOf(n notify.Notice) message {
 	} else if line != "" {
 		body = line
 	}
-	return message{ID: n.ID, Kind: n.Kind, Title: clip(n.Title, titleChars), Body: body, URL: path, Folder: n.Folder, Session: n.Session, Action: n.Action}
+	return message{ID: n.ID, Kind: n.Kind, Title: clip(n.Title, titleChars), Body: body, URL: path, Folder: n.Folder, Session: n.Session, Action: n.Action, Terminal: n.Terminal}
 }
 
 // excerpt is the start of a body, on one line; Markdown's marks are dropped,

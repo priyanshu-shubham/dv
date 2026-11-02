@@ -26,6 +26,8 @@ export function pickSession(slug, session) {
 // OUTPUT_KEY holds, in sessionStorage, the command action whose output the
 // page loading next is to show.
 export const OUTPUT_KEY = "dv:output";
+// TERMINAL_KEY likewise holds the terminal it is to show.
+export const TERMINAL_KEY = "dv:terminal";
 
 // usePersisted keeps a small preference in localStorage so the viewer opens the
 // way you left it; `session` keeps it for the tab only. It is for what suits

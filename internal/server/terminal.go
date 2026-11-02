@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"dv/internal/notify"
 	"dv/internal/term"
 )
 
@@ -21,7 +24,8 @@ import (
 // keeps, the end of what it printed before the page came ({attached, resumed,
 // ended, exit, epoch, at}), then its shell ending ({ended, exit}) or starting
 // again ({started}), and {} while quiet. A page attaching again names where
-// it got to, ?epoch=&at=, to be sent only what came after.
+// it got to, ?epoch=&at=, to be sent only what came after; ?most= bounds what
+// it is sent otherwise.
 
 const (
 	// Well inside a tunnel's idle timeout, and often enough for a page that
@@ -112,24 +116,63 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) *term.Terminal
 	return t
 }
 
-func (s *Server) handleRenameTerminal(w http.ResponseWriter, r *http.Request) {
+// handleChangeTerminal renames a terminal, or has the reader told when what
+// runs in it ends: {"name"}, {"notify"}.
+func (s *Server) handleChangeTerminal(w http.ResponseWriter, r *http.Request) {
 	t := s.terminal(w, r)
 	if t == nil {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name   *string `json:"name"`
+		Notify *bool   `json:"notify"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if len(name) > 100 {
-		name = strings.ToValidUTF8(name[:100], "")
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if len(name) > 100 {
+			name = strings.ToValidUTF8(name[:100], "")
+		}
+		t.Rename(name)
 	}
-	t.Rename(name)
+	if req.Notify != nil {
+		t.Notify(*req.Notify)
+	}
 	writeJSON(w, http.StatusOK, s.terminalInfo(t.Info()))
+}
+
+// terminalFinished tells the reader a terminal they asked about is done.
+func (s *Server) terminalFinished(f term.Finished) {
+	if s.notices == nil {
+		return
+	}
+	n := notify.Notice{ID: noticeID(), Kind: notify.Done, Terminal: f.ID, Where: f.Name, Body: clip(f.Tail), Format: notify.Code}
+	switch {
+	case f.Ended && f.Exit != 0:
+		n.Title = fmt.Sprintf("The shell exited with %d", f.Exit)
+	case f.Ended:
+		n.Title = "The shell exited"
+	case f.Command != "":
+		n.Title = fmt.Sprintf("%s finished after %s", firstLine(f.Command), took(f.Took))
+	default:
+		n.Title = "Finished after " + took(f.Took)
+	}
+	s.notices.Raise(n)
+}
+
+// took is a command's running time as the page writes one: 2m 14s.
+func took(d time.Duration) string {
+	d = d.Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 func (s *Server) handleCloseTerminal(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +225,15 @@ func (s *Server) handleAttachTerminal(w http.ResponseWriter, r *http.Request) {
 	at, _ := strconv.ParseInt(q.Get("at"), 10, 64)
 	watcher, back, resumed, mark, state := t.Attach(term.Mark{Epoch: q.Get("epoch"), At: at})
 	defer watcher.Close()
+	// A page on a slow link may ask for less of what came before, from a line's
+	// start; not of a full-screen program's, whose switch to it would be cut.
+	if most, _ := strconv.Atoi(q.Get("most")); !resumed && !state.FullScreen() && most > 0 && len(back) > most {
+		from := len(back) - most
+		if nl := bytes.IndexByte(back[from:], '\n'); nl >= 0 && nl < 4096 {
+			from += nl + 1
+		}
+		back = back[from:]
+	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {

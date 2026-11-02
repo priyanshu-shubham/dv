@@ -2,16 +2,18 @@ import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import { boot, slug } from "./boot.js";
 import { api } from "./api.js";
-import { OUTPUT_KEY, PHONE_APP, PHONE_FOLDER_KEY, pickSession } from "./util.js";
+import { OUTPUT_KEY, PHONE_APP, PHONE_FOLDER_KEY, pickSession, TERMINAL_KEY } from "./util.js";
 
 // A link to a session, as a notice sent to the phone has, opens on it; one to
-// a command action's output, as its notice's has, shows that.
+// a command action's output, or a terminal, as their notices' have, shows that.
 const params = new URLSearchParams(location.search);
 const linked = params.get("session");
 const output = params.get("output");
-if (linked || output) {
+const terminal = params.get("terminal");
+if (linked || output || terminal) {
   if (boot.page !== "hub" && /^[0-9a-f-]{36}$/.test(linked)) pickSession(slug, linked);
   if (boot.page !== "hub" && output) sessionStorage.setItem(OUTPUT_KEY, output);
+  if (boot.page !== "hub" && terminal) sessionStorage.setItem(TERMINAL_KEY, terminal);
   history.replaceState(null, "", location.pathname + location.hash);
 }
 

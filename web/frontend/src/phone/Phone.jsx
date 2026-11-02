@@ -13,6 +13,7 @@ import { AUTO, PRESETS } from "../Header.jsx";
 import { Choice, Menu, Row, Sheet } from "./Sheet.jsx";
 import Sessions from "./Sessions.jsx";
 import Files from "./Files.jsx";
+import { TerminalList, TerminalScreen } from "./Terminals.jsx";
 import { usePush } from "./push.js";
 import { endPicking } from "./Pick.jsx";
 import { say } from "../Notices.jsx";
@@ -22,10 +23,12 @@ const TABS = [
   { id: "agent", label: "Agent", icon: "spark" },
   { id: "diff", label: "Diff", icon: "diff" },
   { id: "files", label: "Files", icon: "file", on: "fileOn" },
+  { id: "terminal", label: "Terminal", icon: "terminal" },
   { id: "comments", label: "Comments", icon: "comment", on: "commentOn" },
 ];
 
 const SESSION_KEY = `dv:${slug ? slug + ":" : ""}phone-session`;
+const TERM_KEY = `dv:${slug ? slug + ":" : ""}phone-terminal`;
 const SCREEN_MS = 300; // a screen's slide, as phone.css has it
 
 // Whether the page opens on a session - a notification's, or one picked in
@@ -86,8 +89,34 @@ export default function Phone({ app }) {
     if (shownAt.current === app.showSession) return;
     shownAt.current = app.showSession;
     setInCode(false);
+    setInTerm(false);
     setInSession(true);
   }, [app.showSession]);
+
+  // A terminal's screen, over the Terminal tab.
+  const terminal = app.terminal;
+  const [inTerm, setInTerm] = useState(() => tab === "terminal" && !!sessionStorage.getItem(TERM_KEY));
+  const [termVisited, setTermVisited] = useState(inTerm);
+  if (inTerm && !termVisited) setTermVisited(true);
+  useEffect(() => {
+    if (inTerm) sessionStorage.setItem(TERM_KEY, "1");
+    else sessionStorage.removeItem(TERM_KEY);
+  }, [inTerm]);
+  useBack(inTerm, () => setInTerm(false));
+  const openTerm = (id) => {
+    terminal.onSelect(id);
+    go("terminal");
+    setInTerm(true);
+  };
+  // As a terminal's notice asks.
+  const termAt = useRef(terminal.show);
+  useEffect(() => {
+    if (termAt.current === terminal.show) return;
+    termAt.current = terminal.show;
+    setInCode(false);
+    setInSession(false);
+    setInTerm(true);
+  }, [terminal.show]);
   // A task left before anything was said or made in it is not kept.
   const leaveSession = () => {
     if (meta?.task && !app.agent.sessions.length && !app.uncommitted) closeTask().catch(() => setInSession(false));
@@ -130,6 +159,7 @@ export default function Phone({ app }) {
     if (focusAt.current === app.agentProps.boxFocus) return;
     focusAt.current = app.agentProps.boxFocus;
     setInCode(false);
+    setInTerm(false);
     setInSession(true);
   }, [app.agentProps.boxFocus]);
 
@@ -164,7 +194,7 @@ export default function Phone({ app }) {
 
   const [sheet, setSheet] = useState(null); // "folders" | "scope" | "menu"
   const waiting = app.requests.length + (app.elsewhere || []).reduce((n, f) => n + (f.requests?.length || 0), 0);
-  const tabs = TABS.filter((t) => t.id !== "diff" || app.modes.includes("diff"));
+  const tabs = TABS.filter((t) => (t.id !== "diff" && t.id !== "terminal") || app.modes.includes(t.id));
 
   const title = meta?.repo || slug || "dv";
   const branch = meta?.head?.branch || (meta?.head?.sha || "").slice(0, 7);
@@ -252,6 +282,20 @@ export default function Phone({ app }) {
           />
         </section>
 
+        <section className="p-tab" hidden={tab !== "terminal"}>
+          {tab === "terminal" && (
+            <TerminalList
+              terms={terminal.terms}
+              sessions={terminal.sessions || []}
+              folder={meta?.repo}
+              onOpen={openTerm}
+              onAttach={(s) => terminal.onNew(s).then((t) => t && openTerm(t.id))}
+              onClose={terminal.onClose}
+              onRename={terminal.onRename}
+            />
+          )}
+        </section>
+
         <section className="p-tab p-comments" hidden={tab !== "comments"}>
           {tab === "comments" && (
             <CommentsPanel
@@ -271,6 +315,12 @@ export default function Phone({ app }) {
         <button className="p-fab" onClick={newSession}>
           <Icon name="edit" />
           New session
+        </button>
+      )}
+      {tab === "terminal" && (
+        <button className="p-fab" onClick={() => terminal.onNew().then((t) => t && openTerm(t.id))}>
+          <Icon name="plus" />
+          New terminal
         </button>
       )}
 
@@ -306,6 +356,23 @@ export default function Phone({ app }) {
           {app.codeInner}
         </div>
       </div>
+
+      {termVisited && (
+        <TerminalScreen
+          open={inTerm}
+          t={terminal.terms?.find((t) => t.id === terminal.id)}
+          terms={terminal.terms}
+          id={terminal.id}
+          folder={meta?.repo}
+          theme={terminal.theme}
+          onBack={() => setInTerm(false)}
+          onActions={() => app.openOverlay({ type: "actions" })}
+          onRename={terminal.onRename}
+          onNotify={terminal.onNotify}
+          onClose={terminal.onClose}
+          onAsk={terminal.onAsk}
+        />
+      )}
 
       <div className={cx("p-screen session", inSession && "open")} aria-hidden={!inSession}>
         {(app.agentVisited || inSession) && (
