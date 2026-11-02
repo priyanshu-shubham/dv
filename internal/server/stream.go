@@ -146,23 +146,66 @@ func (rs *resumes) resume(what, last string, sub *agent.Sub) {
 
 // pieceSize is about as much as an update is sent in at once: the page hears
 // nothing of an event until it is all in, and on a slow link takes a long
-// silence for a dead connection.
-const pieceSize = 64 << 10
+// silence for a dead connection. The end of a conversation sent whole goes in
+// a smaller first piece, as what is to show first.
+const (
+	pieceSize = 64 << 10
+	firstSize = 32 << 10
+)
 
-// pieces is an update, b, as events of about pieceSize: its items split, the
-// later pieces adding to what the first set out.
+// pieces is an update, b, as events of about pieceSize. A conversation sent
+// whole goes end first, each later piece going ahead of the last, as the
+// page shows its end; any other update in order, each piece adding to the one
+// before.
 func pieces(u agent.Update, b []byte) [][]byte {
-	k := (len(b) + pieceSize - 1) / pieceSize
-	if k <= 1 || len(u.Items) < 2 {
+	if len(b) <= firstSize || len(u.Items) < 2 {
 		return [][]byte{b}
 	}
-	per := (len(u.Items) + k - 1) / k
-	var out [][]byte
-	for i := 0; i < len(u.Items); i += per {
+	sizes := make([]int, len(u.Items))
+	for i, it := range u.Items {
+		j, err := json.Marshal(it)
+		if err != nil {
+			return [][]byte{b}
+		}
+		sizes[i] = len(j)
+	}
+	// Spans of items, [from, to), in the order they are sent.
+	type span struct{ from, to int }
+	var spans []span
+	if u.Reset {
+		limit := firstSize
+		for to := len(u.Items); to > 0; {
+			from, size := to-1, sizes[to-1]
+			for from > 0 && size+sizes[from-1] <= limit {
+				from--
+				size += sizes[from]
+			}
+			spans = append(spans, span{from, to})
+			to, limit = from, pieceSize
+		}
+	} else {
+		for from := 0; from < len(u.Items); {
+			to, size := from+1, sizes[from]
+			for to < len(u.Items) && size+sizes[to] <= pieceSize {
+				size += sizes[to]
+				to++
+			}
+			spans = append(spans, span{from, to})
+			from = to
+		}
+	}
+	if len(spans) == 1 {
+		return [][]byte{b}
+	}
+	out := make([][]byte, 0, len(spans))
+	for i, s := range spans {
 		v := u
-		v.Items = u.Items[i:min(i+per, len(u.Items))]
+		v.Items, v.More = u.Items[s.from:s.to], i < len(spans)-1
 		if i > 0 {
 			v.Reset, v.Keep = false, nil
+			if u.Reset {
+				v.Items, v.Before = nil, u.Items[s.from:s.to]
+			}
 		}
 		p, err := json.Marshal(v)
 		if err != nil {

@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"dv/internal/agent"
 )
 
 func TestAMessageSentAgainIsSentOnce(t *testing.T) {
@@ -44,6 +47,57 @@ func TestAMessageSentAgainIsSentOnce(t *testing.T) {
 	s.once("other", "u1", send)
 	if n := sends.Load(); n != 2 {
 		t.Fatalf("sent %d times", n)
+	}
+}
+
+// A long conversation goes end first, in pieces each going ahead of the last;
+// an update to one goes in order. Either way the page puts back what was sent.
+func TestALongUpdateGoesInPiecesThatAddUp(t *testing.T) {
+	var items []agent.Item
+	for i := range 400 {
+		items = append(items, agent.Item{Key: fmt.Sprint(i), Kind: "text", Text: strings.Repeat("x", 500)})
+	}
+	for _, reset := range []bool{true, false} {
+		u := agent.Update{Reset: reset, Items: items}
+		b, _ := json.Marshal(u)
+		ps := pieces(u, b)
+		if len(ps) < 3 {
+			t.Fatalf("reset %v: %d pieces", reset, len(ps))
+		}
+		var page []string
+		for i, p := range ps {
+			if len(p) > pieceSize+4096 {
+				t.Errorf("piece %d is %d bytes", i, len(p))
+			}
+			var v agent.Update
+			json.Unmarshal(p, &v)
+			if v.More != (i < len(ps)-1) || v.Reset != (reset && i == 0) {
+				t.Fatalf("reset %v, piece %d: more %v, reset %v", reset, i, v.More, v.Reset)
+			}
+			for _, it := range v.Items {
+				page = append(page, it.Key)
+			}
+			before := []string{}
+			for _, it := range v.Before {
+				before = append(before, it.Key)
+			}
+			page = append(before, page...)
+		}
+		if reset {
+			var first agent.Update
+			json.Unmarshal(ps[0], &first)
+			if len(ps[0]) > firstSize+4096 || first.Items[len(first.Items)-1].Key != "399" {
+				t.Fatalf("the first piece is not the end: %d bytes", len(ps[0]))
+			}
+		}
+		for i, k := range page {
+			if k != fmt.Sprint(i) {
+				t.Fatalf("reset %v: the page has %v", reset, page)
+			}
+		}
+		if len(page) != len(items) {
+			t.Fatalf("reset %v: %d of %d", reset, len(page), len(items))
+		}
 	}
 }
 

@@ -1457,8 +1457,12 @@ type Update struct {
 	Reset bool `json:"reset,omitempty"`
 	// Keep is how many of the items the page has to keep, the rest gone,
 	// before patching in Items; unset, it keeps them all.
-	Keep    *int     `json:"keep,omitempty"`
-	Items   []Item   `json:"items,omitempty"`
+	Keep  *int   `json:"keep,omitempty"`
+	Items []Item `json:"items,omitempty"`
+	// Before are items to go ahead of all the page has: a long conversation
+	// sent whole comes end first, for what was said last to show at once.
+	Before  []Item   `json:"before,omitempty"`
+	More    bool     `json:"more,omitempty"` // the rest of this update is coming
 	Earlier *Earlier `json:"earlier,omitempty"`
 	Live    Live     `json:"live"`
 }

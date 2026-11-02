@@ -108,7 +108,9 @@ function useSession(id, call = "", from = "") {
               } else items[i] = it;
             }
           }
-          return { key, items, live: u.live, earlier: u.earlier, lost: false };
+          // A long conversation comes end first, the rest going above it.
+          if (u.before?.length) items = [...u.before, ...items];
+          return { key, items, live: u.live, earlier: u.earlier, lost: false, more: !!u.more };
         }),
       () => setState((s) => (s.lost ? s : { ...s, lost: true })),
     );
@@ -586,7 +588,7 @@ export default function AgentView({
   // came before: by session, where it is shown from then.
   const [fromBy, setFromBy] = useState({});
   const from = fromBy[id] || "";
-  const { items: read, live, earlier, lost: dropped } = useSession(id, "", from);
+  const { items: read, live, earlier, lost: dropped, more } = useSession(id, "", from);
   // Whose session this is, Codex's or Claude Code's (""); for the blank one,
   // whose the next session will be.
   const agentKind = id ? session?.agent || live?.agent || "" : newAgent;
@@ -728,7 +730,7 @@ export default function AgentView({
   // Where the reader left each session scrolled up, to come back to there.
   const places = useRef(new Map());
   const shown = useRef(null);
-  shown.current = { items, live };
+  shown.current = { items, live, more };
 
   const running = live?.running || session?.running || "";
   const shared = !!(live?.shared || session?.shared);
@@ -867,9 +869,11 @@ export default function AgentView({
     const f = follow.current;
     if (!el?.clientHeight) return;
     if (f.back) {
-      const { items, live } = shown.current;
+      const { items, live, more } = shown.current;
       if (!live) return;
       const i = items.findIndex((it) => it.key === f.back.key);
+      // The conversation comes end first; the place may be in what is to come.
+      if (i < 0 && more) return;
       const item = i >= 0 && itemEls(el)[i];
       f.back.until ??= performance.now() + 3000;
       if (item && performance.now() < f.back.until) {
