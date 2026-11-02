@@ -401,11 +401,9 @@ func (m *Manager) running() map[string]running {
 		// terminal's, and leaving them out first keeps a terminal sharing one.
 		own := map[int]bool{}
 		for _, p := range m.procs {
-			p.mu.Lock()
-			if p.cmd != nil && p.cmd.Process != nil {
-				own[p.cmd.Process.Pid] = true
+			if pid := p.pid.Load(); pid != 0 {
+				own[int(pid)] = true
 			}
-			p.mu.Unlock()
 		}
 		m.live, m.liveAt = runningSessions(own), time.Now()
 	}
@@ -575,8 +573,9 @@ func (m *Manager) Start(id string) error {
 	if err != nil {
 		return err
 	}
+	name := p.nameToStart()
 	p.mu.Lock()
-	err = p.startLocked()
+	err = p.startLocked(name)
 	// Idle from the look, so it is not stopped again straight away.
 	p.lastUsed = time.Now()
 	p.mu.Unlock()
@@ -649,6 +648,10 @@ func (m *Manager) procFor(id string) (*proc, error) {
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
+	// One dv ran before may have been taken up in a terminal since it stopped.
+	if p != nil && p.pid.Load() == 0 && m.elsewhere(id) {
+		return nil, errors.New("this session is open in a terminal; dv follows it, but only the terminal can talk to it")
+	}
 	if p != nil {
 		return p, nil
 	}
@@ -821,6 +824,44 @@ func (m *Manager) Interrupt(id string) error {
 	defer cancel()
 	_, err := p.request(ctx, map[string]any{"subtype": "interrupt"})
 	return err
+}
+
+// StopTask stops what a call left running in the background, a command or an
+// agent, by its task: the call's result's Detail.Background. It takes the
+// process dv runs; one in a terminal is out of reach.
+func (m *Manager) StopTask(id, task string) error {
+	if m.isCodex(id) {
+		return errors.New("Codex's background work can only be stopped with the whole turn")
+	}
+	m.mu.Lock()
+	p := m.procs[id]
+	m.mu.Unlock()
+	if p == nil {
+		return errors.New("Claude Code is not running here")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := p.request(ctx, map[string]any{"subtype": "stop_task", "task_id": task}); err != nil {
+		return err
+	}
+	// Claude Code says so in the transcript only once the agent takes the
+	// notice up, which may be a turn away.
+	p.mu.Lock()
+	if p.tasksStopped == nil {
+		p.tasksStopped = map[string]bool{}
+	}
+	p.tasksStopped[task] = true
+	p.mu.Unlock()
+	m.mu.Lock()
+	f := m.follows[id]
+	m.mu.Unlock()
+	if f != nil {
+		f.mu.Lock()
+		f.version++
+		f.mu.Unlock()
+	}
+	m.signal(id, false)
+	return nil
 }
 
 // Configure sets the model, permission mode or effort, for the process running
@@ -1067,8 +1108,9 @@ func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (st
 		return "", err
 	}
 	if code {
+		name := p.nameToStart()
 		p.mu.Lock()
-		err := p.startLocked()
+		err := p.startLocked(name)
 		p.mu.Unlock()
 		if err != nil {
 			return "", err
@@ -1314,16 +1356,23 @@ func (m *Manager) reap() {
 			m.closeIdle(time.Now())
 		}
 		kept := m.saved.KeptIDs()
+		// Each process looked at apart from m.mu, which one starting would hold up.
 		m.mu.Lock()
-		var idle []*proc
+		var unwatched []*proc
 		for id, p := range m.procs {
+			if m.follows[id] == nil && !slices.Contains(kept, id) {
+				unwatched = append(unwatched, p)
+			}
+		}
+		m.mu.Unlock()
+		var idle []*proc
+		for _, p := range unwatched {
 			p.mu.Lock()
-			if p.cmd != nil && !p.busy && len(p.asks) == 0 && time.Since(p.lastUsed) > idleFor && m.follows[id] == nil && !slices.Contains(kept, id) {
+			if p.cmd != nil && !p.busy && len(p.asks) == 0 && time.Since(p.lastUsed) > idleFor {
 				idle = append(idle, p)
 			}
 			p.mu.Unlock()
 		}
-		m.mu.Unlock()
 		for _, p := range idle {
 			p.stop()
 		}
@@ -1405,7 +1454,10 @@ type Live struct {
 // or changed since its last update - all of them, when Reset - and the live
 // state.
 type Update struct {
-	Reset   bool     `json:"reset,omitempty"`
+	Reset bool `json:"reset,omitempty"`
+	// Keep is how many of the items the page has to keep, the rest gone,
+	// before patching in Items; unset, it keeps them all.
+	Keep    *int     `json:"keep,omitempty"`
 	Items   []Item   `json:"items,omitempty"`
 	Earlier *Earlier `json:"earlier,omitempty"`
 	Live    Live     `json:"live"`
@@ -1665,7 +1717,7 @@ func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
 	u.Live.Found = f.path != ""
 	if s.version != f.version {
 		s.version = f.version
-		u.Reset, u.Items = s.diff(f.t.Items(""))
+		u.Reset, u.Keep, u.Items = s.diff(f.t.Items(""))
 	}
 	_, u.Live.LastModel = f.t.Context("")
 	u.Live.LastEffort = f.t.Effort("")
@@ -1683,6 +1735,21 @@ func ran(p *proc) time.Time {
 		return time.Time{}
 	}
 	return p.ran
+}
+
+// stoppedHere marks the background work stopped from the page that the
+// transcript has not yet said ended.
+func stoppedHere(items []Item, p *proc) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, it := range items {
+		if it.Task == nil && it.Result != nil && it.Result.Detail != nil && p.tasksStopped[it.Result.Detail.Background] {
+			items[i].Task = &Task{Status: "stopped"}
+		}
+	}
 }
 
 // ended marks work left running in the background by a process that has since
@@ -1743,7 +1810,8 @@ func (m *Manager) update(id string, s *Sub) Update {
 		s.version = f.version
 		items := s.shown(f.t.Items(leaf, switches...), f.t.Start > 0)
 		ended(items, ran(p))
-		u.Reset, u.Items = s.diff(items)
+		stoppedHere(items, p)
+		u.Reset, u.Keep, u.Items = s.diff(items)
 	}
 	u.Earlier = s.earlier
 	used, model := f.t.Context(leaf)
@@ -1859,9 +1927,12 @@ func cutAt(items []Item, key string) int {
 	return i
 }
 
-// diff is items less what the page already has, or everything when what it
-// has is no longer the start of the conversation.
-func (s *Sub) diff(items []Item) (bool, []Item) {
+// diff is items less what the page already has, or everything when it has
+// nothing. keep, when what the page has is no longer the start of the
+// conversation - another branch shown, as two processes writing to a session
+// make - is how much of its start still is, for the page to keep before
+// taking the items: those changed in that part, and all after it.
+func (s *Sub) diff(items []Item) (reset bool, keep *int, changed []Item) {
 	keys := make([]string, len(items))
 	hashes := make(map[string]uint64, len(items))
 	for i, it := range items {
@@ -1870,19 +1941,51 @@ func (s *Sub) diff(items []Item) (bool, []Item) {
 		json.NewEncoder(h).Encode(it)
 		hashes[it.Key] = h.Sum64()
 	}
-	prefix := s.hashes != nil && len(s.keys) <= len(keys) && slices.Equal(s.keys, keys[:len(s.keys)])
-	old := s.hashes
+	oldKeys, old := s.keys, s.hashes
 	s.keys, s.hashes = keys, hashes
-	if !prefix {
-		return true, items
+	if old == nil {
+		return true, nil, items
 	}
-	var changed []Item
-	for _, it := range items {
-		if old[it.Key] != hashes[it.Key] {
+	same := 0
+	for same < len(oldKeys) && same < len(keys) && oldKeys[same] == keys[same] {
+		same++
+	}
+	if same < len(oldKeys) {
+		if same == 0 {
+			return true, nil, items
+		}
+		keep = &same
+	}
+	for i, it := range items {
+		if i >= same || old[it.Key] != hashes[it.Key] {
 			changed = append(changed, it)
 		}
 	}
-	return false, changed
+	return false, keep, changed
+}
+
+// Seen is what a page following a session was last sent of the conversation,
+// for it to go on from after its stream drops rather than be sent it all again.
+type Seen struct {
+	keys   []string
+	hashes map[string]uint64
+	from   string
+}
+
+// Seen is what s has sent as of its last update. Each update makes new keys
+// and hashes, so one taken stays as it was.
+func (s *Sub) Seen() Seen { return Seen{s.keys, s.hashes, s.from} }
+
+// Len is how many items it holds.
+func (s Seen) Len() int { return len(s.keys) }
+
+// Resume has a new s go on from what a page was sent before: its first update
+// carries only what changed since, from the same place in the conversation.
+func (s *Sub) Resume(seen Seen) {
+	s.keys, s.hashes = seen.keys, seen.hashes
+	if seen.from != "" {
+		s.from = seen.from
+	}
 }
 
 func newUUID() string {

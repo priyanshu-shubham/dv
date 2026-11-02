@@ -132,11 +132,9 @@ func (m *Manager) Usage() *Usage {
 	}
 	var via *proc
 	for _, p := range m.procs {
-		p.mu.Lock()
-		if p.cmd != nil {
+		if p.pid.Load() != 0 {
 			via = p
 		}
-		p.mu.Unlock()
 	}
 	if via == nil && age < optionsFor {
 		return m.usage

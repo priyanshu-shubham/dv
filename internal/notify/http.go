@@ -8,8 +8,13 @@ import (
 )
 
 // keepAlive is how often a quiet stream says something anyway: a proxy in
-// front of dv drops a response that has been silent for long.
-const keepAlive = 30 * time.Second
+// front of dv drops a response that has been silent for long, and a page that
+// hears nothing for a few of these opens the stream again. As server.KeepAlive
+// and server.Ping, which this package cannot import.
+const (
+	keepAlive = 15 * time.Second
+	ping      = "event: ping\ndata: {}\n\n"
+)
 
 // HandleStream streams the notices open to a page, ?page=<id>, the whole list
 // each time it changes. The page's reader counts as present while it is open.
@@ -41,7 +46,7 @@ func (c *Center) HandleStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-changed:
 		case <-quiet.C:
-			fmt.Fprint(w, ": \n\n")
+			fmt.Fprint(w, ping)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

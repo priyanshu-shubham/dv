@@ -9,15 +9,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const maxUpload = 256 << 20
+
+// stallLimit is how long a body may go without a byte arriving.
+const stallLimit = time.Minute
+
+// steady lets a large body take as long as it keeps arriving. The server's
+// read timeout is for the whole request, which a picture sent from a phone on
+// a poor signal can outlast.
+func steady(w http.ResponseWriter, r *http.Request) io.ReadCloser {
+	return &steadyBody{ReadCloser: r.Body, rc: http.NewResponseController(w)}
+}
+
+type steadyBody struct {
+	io.ReadCloser
+	rc  *http.ResponseController
+	err error // once the body has ended
+}
+
+// Read leaves the deadline be once the body has ended: the server then reads
+// on the connection for the next request, which this deadline would cut.
+func (b *steadyBody) Read(p []byte) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
+	b.rc.SetReadDeadline(time.Now().Add(stallLimit))
+	n, err := b.ReadCloser.Read(p)
+	b.err = err
+	return n, err
+}
 
 // handleUpload saves a file added to a message; the page attaches it by the
 // path that comes back.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	given := r.URL.Query().Get("name")
-	name, err := s.save(given, http.MaxBytesReader(w, r.Body, maxUpload))
+	name, err := s.save(given, http.MaxBytesReader(w, steady(w, r), maxUpload))
 	if errors.As(err, new(*http.MaxBytesError)) {
 		err = fmt.Errorf("%s is over the %d MB dv takes", given, maxUpload>>20)
 	}

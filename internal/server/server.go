@@ -82,7 +82,10 @@ type Server struct {
 	saved  *store.Sessions // what dv keeps of the sessions, the agent's too
 	terms  *term.Manager
 
-	notices     *notify.Folder
+	sent    sent    // messages taken, so one sent again goes once
+	resumes resumes // what dropped streams had sent
+
+	notices    *notify.Folder
 	stopNotices context.CancelFunc
 
 	actionsMu sync.Mutex
@@ -338,6 +341,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/agent/sessions/{id}/messages/{message}/unqueue", Guarded(s.handleAgentUnqueue))
 	mux.HandleFunc("GET /api/agent/sessions/{id}/messages/{message}/images/{n}", Guarded(s.handleAgentImage))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/interrupt", Guarded(s.handleAgentInterrupt))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/tasks/{task}/stop", Guarded(s.handleAgentStopTask))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/settings", Guarded(s.handleAgentSettings))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/rewind", Guarded(s.handleAgentRewind))
 	mux.HandleFunc("GET /api/agent/sessions/{id}/prompts", Guarded(s.handleAgentPrompts))
@@ -550,7 +554,8 @@ func Answers(url, root string) bool {
 
 // cacheHeaders lets the browser keep chunk-*.js forever (esbuild content-hashes
 // those names), and the two bundles when asked for at this build's version.
-// Anything else, a bundle at another version included, is revalidated.
+// Anything else, a bundle at another version included, is revalidated - by
+// its content's tag, as embedded files have no modification time to go by.
 func cacheHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// PDF.js's files are in a folder named for its version.
@@ -560,9 +565,29 @@ func cacheHeaders(h http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
+			if tag := staticTag(p); tag != "" {
+				w.Header().Set("ETag", tag)
+			}
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+var staticTags sync.Map // by path in static/
+
+// staticTag is weak, standing for the file gzipped or not.
+func staticTag(p string) string {
+	if t, ok := staticTags.Load(p); ok {
+		return t.(string)
+	}
+	b, err := staticFS.ReadFile("static/" + p)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	t := `W/"` + hex.EncodeToString(sum[:8]) + `"`
+	staticTags.Store(p, t)
+	return t
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -375,7 +375,7 @@ func serve(ln net.Listener, handler http.Handler, key string) error {
 		fmt.Printf("  asking browsers for its key\n\n")
 	}
 	httpSrv := &http.Server{
-		Handler: handler,
+		Handler: server.Compress(handler),
 		// No write timeout: a session's events stream for as long as the page is
 		// open, and a permission prompt waits on the reader. Read timeouts still
 		// bound a stuck client.
@@ -567,6 +567,9 @@ func openBrowser(url string) {
 	}
 	if cmd != nil {
 		cmd.Stdout, cmd.Stderr = nil, nil
-		_ = cmd.Start()
+		// Waited for, or each one a hub opens stays on as a zombie.
+		if cmd.Start() == nil {
+			go cmd.Wait()
+		}
 	}
 }

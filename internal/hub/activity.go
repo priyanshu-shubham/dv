@@ -55,7 +55,7 @@ func (h *Hub) handleActivity(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-tick.C:
 		case <-quiet.C:
-			fmt.Fprint(w, ": \n\n")
+			fmt.Fprint(w, server.Ping)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

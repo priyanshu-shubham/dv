@@ -120,7 +120,7 @@ func Available() error { return supported }
 func (m *Manager) Start() (*Terminal, error) { return m.open(newID(), m.root) }
 
 func (m *Manager) open(id, dir string) (*Terminal, error) {
-	t := &Terminal{id: id, m: m, cols: 80, rows: 24, watchers: map[*Watcher]struct{}{}}
+	t := &Terminal{id: id, m: m, cols: 80, rows: 24, watchers: map[*Watcher]struct{}{}, epoch: newID()}
 	if err := t.start(dir); err != nil {
 		return nil, err
 	}
@@ -243,7 +243,9 @@ type Terminal struct {
 	stop     chan struct{} // closed once the shell is reaped, after which pid is not its
 	dir      string        // where the shell was, last looked
 	out      []byte
-	alt      bool // a full-screen program has the screen
+	total    int64  // printed in all, of which out is the end
+	epoch    string // what total counts in, for a Mark
+	alt      bool   // a full-screen program has the screen
 	watchers map[*Watcher]struct{}
 	fg       int // the foreground process group
 	command  string
@@ -388,7 +390,9 @@ func lastOf(p []byte, seqs [][]byte) int {
 
 func (t *Terminal) printed(p []byte) {
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.out = append(t.out, p...)
+	t.total += int64(len(p))
 	// Let run to twice what is kept between trims, so a flood of output is not
 	// copied over on every read.
 	if len(t.out) > 2*keep {
@@ -403,8 +407,9 @@ func (t *Terminal) printed(p []byte) {
 		t.alt = on > off
 	}
 	t.output = time.Now().UTC()
-	t.mu.Unlock()
-	t.send(Event{Output: p})
+	// Under the lock still, so a page attaching gets p in back or as an event,
+	// never both.
+	t.sendLocked(Event{Output: p})
 }
 
 // Write is the reader's typing.
@@ -448,9 +453,17 @@ type Watcher struct {
 	t *Terminal
 }
 
-// Attach follows the terminal, from what it has printed so far, given first.
-func (t *Terminal) Attach() (*Watcher, []byte, Info) {
-	w := &Watcher{C: make(chan Event, 1024), t: t}
+// Mark is a place in what a terminal has printed.
+type Mark struct {
+	Epoch string `json:"epoch"` // the terminal's own, as one dv opens anew counts from 0
+	At    int64  `json:"at"`
+}
+
+// Attach follows the terminal, giving first what it printed before: from
+// where a page attached before got to, if that much is still kept, and then
+// resumed; or else all that is. mark is where back ends.
+func (t *Terminal) Attach(from Mark) (w *Watcher, back []byte, resumed bool, mark Mark, info Info) {
+	w = &Watcher{C: make(chan Event, 1024), t: t}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.gone {
@@ -458,8 +471,12 @@ func (t *Terminal) Attach() (*Watcher, []byte, Info) {
 	} else {
 		t.watchers[w] = struct{}{}
 	}
-	info := Info{Ended: t.ended, Exit: t.exit}
-	return w, bytes.Clone(t.out), info
+	start := t.total - int64(len(t.out))
+	back = t.out
+	if from.Epoch == t.epoch && from.At >= start && from.At <= t.total {
+		back, resumed = t.out[from.At-start:], true
+	}
+	return w, bytes.Clone(back), resumed, Mark{t.epoch, t.total}, Info{Ended: t.ended, Exit: t.exit}
 }
 
 func (w *Watcher) Close() {
@@ -474,6 +491,10 @@ func (w *Watcher) Close() {
 func (t *Terminal) send(e Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.sendLocked(e)
+}
+
+func (t *Terminal) sendLocked(e Event) {
 	for w := range t.watchers {
 		select {
 		case w.C <- e:

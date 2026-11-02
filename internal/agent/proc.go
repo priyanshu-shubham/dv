@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dv/internal/permit"
@@ -60,6 +61,10 @@ type proc struct {
 	// out what dv told Claude.
 	compacted func()
 
+	// pid is cmd's while it runs, for Manager.running to read without p.mu,
+	// which a start holds a while.
+	pid atomic.Int64
+
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -73,6 +78,9 @@ type proc struct {
 	states  bool
 	queued  []Queued // messages sent while busy, until a turn takes them up
 	stopped bool     // the process was stopped on purpose, so its exit is no error
+	// tasksStopped is the background work stopped from the page, by task,
+	// before the transcript says so.
+	tasksStopped map[string]bool
 	// Whether the next start continues a transcript, and at which message when
 	// the conversation was rewound.
 	resume   bool
@@ -122,7 +130,8 @@ type Queued struct {
 	Images int    `json:"images,omitempty"`
 }
 
-func (p *proc) args() []string {
+// args are a start's; name is from nameToStart.
+func (p *proc) args(name string) []string {
 	args := []string{
 		"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--include-partial-messages", "--permission-prompt-tool", "stdio",
@@ -152,24 +161,34 @@ func (p *proc) args() []string {
 			args = append(args, "--append-system-prompt", s)
 		}
 	}
-	// The name other sessions send to. A headless resume does not take back the
-	// one the transcript keeps, as the terminal does, so it is passed again.
-	name := p.title
-	if p.resume && p.named != nil {
-		name = cmp.Or(p.named(), p.title)
-	}
 	if name != "" {
 		args = append(args, "--name", name)
 	}
 	return args
 }
 
-// startLocked runs the process if it is not running. Callers hold p.mu.
-func (p *proc) startLocked() error {
+// nameToStart is the name other sessions send to, for a start. A headless
+// resume does not take back the one the transcript keeps, as the terminal
+// does, so it is passed again. Reading it reads the transcript, which for a
+// long one takes a while, so it is had before p.mu is taken for the start:
+// the folder's pages wait on p.mu.
+func (p *proc) nameToStart() string {
+	p.mu.Lock()
+	running, resume, title := p.cmd != nil, p.resume, p.title
+	p.mu.Unlock()
+	if !running && resume && p.named != nil {
+		return cmp.Or(p.named(), title)
+	}
+	return title
+}
+
+// startLocked runs the process if it is not running. Callers hold p.mu, and
+// have name from nameToStart.
+func (p *proc) startLocked(name string) error {
 	if p.cmd != nil {
 		return nil
 	}
-	cmd := exec.Command("claude", p.args()...)
+	cmd := exec.Command("claude", p.args(name)...)
 	cmd.Dir = p.cwd
 	// Without the first, Claude Code keeps no copies of the files it edits for
 	// a session driven this way, and rewinding the code has nothing to go back
@@ -180,25 +199,36 @@ func (p *proc) startLocked() error {
 	if err != nil {
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
+	// A pipe of dv's own rather than StdoutPipe, which Wait closes: what Claude
+	// Code wrote last is read before it is let go. Work it left running can
+	// hold its output open after it exits, so Wait does not wait on that,
+	// and neither does the reading for long (wait).
+	stdout, out, err := os.Pipe()
 	if err != nil {
+		stdin.Close()
 		return err
 	}
+	cmd.Stdout = out
+	cmd.WaitDelay = outlives
 	stderr := &tailBuffer{max: 4096}
 	cmd.Stderr = stderr
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	out.Close()
+	if err != nil {
+		stdout.Close()
 		if errors.Is(err, exec.ErrNotFound) {
 			return fmt.Errorf("the `claude` CLI is not on PATH")
 		}
 		return err
 	}
 	p.cmd, p.stdin, p.exited, p.stopped, p.err, p.states = cmd, stdin, make(chan struct{}), false, "", false
+	p.pid.Store(int64(cmd.Process.Pid))
 	p.replies, p.asks = map[string]chan reply{}, map[string]context.CancelFunc{}
 	p.lastUsed = time.Now()
 	p.ran = p.lastUsed
 	read := make(chan struct{})
 	go p.read(stdout, read)
-	go p.wait(cmd, read, p.exited, stderr)
+	go p.wait(cmd, stdout, read, p.exited, stderr)
 
 	// A note the reader wrote when allowing a call can only reach Claude beside
 	// the call's result, which the PostToolUse hook is how dv hears of. The
@@ -256,10 +286,19 @@ func (p *proc) refresh() (model, effort string) {
 	return s.Applied.Model, s.Applied.Effort
 }
 
-func (p *proc) wait(cmd *exec.Cmd, read, exited chan struct{}, stderr *tailBuffer) {
-	// Wait closes stdout, so everything the process wrote is read first.
-	<-read
+func (p *proc) wait(cmd *exec.Cmd, stdout *os.File, read, exited chan struct{}, stderr *tailBuffer) {
 	err := cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // it exited well, leaving its stderr held open
+	}
+	// What it wrote last is read, unless something it left running holds its
+	// output open, which would keep the reading going for good.
+	select {
+	case <-read:
+	case <-time.After(outlives):
+	}
+	stdout.Close()
+	<-read
 	defer close(exited)
 	p.mu.Lock()
 	if p.cmd != cmd {
@@ -279,6 +318,7 @@ func (p *proc) wait(cmd *exec.Cmd, read, exited chan struct{}, stderr *tailBuffe
 		deliver(ch, reply{err: errors.New("Claude Code stopped")})
 	}
 	p.cmd, p.stdin, p.busy, p.blocks, p.status, p.queued = nil, nil, false, nil, "", nil
+	p.pid.Store(0)
 	p.mu.Unlock()
 	p.changed()
 }
@@ -336,8 +376,9 @@ func (p *proc) send(id, text string, images []Image) (string, error) {
 		}
 		content = blocks
 	}
+	name := p.nameToStart()
 	p.mu.Lock()
-	if err := p.startLocked(); err != nil {
+	if err := p.startLocked(name); err != nil {
 		p.mu.Unlock()
 		return "", err
 	}
@@ -772,6 +813,10 @@ const AutoAskEdits = "autoAskEdits"
 
 // editTools are the calls AutoAskEdits asks about, as a hook matcher.
 const editTools = "Edit|Write|NotebookEdit"
+
+// outlives is how long after Claude Code exits its output is still read from,
+// in case something it left running holds that open.
+const outlives = 2 * time.Second
 
 // claudeMode is the permission mode Claude Code runs one of dv's in.
 func claudeMode(mode string) string {

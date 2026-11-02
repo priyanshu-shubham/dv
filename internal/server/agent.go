@@ -1,6 +1,8 @@
 package server
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -204,9 +206,10 @@ func (s *Server) handleAgentEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sub, stop := s.agent.Follow(id, r.URL.Query().Get("from"))
+	from := r.URL.Query().Get("from")
+	sub, stop := s.agent.Follow(id, from)
 	defer stop()
-	streamUpdates(w, r, sub, func() agent.Update { return s.agent.Update(id, sub) })
+	s.streamUpdates(w, r, id+" from "+from, sub, func() agent.Update { return s.agent.Update(id, sub) })
 }
 
 // handleAgentSubagentEvents streams the conversation of an agent one of a
@@ -219,39 +222,66 @@ func (s *Server) handleAgentSubagentEvents(w http.ResponseWriter, r *http.Reques
 	call := r.PathValue("tool")
 	sub, stop := s.agent.FollowAgent(id, call)
 	defer stop()
-	streamUpdates(w, r, sub, func() agent.Update { return s.agent.AgentUpdate(id, call, sub) })
+	s.streamUpdates(w, r, id+" agent "+call, sub, func() agent.Update { return s.agent.AgentUpdate(id, call, sub) })
 }
 
-func streamUpdates(w http.ResponseWriter, r *http.Request, sub *agent.Sub, update func() agent.Update) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeErr(w, http.StatusInternalServerError, fmt.Errorf("streaming unsupported"))
-		return
-	}
+// streamUpdates sends a conversation's updates, each with an id the browser
+// gives back on reconnecting. what names the conversation, for a stream that
+// takes the place of one that dropped to go on from what that one had sent.
+func (s *Server) streamUpdates(w http.ResponseWriter, r *http.Request, what string, sub *agent.Sub, update func() agent.Update) {
+	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
+	if err := rc.Flush(); err != nil {
+		return
+	}
+	s.resumes.resume(what, cmp.Or(r.Header.Get("Last-Event-ID"), r.URL.Query().Get("last")), sub)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	stream, end := s.resumes.start(cancel)
+	var snaps []snap
+	defer func() { end(snaps, what) }()
 	quiet := time.NewTicker(KeepAlive)
 	defer quiet.Stop()
+	n, last := 0, ""
 	for {
 		select {
 		case <-sub.Changed:
 		case <-quiet.C:
-			fmt.Fprint(w, ": \n\n")
-			flusher.Flush()
+			fmt.Fprint(w, Ping)
+			if rc.Flush() != nil {
+				return
+			}
 			continue
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		}
 		// A reply streams in many small pieces; one update for a few of them
 		// is plenty for the eye.
 		time.Sleep(40 * time.Millisecond)
-		b, err := json.Marshal(update())
+		u := update()
+		b, err := json.Marshal(u)
 		if err != nil {
 			return
 		}
-		fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
+		if string(b) == last {
+			continue
+		}
+		last = string(b)
+		for _, p := range pieces(u, b) {
+			n++
+			fmt.Fprintf(w, "id: %s:%d\ndata: %s\n\n", stream, n, p)
+			if rc.Flush() != nil {
+				return
+			}
+		}
+		// Only an update's last piece leaves the page with all of it.
+		snaps = append(snaps, snap{n, sub.Seen()})
+		if len(snaps) > snapsKept {
+			snaps = snaps[1:]
+		}
+		quiet.Reset(KeepAlive)
 	}
 }
 
@@ -279,19 +309,26 @@ func (s *Server) handleAgentTaskOutput(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	send := func(v any) {
+	// Each chunk's id is where in the file it ends, which a page reconnecting
+	// gives back to be sent only what was written since.
+	send := func(v any, at int64) {
 		b, _ := json.Marshal(v)
-		fmt.Fprintf(w, "data: %s\n\n", b)
+		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", at, b)
 		flusher.Flush()
 	}
 	at, gone := int64(-1), false
+	if n, err := strconv.ParseInt(cmp.Or(r.Header.Get("Last-Event-ID"), r.URL.Query().Get("last")), 10, 64); err == nil && n >= 0 {
+		at = n
+	}
 	tick := time.NewTicker(300 * time.Millisecond)
 	defer tick.Stop()
+	quiet := time.NewTicker(KeepAlive)
+	defer quiet.Stop()
 	for {
 		if fi, err := os.Stat(path); err != nil {
 			// Claude Code clears a session's task files away in time.
 			if !gone {
-				send(map[string]bool{"gone": true})
+				send(map[string]bool{"gone": true}, max(at, 0))
 				gone = true
 			}
 		} else if size := fi.Size(); size != at {
@@ -301,13 +338,16 @@ func (s *Server) handleAgentTaskOutput(w http.ResponseWriter, r *http.Request) {
 				from = max(0, size-taskTail)
 			}
 			text, end := readText(path, from, size)
-			send(map[string]any{"text": text, "reset": reset || from != at, "cut": from > 0 && from != at})
+			send(map[string]any{"text": text, "reset": reset || from != at, "cut": from > 0 && from != at}, end)
 			at, gone = end, false
 		}
 		select {
 		case <-r.Context().Done():
 			return
 		case <-tick.C:
+		case <-quiet.C:
+			fmt.Fprint(w, Ping)
+			flusher.Flush()
 		}
 	}
 }
@@ -353,7 +393,7 @@ func (s *Server) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 			Data      []byte `json:"data"`
 		} `json:"images"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, steady(w, r), 64<<20)).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -374,7 +414,7 @@ func (s *Server) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a uuid", req.UUID))
 		return
 	}
-	uuid, err := s.sendVia(id, req.UUID, req.Text, images, "")
+	uuid, err := s.sent.once(id, req.UUID, func() (string, error) { return s.sendVia(id, req.UUID, req.Text, images, "") })
 	if err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
@@ -401,7 +441,7 @@ func (s *Server) handleAgentShell(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a uuid", req.UUID))
 		return
 	}
-	if err := s.agent.Shell(id, req.UUID, req.Command); err != nil {
+	if _, err := s.sent.once(id, req.UUID, func() (string, error) { return "", s.agent.Shell(id, req.UUID, req.Command) }); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
 	}
@@ -429,6 +469,20 @@ func (s *Server) handleAgentInterrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.agent.Interrupt(id); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleAgentStopTask stops a command or agent a session left running in the
+// background.
+func (s *Server) handleAgentStopTask(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	if err := s.agent.StopTask(id, r.PathValue("task")); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
 	}

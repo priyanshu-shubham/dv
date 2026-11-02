@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -692,8 +693,8 @@ func TestACompactionReadsTheSameWhicheverChainIsWritten(t *testing.T) {
 	tr, s := newTranscript("/repo"), &Sub{}
 	for i, l := range lines {
 		tr.Feed([]byte(l))
-		reset, _ := s.diff(tr.Items(""))
-		if i > 0 && reset {
+		reset, keep, _ := s.diff(tr.Items(""))
+		if i > 0 && (reset || keep != nil) {
 			t.Fatalf("line %d starts the conversation over: %q", i, kinds(tr.Items("")))
 		}
 		if used, _ := tr.Context(""); i >= 3 && i < 10 && used != 14_000 {
@@ -844,30 +845,46 @@ func TestFolderNameIsClaudeCodes(t *testing.T) {
 	}
 }
 
-// A page is sent what is new at the end, or everything when the start changed.
+// A page is sent what is new at the end; on another branch, what is new from
+// where the two part, with how much it keeps; everything when the start changed.
 func TestUpdatesAreTheTailUnlessTheStartMoved(t *testing.T) {
 	tr := newTranscript("/repo")
 	tr.Feed([]byte(conversation(t)))
 	s := &Sub{}
-	if reset, items := s.diff(tr.Items("a3")); !reset || len(items) != 4 {
+	if reset, _, items := s.diff(tr.Items("a3")); !reset || len(items) != 4 {
 		t.Fatalf("first update: reset %v, %d items", reset, len(items))
 	}
-	if reset, items := s.diff(tr.Items("")); reset || len(items) != 3 || items[0].Text != "now four" {
+	if reset, keep, items := s.diff(tr.Items("")); reset || keep != nil || len(items) != 3 || items[0].Text != "now four" {
 		t.Fatalf("growing: reset %v, %q", reset, kinds(items))
 	}
-	if reset, _ := s.diff(tr.Items("a4")); !reset {
-		t.Fatal("switching branch was sent as a tail")
+	had := slices.Clone(s.keys)
+	reset, keep, items := s.diff(tr.Items("a4"))
+	if reset || keep == nil || *keep == 0 || *keep >= len(had) {
+		t.Fatalf("switching branch: reset %v, keep %v of %d", reset, keep, len(had))
+	}
+	// What the page ends up with is the branch switched to.
+	page := slices.Clone(had[:*keep])
+	for _, it := range items {
+		if !slices.Contains(page, it.Key) {
+			page = append(page, it.Key)
+		}
+	}
+	if !slices.Equal(page, s.keys) {
+		t.Fatalf("page %q, want %q", page, s.keys)
+	}
+	if reset, keep, _ := (&Sub{keys: []string{"other"}, hashes: map[string]uint64{}}).diff(tr.Items("")); !reset || keep != nil {
+		t.Fatal("a new start was sent as a tail")
 	}
 }
 
 func TestProcArgsResumeAtARewind(t *testing.T) {
 	p := &proc{id: "s1", resume: true, resumeAt: "a3", mode: "plan"}
-	got := strings.Join(p.args(), " ")
+	got := strings.Join(p.args(p.nameToStart()), " ")
 	if !strings.Contains(got, "--resume s1 --resume-session-at a3") || !strings.Contains(got, "--permission-mode plan") || strings.Contains(got, "--model") {
 		t.Fatalf("args %s", got)
 	}
 	p = &proc{id: "s2"}
-	if got := strings.Join(p.args(), " "); !strings.Contains(got, "--session-id s2") || strings.Contains(got, "--resume") {
+	if got := strings.Join(p.args(p.nameToStart()), " "); !strings.Contains(got, "--session-id s2") || strings.Contains(got, "--resume") {
 		t.Fatalf("new session args %s", got)
 	}
 }
@@ -881,13 +898,13 @@ func TestAResumeKeepsTheSessionsName(t *testing.T) {
 		t.Fatalf("agentName = %q", got)
 	}
 	p := &proc{id: "s1", resume: true, named: func() string { return agentName(path) }}
-	if got := strings.Join(p.args(), " "); !strings.Contains(got, "--name old") {
+	if got := strings.Join(p.args(p.nameToStart()), " "); !strings.Contains(got, "--name old") {
 		t.Fatalf("resume args %s", got)
 	}
 	if err := writeTitle(path, "s1", "new name"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(p.args(), " "); !strings.Contains(got, "--name new name") {
+	if got := strings.Join(p.args(p.nameToStart()), " "); !strings.Contains(got, "--name new name") {
 		t.Fatalf("after a rename %s", got)
 	}
 	if got := agentName(filepath.Join(t.TempDir(), "none.jsonl")); got != "" {
@@ -1059,8 +1076,8 @@ func TestAPickedEffortOutlivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.effort != "high" || !slices.Contains(p.args(), "high") {
-		t.Fatalf("resumed at effort %q, with %q", p.effort, p.args())
+	if p.effort != "high" || !slices.Contains(p.args(p.nameToStart()), "high") {
+		t.Fatalf("resumed at effort %q, with %q", p.effort, p.args(p.nameToStart()))
 	}
 }
 
@@ -1296,11 +1313,11 @@ func TestASuggestionLastsUntilTheNextTurn(t *testing.T) {
 	noop := func() {}
 	on := false
 	p := &proc{changed: noop, wrote: noop, ended: noop, suggests: func() bool { return on }}
-	if slices.Contains(p.args(), "--prompt-suggestions") {
+	if slices.Contains(p.args(p.nameToStart()), "--prompt-suggestions") {
 		t.Fatal("asked for suggestions with the setting off")
 	}
 	on = true
-	if !slices.Contains(p.args(), "--prompt-suggestions") {
+	if !slices.Contains(p.args(p.nameToStart()), "--prompt-suggestions") {
 		t.Fatal("not asked for suggestions with the setting on")
 	}
 	p.handle([]byte(`{"type":"prompt_suggestion","suggestion":" Run the tests "}`))
@@ -1318,12 +1335,12 @@ func TestASuggestionLastsUntilTheNextTurn(t *testing.T) {
 func TestInstructionsGoWithEachStart(t *testing.T) {
 	note := ""
 	p := &proc{id: "s1", instructions: func() string { return note }}
-	if slices.Contains(p.args(), "--append-system-prompt") {
+	if slices.Contains(p.args(p.nameToStart()), "--append-system-prompt") {
 		t.Fatal("appended to the system prompt with nothing to add")
 	}
 	note = "Show files."
 	p.resume = true
-	args := p.args()
+	args := p.args(p.nameToStart())
 	if i := slices.Index(args, "--append-system-prompt"); i < 0 || args[i+1] != note {
 		t.Fatalf("resumed without the instructions: %q", args)
 	}
@@ -1600,5 +1617,63 @@ func TestARewindOutlivesARestartUntilAMessageGoes(t *testing.T) {
 	}
 	if _, ok := saved.Rewound("s1"); ok {
 		t.Fatal("the rewind was not forgotten")
+	}
+}
+
+func TestAResumedFollowerIsSentOnlyWhatChanged(t *testing.T) {
+	items := []Item{{Key: "a", Kind: "prompt", Text: "hi"}, {Key: "b", Kind: "text", Text: "hel"}}
+	first := &Sub{}
+	if reset, _, got := first.diff(items); !reset || len(got) != 2 {
+		t.Fatalf("first: %v %v", reset, got)
+	}
+	again := &Sub{}
+	again.Resume(first.Seen())
+	items[1].Text = "hello"
+	items = append(items, Item{Key: "c", Kind: "text", Text: "more"})
+	reset, keep, got := again.diff(items)
+	if reset || keep != nil || len(got) != 2 || got[0].Key != "b" || got[1].Key != "c" {
+		t.Fatalf("again: %v %v", reset, got)
+	}
+}
+
+// Work Claude Code left running can hold its output open after it exits;
+// dv still takes it for stopped, and it is not left a zombie.
+func TestAProcessIsDoneWithThoughItsOutputLivesOn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a shell script stands in for claude")
+	}
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nsleep 30 &\necho '{\"type\":\"system\"}'\nexit 0\n"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	p := &proc{id: "s1", cwd: t.TempDir(), changed: func() {}}
+	p.mu.Lock()
+	if err := p.startLocked(""); err != nil {
+		t.Fatal(err)
+	}
+	exited := p.exited
+	p.mu.Unlock()
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("still taken for running")
+	}
+	if p.pid.Load() != 0 || p.err != "" {
+		t.Fatalf("pid %d, error %q", p.pid.Load(), p.err)
+	}
+}
+
+// A session's record outlives its process, and the pid can be given to
+// another; the start time tells them apart.
+func TestAReusedPidIsNotTheSessionsProcess(t *testing.T) {
+	b, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		t.Skip("no /proc")
+	}
+	start := strings.Fields(string(b[strings.LastIndexByte(string(b), ')')+1:]))[19]
+	if !startedAt(os.Getpid(), start) || !startedAt(os.Getpid(), "") {
+		t.Fatal("this process is not itself")
+	}
+	if startedAt(os.Getpid(), start+"0") {
+		t.Fatal("another start time passed")
 	}
 }

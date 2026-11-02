@@ -7,7 +7,7 @@ import { CONTEXT_LINES } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
-import { cx, isMac, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
+import { cx, isMac, isTyping, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
 import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
@@ -33,7 +33,8 @@ export function Modal({ onClose, onBack, className, children, wide, centred }) {
         if (e.target.closest?.('.composer, [aria-expanded="true"]')) return;
         e.stopPropagation();
         (e.shiftKey || !onBack ? onClose : onBack)();
-      } else if (onBack && ((e.altKey && e.key === "ArrowLeft") || ((e.metaKey || e.ctrlKey) && e.key === "["))) {
+      } else if (onBack && ((e.altKey && e.key === "ArrowLeft" && !(isMac && isTyping(e.target))) || ((e.metaKey || e.ctrlKey) && e.key === "["))) {
+        // In a Mac's text box, Option and Left is a word back.
         e.preventDefault(); // Alt+Left is the browser's own Back, which would leave the page
         e.stopPropagation();
         onBack();

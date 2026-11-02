@@ -5839,6 +5839,12 @@ button.ghost.agent-context {
   margin-left: -6px;
 }
 
+.agent-peek-title > .agent-peek-stop {
+  flex: none;
+  margin-left: 4px;
+  gap: 5px;
+}
+
 .agent-peek-kind {
   flex: none;
   color: var(--fg-3);

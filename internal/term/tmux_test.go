@@ -71,7 +71,7 @@ func outlives(t *testing.T, sock string) {
 		t.Fatal(err)
 	}
 	// The shell is not in dv's tmux, and says it is dv's for a profile to see.
-	w, _, _ := first.Attach()
+	w, _, _, _, _ := first.Attach(Mark{})
 	first.Write([]byte("echo \"in [$TMUX] of [$TERM_PROGRAM]\"\n"))
 	var out strings.Builder
 	until("a shell of dv's own", func() bool {

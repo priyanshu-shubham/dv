@@ -181,6 +181,10 @@ const dvKey = (e) =>
 // and views, as they do from an empty message box.
 const ownsKeys = (term) => term.buffer.active.type === "alternate" || term.modes.mouseTrackingMode !== "none";
 const shiftArrow = (e) => e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key.startsWith("Arrow");
+const wordArrow = (e) =>
+  (e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.metaKey && !e.shiftKey && (e.altKey ? !e.ctrlKey : e.ctrlKey && !isMac);
+const lineArrow = (e) =>
+  isMac && e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight");
 const xterms = new WeakMap(); // pane -> its xterm
 
 // leavesArrows is whether Shift and an arrow pressed in el, a terminal, are dv's.
@@ -268,6 +272,24 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect }) {
     });
     term.attachCustomKeyEventHandler((e) => {
       if (dvKey(e) || (shiftArrow(e) && !ownsKeys(term))) return false;
+      // Alt (Option) and an arrow is a word back or on, as is Ctrl and one off
+      // a Mac, sent as Terminal.app does: zsh, and bash without Debian's
+      // inputrc, leave xterm's own sequences for them unbound, and print them.
+      // On a Mac it always is, as there; elsewhere at a prompt only, as tmux
+      // and other full-screen programs may bind the sequences themselves.
+      if (wordArrow(e) && (isMac || !ownsKeys(term))) {
+        if (e.type === "keydown") term.input(e.key === "ArrowLeft" ? "\x1bb" : "\x1bf");
+        e.preventDefault();
+        return false;
+      }
+      // Cmd and an arrow is the line's start or end, as Ctrl+A and Ctrl+E; at
+      // a prompt only, as a full-screen program may take those for its own
+      // (tmux's prefix, or Vim adding to a number).
+      if (lineArrow(e) && !ownsKeys(term)) {
+        if (e.type === "keydown") term.input(e.key === "ArrowLeft" ? "\x01" : "\x05");
+        e.preventDefault();
+        return false;
+      }
       // A Mac copies and pastes with Cmd, which the terminal leaves be.
       if (e.type !== "keydown" || isMac || !e.ctrlKey || e.altKey || e.metaKey) return true;
       const k = e.key.toLowerCase();
@@ -332,6 +354,10 @@ function attach(id, term, isShown) {
   // What a program asked the terminal before this page came is not answered:
   // the answer would be typed into whatever runs now.
   let replaying = false;
+  // Where what is on screen ends, { epoch, at }, for attaching again to be
+  // sent only what came after; and when dv was last heard from.
+  let mark = null;
+  let heard = 0;
   const encode = new TextEncoder();
 
   const send = (data) => ws?.readyState === WebSocket.OPEN && ws.send(data);
@@ -340,10 +366,36 @@ function attach(id, term, isShown) {
     timer = setTimeout(open, wait);
     wait = Math.min(Math.max(wait * 2, 500), 5000);
   };
+  // A socket that looks open but has heard nothing for longer than this is
+  // dead (dv says {} every 15s), as one is after a phone changes network.
+  // Closing it could wait on an answer that never comes, so it is let go.
+  const quiet = (ms) => ws?.readyState === WebSocket.OPEN && Date.now() - heard > ms;
+  const drop = () => {
+    const sock = ws;
+    ws = null;
+    sock.onclose = sock.onmessage = null;
+    sock.close();
+    clearTimeout(timer);
+    wait = 0;
+    open();
+  };
+  // Doubled each time silence is what dropped it, until dv is heard: a
+  // message is heard only once all of it is in, which on a slow link is a while.
+  let patience = 40000;
+  const watch = setInterval(() => {
+    if (!quiet(patience)) return;
+    patience = Math.min(patience * 2, 320000);
+    drop();
+  }, 10000);
+  const back = () => !document.hidden && quiet(patience / 2) && drop();
+  // A new network, which the old connection may not have survived.
+  const online = () => ws && drop();
+  document.addEventListener("visibilitychange", back);
+  window.addEventListener("online", online);
   const open = async () => {
     let url;
     try {
-      url = await api.terminalSocket(id);
+      url = await api.terminalSocket(id, mark);
     } catch (e) {
       // Gone, as dv restarting takes its shells; the list will catch up.
       return stopped || e.status === 404 || again();
@@ -353,16 +405,31 @@ function attach(id, term, isShown) {
     sock.binaryType = "arraybuffer";
     sock.onopen = () => {
       wait = 0;
+      heard = Date.now();
       replaying = true;
-      ended = false; // until the replay says so
-      term.reset();
       if (isShown()) size();
     };
     sock.onmessage = (e) => {
-      if (typeof e.data !== "string") return term.write(new Uint8Array(e.data));
+      heard = Date.now();
+      patience = 40000;
+      if (typeof e.data !== "string") {
+        if (mark) mark.at += e.data.byteLength;
+        return term.write(new Uint8Array(e.data));
+      }
       const s = JSON.parse(e.data);
-      if (s.attached) term.write("", () => (replaying = false));
-      if (s.ended) {
+      // All dv keeps of it is coming, the place it was at not among it.
+      if (s.reset) {
+        term.reset();
+        ended = false; // until the replay says so
+        mark = null;
+      }
+      if (s.attached) {
+        mark = { epoch: s.epoch, at: s.at };
+        term.write("", () => (replaying = false));
+        // Taken up where it was, it may have started again since, unseen here.
+        if (!s.ended) ended = false;
+      }
+      if (s.ended && !ended) {
         ended = true;
         term.write(`\r\n\x1b[2m[The shell exited${s.exit ? ` with ${s.exit}` : ""}. Enter starts a new one here.]\x1b[0m\r\n`);
       }
@@ -393,6 +460,9 @@ function attach(id, term, isShown) {
     stop() {
       stopped = true;
       clearTimeout(timer);
+      clearInterval(watch);
+      document.removeEventListener("visibilitychange", back);
+      window.removeEventListener("online", online);
       ws?.close();
     },
   };

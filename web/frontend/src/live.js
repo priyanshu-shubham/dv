@@ -37,7 +37,7 @@ export function useVersionPoll(versionRef, onChange, onNotes, onOffline) {
           offline.current?.(false);
         } catch (e) {
           // No answer at all, as opposed to an error dv sent.
-          if (e instanceof TypeError) offline.current?.(true);
+          if (e instanceof TypeError || e.name === "TimeoutError") offline.current?.(true);
           throw e;
         }
         const { version, ...rest } = got;

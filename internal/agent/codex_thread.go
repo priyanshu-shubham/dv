@@ -350,7 +350,7 @@ func (t *codexThread) update(s *Sub) Update {
 			turns = slices.Clone(turns)
 			turns[n-1].Status = "inProgress"
 		}
-		u.Reset, u.Items = s.diff(codexItems(t.side.root, turns, t.todos, t.commands, t.reasons))
+		u.Reset, u.Keep, u.Items = s.diff(codexItems(t.side.root, turns, t.todos, t.commands, t.reasons))
 	}
 	if t.history && !t.whole {
 		u.Earlier = &Earlier{Next: "all"}

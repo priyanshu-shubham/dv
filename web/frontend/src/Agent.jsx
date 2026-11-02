@@ -96,10 +96,11 @@ function useSession(id, call = "", from = "") {
         setState((s) => {
           let items = s.items;
           if (u.reset) items = u.items || [];
-          else if (u.items?.length) {
+          // Another branch shown: the start the two share stays.
+          else if (u.keep !== undefined || u.items?.length) {
+            items = items.slice(0, u.keep ?? items.length);
             const at = new Map(items.map((it, i) => [it.key, i]));
-            items = items.slice();
-            for (const it of u.items) {
+            for (const it of u.items || []) {
               const i = at.get(it.key);
               if (i === undefined) {
                 at.set(it.key, items.length);
@@ -2137,6 +2138,11 @@ export default function AgentView({
               model={peekAgent ? nameOf(sub.live?.using || sub.live?.lastModel) : ""}
               effort={peekAgent ? sub.live?.effortUsing || sub.live?.lastEffort : ""}
               onBack={() => setPeek(null)}
+              onStop={
+                running === "dv" && agentKind !== "codex"
+                  ? (task) => api.agentStopTask(id, task).catch((e) => setError(e.message))
+                  : null
+              }
             />
           ) : under && !blank && (
             <span className="agent-under">
@@ -2633,10 +2639,14 @@ function AtWork({ calls, open, last, root, onOpen }) {
 }
 
 // PeekTitle stands in the header for the call open: what it is, and how it is.
-function PeekTitle({ item, root, busy, running, model, effort, onBack }) {
+// onStop, where dv runs the session, stops work left in the background.
+function PeekTitle({ item, root, busy, running, model, effort, onBack, onStop }) {
   const agent = peekable(item) === "agent";
   const { what } = toolSummary(item.tool, item.input, root);
   const state = toolState(item, busy, running);
+  const task = state === "background" && item.result?.detail?.background;
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => setStopping(false), [task]);
   return (
     <span className="agent-peek-title">
       <button className="ghost" onClick={onBack} title="Back to the conversation (Esc)">
@@ -2651,6 +2661,20 @@ function PeekTitle({ item, root, busy, running, model, effort, onBack }) {
           {model}
           {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
         </span>
+      )}
+      {task && onStop && (
+        <button
+          className="ghost agent-peek-stop"
+          disabled={stopping}
+          onClick={() => {
+            setStopping(true);
+            onStop(task).finally(() => setStopping(false));
+          }}
+          title={agent ? "Stop this agent" : "Stop this command"}
+        >
+          <IconStop size={11} />
+          <span className="btn-label">{stopping ? "Stopping" : "Stop"}</span>
+        </button>
       )}
     </span>
   );

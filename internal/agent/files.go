@@ -8,7 +8,9 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,11 +101,35 @@ type running struct {
 	Kind       string `json:"kind"`
 	Entrypoint string `json:"entrypoint"`
 	Status     string `json:"status"` // busy | idle
+	// ProcStart is when the process started, as Linux's /proc/<pid>/stat
+	// counts it, which tells it from another given the pid since.
+	ProcStart string `json:"procStart"`
+}
+
+// startedAt reports whether pid is the process that started at start, as
+// /proc says; where there is no /proc to ask, it is taken to be.
+func startedAt(pid int, start string) bool {
+	if start == "" {
+		return true
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return true
+	}
+	// The command's name, second, is in brackets and may hold spaces; the
+	// start time is the 22nd field, the 20th after it.
+	i := bytes.LastIndexByte(b, ')')
+	if i < 0 {
+		return true
+	}
+	f := strings.Fields(string(b[i+1:]))
+	return len(f) < 20 || f[19] == start
 }
 
 // runningSessions are the sessions some live Claude Code process other than
 // skip's has open, by session id. A process that died without cleaning up
-// leaves its file behind, so each one's pid is checked.
+// leaves its file behind, so each one's pid is checked, and that the pid is
+// still that process's rather than one given it since.
 func runningSessions(skip map[int]bool) map[string]running {
 	cfg, err := permit.ConfigDir()
 	if err != nil {
@@ -114,7 +140,7 @@ func runningSessions(skip map[int]bool) map[string]running {
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		var r running
-		if err != nil || json.Unmarshal(b, &r) != nil || r.SessionID == "" || skip[r.PID] || !alive(r.PID) {
+		if err != nil || json.Unmarshal(b, &r) != nil || r.SessionID == "" || skip[r.PID] || !alive(r.PID) || !startedAt(r.PID, r.ProcStart) {
 			continue
 		}
 		out[r.SessionID] = r

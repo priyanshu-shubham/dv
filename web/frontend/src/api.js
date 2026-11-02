@@ -6,21 +6,54 @@ const base = boot.base;
 // that tab reloads itself, then says what changed.
 export const RESTART_KEY = "dv:restart";
 
+// How long a request lost on the way waits before each try again.
+const RETRY_MS = [500, 1500, 4000];
+// What a proxy in front of dv answers when it could not reach it.
+const UNREACHED = [502, 503, 504];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // Thin wrapper over the Go API. Every call throws on a non-2xx response with
 // the server's error message, which the UI surfaces directly. The hub's own
-// calls go to its root, as a folder's page makes them too.
-async function req(path, opts = {}, at = base) {
-  const res = await fetch(at + path, {
-    ...opts,
-    headers: opts.body ? { "content-type": "application/json" } : undefined,
-  });
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw Object.assign(new Error(data?.error || `${res.status} ${res.statusText}`), { status: res.status });
-  return data;
+// calls go to its root, as a folder's page makes them too. A request lost to
+// a poor connection is tried again where that is safe: reads, and with retry
+// a send dv takes only once, however often it comes.
+async function req(path, { retry, ...opts } = {}, at = base) {
+  retry ??= !opts.method || opts.method === "GET";
+  for (let i = 0; ; i++) {
+    let res, text;
+    try {
+      res = await fetch(at + path, {
+        ...opts,
+        headers: opts.body ? { "content-type": "application/json" } : undefined,
+      });
+      text = await res.text();
+    } catch (e) {
+      if (!retry || i >= RETRY_MS.length || !(e instanceof TypeError)) throw e;
+      await sleep(RETRY_MS[i]);
+      continue;
+    }
+    // A proxy's error page is not JSON.
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (e) {
+      if (res.ok) throw e;
+    }
+    if (retry && i < RETRY_MS.length && UNREACHED.includes(res.status) && !data?.error) {
+      await sleep(RETRY_MS[i]);
+      continue;
+    }
+    if (!res.ok) throw Object.assign(new Error(data?.error || `${res.status} ${res.statusText}`), { status: res.status });
+    return data;
+  }
 }
 
 const REOPEN_MS = 3000;
+// dv pings a quiet stream every 15s. One silent for this long is dead, though
+// it still looks open - as a phone's is once it has changed network.
+const SILENT_MS = 40000;
+const VERSION_WAIT_MS = 15000;
 
 // stream follows server-sent events until the returned func is called, and
 // tells the page each time it is back after a drop ("dv:reconnected"), since
@@ -28,22 +61,44 @@ const REOPEN_MS = 3000;
 // itself, but gives up for good on an error answered in dv's place - a
 // tunnel's 502 while dv is down - which reopen retries, for the streams a page
 // keeps for as long as it is open. A page shown again, as a phone is unlocked,
-// or back online reconnects at once rather than at the browser's next retry.
+// or back online reconnects at once rather than at the browser's next retry,
+// as does one whose stream has gone silent. A stream whose events carry ids
+// is opened again from the last one had, to be sent only what came since.
 function stream(url, onMessage, onError, reopen) {
   let es;
   let timer = 0;
   let opened = false;
   let stopped = false;
-  const again = () => {
-    if (document.hidden || stopped || es.readyState === EventSource.OPEN) return;
+  let heard = 0;
+  let last = "";
+  // Doubled each time silence is what reopened it: an event is heard only
+  // once all of it is in, which on a slow enough link is a while.
+  let patience = SILENT_MS;
+  const silent = () => Date.now() - heard > patience;
+  const reconnect = () => {
     clearTimeout(timer);
     es.close();
     open();
   };
+  const hear = () => {
+    heard = Date.now();
+    patience = SILENT_MS;
+  };
+  const again = () => {
+    if (document.hidden || stopped || (es.readyState === EventSource.OPEN && !silent())) return;
+    reconnect();
+  };
   const open = () => {
-    es = new EventSource(url);
-    es.onmessage = onMessage;
+    heard = Date.now();
+    es = new EventSource(last ? `${url}${url.includes("?") ? "&" : "?"}last=${encodeURIComponent(last)}` : url);
+    es.onmessage = (e) => {
+      hear();
+      if (e.lastEventId) last = e.lastEventId;
+      onMessage(e);
+    };
+    es.addEventListener("ping", hear);
     es.onopen = () => {
+      heard = Date.now();
       if (opened) window.dispatchEvent(new Event("dv:reconnected"));
       opened = true;
     };
@@ -53,11 +108,18 @@ function stream(url, onMessage, onError, reopen) {
     };
   };
   open();
+  // Hidden too: a hidden page still hears of prompts and finished turns.
+  const watch = setInterval(() => {
+    if (stopped || es.readyState !== EventSource.OPEN || !silent()) return;
+    patience = Math.min(patience * 2, 8 * SILENT_MS);
+    reconnect();
+  }, SILENT_MS / 4);
   document.addEventListener("visibilitychange", again);
   window.addEventListener("online", again);
   return () => {
     stopped = true;
     clearTimeout(timer);
+    clearInterval(watch);
     es.close();
     document.removeEventListener("visibilitychange", again);
     window.removeEventListener("online", again);
@@ -65,7 +127,8 @@ function stream(url, onMessage, onError, reopen) {
 }
 
 // follow reads a stream of JSON events until the returned func is called. It
-// reconnects on its own after a drop, and the first event after is a reset.
+// reconnects on its own after a drop; the first event after is a reset, unless
+// the stream goes on from where it was (its events carry ids).
 function follow(path, onEvent, onDrop, at = base, reopen = false) {
   return stream(at + path, (e) => onEvent(JSON.parse(e.data)), onDrop, reopen);
 }
@@ -82,7 +145,9 @@ export const api = {
   diffList: (scope) => req(`/api/diff?${scopeQuery(scope)}`),
 
   // version fingerprints the repository; it moves whenever any diff could have.
-  version: () => req("/api/version"),
+  // Polled, so tried once, and given up on in time for the page to say dv is
+  // out of reach rather than wait on a connection gone dead.
+  version: () => req("/api/version", { retry: false, signal: AbortSignal.timeout(VERSION_WAIT_MS) }),
   // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
   pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
   // canSwitch: { blocked, createBlocked, branches, elsewhere }, each blocked the reason it can't be done now.
@@ -259,9 +324,9 @@ export const api = {
   // images: [{ mediaType, data }], data in base64. uuid is what the message is
   // known by, in the transcript and in the session's queue.
   agentSend: (id, text, uuid, images) =>
-    req(`/api/agent/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text, uuid, images }) }),
+    req(`/api/agent/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text, uuid, images }), retry: true }),
   // agentShell runs a command typed after !, whose output goes to the agent as the message uuid.
-  agentShell: (id, command, uuid) => req(`/api/agent/sessions/${id}/shell`, { method: "POST", body: JSON.stringify({ command, uuid }) }),
+  agentShell: (id, command, uuid) => req(`/api/agent/sessions/${id}/shell`, { method: "POST", body: JSON.stringify({ command, uuid }), retry: true }),
   // agentPrompts is every message and command in a session, back to its start: { prompts: [item] }.
   agentPrompts: (id) => req(`/api/agent/sessions/${id}/prompts`),
   agentUnqueue: (id, message) => req(`/api/agent/sessions/${id}/messages/${message}/unqueue`, { method: "POST", body: "{}" }),
@@ -280,6 +345,9 @@ export const api = {
   agentPromptImageURL: (id, message, n) => `${base}/api/agent/sessions/${id}/messages/${message}/images/${n}`,
 
   agentInterrupt: (id) => req(`/api/agent/sessions/${id}/interrupt`, { method: "POST", body: "{}" }),
+  // agentStopTask stops a command or agent left running in the background, by
+  // its task: the call's result.detail.background.
+  agentStopTask: (id, task) => req(`/api/agent/sessions/${id}/tasks/${encodeURIComponent(task)}/stop`, { method: "POST", body: "{}" }),
 
   // settings: { model }, { mode } and/or { effort }.
   agentSettings: (id, settings) => req(`/api/agent/sessions/${id}/settings`, { method: "POST", body: JSON.stringify(settings) }),
@@ -395,8 +463,14 @@ export const api = {
   // restartTerminal starts a shell again in one whose shell has exited.
   restartTerminal: (id) => req(`/api/terminals/${id}/start`, { method: "POST", body: "{}" }),
   // terminalSocket is where to attach to a terminal, with a ticket good for one go.
-  terminalSocket: async (id) => {
+  // mark, { epoch, at }, is where what the page has of it ends, for only what came after.
+  terminalSocket: async (id, mark) => {
     const { ticket } = await req(`/api/terminals/${id}/ticket`, { method: "POST", body: "{}" });
-    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${base}/api/terminals/${id}/attach?ticket=${ticket}`;
+    const p = new URLSearchParams({ ticket });
+    if (mark) {
+      p.set("epoch", mark.epoch);
+      p.set("at", String(mark.at));
+    }
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${base}/api/terminals/${id}/attach?${p}`;
   },
 };
