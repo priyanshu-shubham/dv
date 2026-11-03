@@ -550,6 +550,54 @@ func (s *Server) handlePR(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"pr": pr})
 }
 
+// handlePRs lists the repository's open pull requests: { prs }.
+func (s *Server) handlePRs(w http.ResponseWriter, r *http.Request) {
+	if !s.repo.IsGit() {
+		writeErr(w, http.StatusBadRequest, errors.New("not a git repository"))
+		return
+	}
+	prs, err := s.repo.PullRequests()
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	for _, pr := range prs {
+		placePR(pr)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"prs": prs})
+}
+
+// placePR puts another checkout of a pull request's branch as a hub's folder
+// list does, which a page matches it to.
+func placePR(pr *gitx.PR) {
+	if pr.Elsewhere != "" {
+		pr.Elsewhere = HomeRelative(pr.Elsewhere)
+	}
+}
+
+// handleReviewPR fetches { pr } - a number, URL or branch - for the "pr"
+// scope to read: { pr }.
+func (s *Server) handleReviewPR(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PR string `json:"pr"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !s.repo.IsGit() {
+		writeErr(w, http.StatusBadRequest, errors.New("not a git repository"))
+		return
+	}
+	pr, err := s.repo.FetchPR(body.PR)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	placePR(pr)
+	writeJSON(w, http.StatusOK, map[string]any{"pr": pr})
+}
+
 type threadReq struct {
 	File      string        `json:"file"`
 	Side      string        `json:"side"`

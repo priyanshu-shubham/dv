@@ -167,6 +167,10 @@ export const api = {
   actionOutput: (id) => req(`/api/actions/${encodeURIComponent(id)}/output`),
   // pr: { pr }, the checked-out branch's pull request or null.
   pr: () => req("/api/pr"),
+  // prs: { prs }, the open pull requests, each with here or elsewhere when its branch is checked out.
+  prs: () => req("/api/prs"),
+  // reviewPR fetches a pull request - number, URL or branch - for the { kind: "pr" } scope: { pr }.
+  reviewPR: (pr) => req("/api/pr/review", { method: "POST", body: JSON.stringify({ pr: String(pr) }) }),
   // discard puts files back as the last commit has them.
   discard: (paths) => req("/api/discard", { method: "POST", body: JSON.stringify({ paths }) }),
 

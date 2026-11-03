@@ -20,7 +20,7 @@ const TILES = {
   branch: ["Branch", "branch"],
 };
 // And the rest's icons, by id or its start.
-const ICONS = { pull: "pull", main: "pull", "new-worktree": "folder", "new-task": "folder", "close-task": "x", scope: "diff", pr: "branch", settings: "settings", restart: "restart", hub: "home" };
+const ICONS = { pull: "pull", main: "pull", "new-worktree": "folder", "new-task": "folder", "close-task": "x", scope: "diff", pr: "branch", "review-pr": "branch", settings: "settings", restart: "restart", hub: "home" };
 const iconOf = (a) => ICONS[a.id] || ICONS[a.id.split("-")[0]] || "bolt";
 
 export default function ActionsSheet({ meta, session, extra, onRun, onEdit, onOutput, onClose }) {

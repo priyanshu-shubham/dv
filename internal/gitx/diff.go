@@ -2,6 +2,7 @@ package gitx
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +16,8 @@ type side struct {
 	rev      string // commit-ish; empty when worktree or index
 	worktree bool
 	index    bool
-	empty    bool // the empty tree — used for a repository's root commit
+	empty    bool   // the empty tree — used for a repository's root commit
+	as       string // what the reader knows rev by, as "#12" for a pull request's head
 }
 
 func (s side) spec(path string) string {
@@ -31,8 +33,8 @@ func (s side) spec(path string) string {
 // Scope is one reviewable comparison. Kind is what the UI's picker sends; the
 // remaining fields are the resolution, filled in by ResolveScope.
 type Scope struct {
-	Kind   string `json:"kind"`             // auto | working | staged | head | branch | custom
-	Rev    string `json:"rev"`              // user-entered revspec for kind=custom
+	Kind   string `json:"kind"`             // auto | working | staged | head | branch | pr | custom
+	Rev    string `json:"rev"`              // user-entered revspec for kind=custom, the number for kind=pr
 	Label  string `json:"label"`            // short human label, e.g. "main...HEAD"
 	Desc   string `json:"desc"`             // one-line explanation shown under the picker
 	Picked string `json:"picked,omitempty"` // for kind=auto, the concrete kind it settled on
@@ -120,11 +122,23 @@ func (r *Repo) resolve(kind, rev string) (*Scope, error) {
 		if !r.hasHead() {
 			return nil, fmt.Errorf("this repository has no commits yet")
 		}
-		base := r.DefaultBranch()
+		base, from := r.DefaultBranch(), ""
+		// With a pull request, from where GitHub counts it: the trunk here may
+		// be ahead of its base, or behind, or not be its base at all.
+		// Its baseSha is the base's tip when it was last pushed to, so the
+		// remote's own branch, as last fetched, goes first.
+		pr := r.knownPR()
+		if pr != nil {
+			if name := r.remoteNamed(pr.URL); name != "" && r.hasCommit("refs/remotes/"+name+"/"+pr.Base) {
+				base, from = pr.Base, "refs/remotes/"+name+"/"+pr.Base
+			} else if r.hasCommit(pr.BaseSHA) {
+				base, from = pr.Base, pr.BaseSHA
+			}
+		}
 		if base == "" {
 			return nil, fmt.Errorf("no default branch found; pick a custom range instead")
 		}
-		mb, err := r.run("merge-base", base, "HEAD")
+		mb, err := r.run("merge-base", cmp.Or(from, base), "HEAD")
 		if err != nil {
 			return nil, fmt.Errorf("no merge base with %s: %w", base, err)
 		}
@@ -133,6 +147,28 @@ func (r *Repo) resolve(kind, rev string) (*Scope, error) {
 		s.includeUntracked = true
 		s.Label = base + "...working tree"
 		s.Desc = "Everything on this branch since it diverged from " + base + ", plus uncommitted work"
+		if from != "" {
+			s.Desc = fmt.Sprintf("Everything on this branch since it left %s as #%d has it, plus uncommitted work", base, pr.Number)
+		}
+
+	case "pr":
+		n, err := strconv.Atoi(rev)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("not a pull request: %q", rev)
+		}
+		head, err := r.run("rev-parse", "--verify", "--quiet", prRef(n, "head")+"^{commit}")
+		if err != nil {
+			return nil, fmt.Errorf("#%d is not fetched here; review it again", n)
+		}
+		// As GitHub shows it: from where it left its base's tip.
+		mb, err := r.run("merge-base", prRef(n, "base"), prRef(n, "head"))
+		if err != nil {
+			return nil, fmt.Errorf("#%d has no merge base with its base", n)
+		}
+		s.old = side{rev: strings.TrimSpace(mb)}
+		s.new = side{rev: strings.TrimSpace(head), as: "#" + rev}
+		s.Label = "PR #" + rev
+		s.Desc = fmt.Sprintf("Pull request #%d as GitHub has it, since it left its base. Nothing is checked out", n)
 
 	case "custom":
 		return r.resolveCustom(s)
@@ -541,6 +577,8 @@ func (sd side) name() string {
 	switch {
 	case sd.worktree, sd.empty:
 		return ""
+	case sd.as != "":
+		return sd.as
 	case sd.index:
 		return "index"
 	case len(sd.rev) >= 40 && strings.Trim(sd.rev, "0123456789abcdef") == "":

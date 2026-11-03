@@ -158,7 +158,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask,
+  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onReviewPR,
 }) {
   const agent = mode === "agent";
   return (
@@ -189,7 +189,7 @@ export default function Header({
       </div>
 
       <div className="topbar-right">
-      {!agent && !folder && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} mode={mode} onScope={onScope} />}
+      {!agent && !folder && <ScopePicker scope={scope} resolved={resolvedScope} meta={meta} pr={pr} mode={mode} onScope={onScope} onReviewPR={onReviewPR} />}
 
       {!agent && !folder && <span className="divider" />}
 
@@ -295,6 +295,10 @@ export const PRESETS = [
   { kind: "branch", label: "This branch", hint: (base) => (base ? `since it left ${base}` : "since the merge base") },
 ];
 
+// prBase is the branch an open pull request merges into, which the server
+// measures this branch from instead of the trunk.
+export const prBase = (pr) => (pr?.state === "open" || pr?.state === "draft" ? pr.base || "" : "");
+
 // readingLabel names what Code mode shows, which is the comparison's new side.
 // Automatic reads as the working tree even when it settled on the last commit:
 // it only does that with nothing uncommitted, so the files are the same.
@@ -313,14 +317,14 @@ function readingLabel(scope, resolved) {
 // ScopePicker chooses what the review compares. In the diff that is the
 // comparison itself; in Code mode it is the version being read - the working
 // tree, or any branch or commit, read-only.
-function ScopePicker({ scope, resolved, meta, mode, onScope }) {
+function ScopePicker({ scope, resolved, meta, pr, mode, onScope, onReviewPR }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState(scope.kind === "custom" ? scope.rev : "");
   const [wouldShow, setWouldShow] = useState("");
   const ref = useRef(null);
   const auto = scope.kind === "auto";
   const code = mode === "code";
-  const base = meta?.defaultBranch || "";
+  const base = prBase(pr) || meta?.defaultBranch || "";
 
   // A click outside or Escape anywhere closes it. Escape is taken in the
   // capture phase so it closes only the menu, not whatever the page has open.
@@ -419,20 +423,33 @@ function ScopePicker({ scope, resolved, meta, mode, onScope }) {
               ))}
             </>
           ) : (
-            PRESETS.map((p) => {
-              const on = auto ? resolved?.picked === p.kind : scope.kind === p.kind;
-              return (
+            <>
+              {PRESETS.map((p) => {
+                const on = auto ? resolved?.picked === p.kind : scope.kind === p.kind;
+                return (
+                  <ScopeItem
+                    key={p.kind}
+                    on={on}
+                    label={p.label}
+                    // What the last commit is, which the bar no longer spells out.
+                    sub={p.kind === "head" ? meta?.head?.subject : ""}
+                    hint={p.hint(base)}
+                    onClick={() => pick({ kind: p.kind, rev: "" })}
+                  />
+                );
+              })}
+              {scope.kind === "pr" && <ScopeItem on label={resolved?.label || `#${scope.rev}`} hint="as GitHub has it" onClick={() => setOpen(false)} />}
+              {onReviewPR && (
                 <ScopeItem
-                  key={p.kind}
-                  on={on}
-                  label={p.label}
-                  // What the last commit is, which the bar no longer spells out.
-                  sub={p.kind === "head" ? meta?.head?.subject : ""}
-                  hint={p.hint(base)}
-                  onClick={() => pick({ kind: p.kind, rev: "" })}
+                  label="A pull request…"
+                  hint="as GitHub has it"
+                  onClick={() => {
+                    setOpen(false);
+                    onReviewPR();
+                  }}
                 />
-              );
-            })
+              )}
+            </>
           )}
 
           <div className="scope-sep">{code ? "A commit or tag" : "Compare a range"}</div>

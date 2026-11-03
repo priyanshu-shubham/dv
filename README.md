@@ -3,7 +3,8 @@
 A local place to review code and work with Claude Code and Codex, in the
 browser - a phone's too.
 
-- **Diff** - your changes, a branch or any commits, with comments on any line
+- **Diff** - your changes, a branch, any commits or a pull request as GitHub
+  shows it - nothing checked out - with comments on any line
   that can be added to a message for Claude or Codex. Markdown takes them read
   rendered as well, and any file takes one on the file itself - a picture or
   something binary included.

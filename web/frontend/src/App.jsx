@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
-import Header, { AUTO, PRESETS, usePR } from "./Header.jsx";
+import Header, { AUTO, PRESETS, prBase, usePR } from "./Header.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
@@ -9,6 +9,7 @@ import { FilePalette, FileViewer, HelpOverlay, okToRestart, restartDv, SearchPan
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction, useAskSettings } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
+import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
@@ -1370,9 +1371,36 @@ export default function App() {
   );
 
   const pr = usePR(meta?.head?.branch, meta?.remote);
+  // The branch is measured from its pull request's base once the server has
+  // heard of one, which can be after the diff first loaded.
+  useEffect(() => {
+    if (pr?.baseSha && [scope.kind, diff?.scope?.picked].includes("branch")) liveUpdate();
+  }, [pr?.baseSha]);
+  // A pull request checked out here is this branch, with what is not pushed
+  // yet; any other reads as GitHub has it, wherever else it is checked out.
+  const reviewPR = useCallback(
+    (p) => {
+      const next = p.here ? { kind: "branch", rev: "" } : { kind: "pr", rev: String(p.number) };
+      if (next.kind === scope.kind && next.rev === scope.rev) loadDiff({ keepActive: true });
+      else setScope(next);
+      switchMode("diff");
+      if (p.here) return say(`#${p.number} is checked out here`, `Showing this branch since it left ${p.base}, with what is not pushed yet`);
+      if (!p.elsewhere) return;
+      const told = (actions) => say(`#${p.number} is checked out in ${p.elsewhere}`, "Shown here as GitHub has it, without what is not pushed from there", actions);
+      if (!boot.base) return told();
+      api.hubFolders().then(
+        (d) => {
+          const f = d.folders?.find((f) => f.place === p.elsewhere);
+          told(f && [{ label: "Open it there", primary: true, run: () => (location.href = `/${f.slug}/`) }]);
+        },
+        () => told(),
+      );
+    },
+    [scope, setScope, loadDiff, switchMode],
+  );
   // The page's own actions, which do what their buttons and keys do. What the
   // diff compares is the bar's menu in Diff mode; Files reads by it instead.
-  const base = meta?.defaultBranch || "";
+  const base = prBase(pr) || meta?.defaultBranch || "";
   const comparing = mode === "diff" && !folder;
   const pageActions = [
     {
@@ -1417,6 +1445,12 @@ export default function App() {
       : []),
     comparing && scope.kind !== "auto" && { id: "scope-auto", name: "Show automatically", note: "Follows your work, as the page starts", run: () => setScope(AUTO) },
     pr && { id: "pr", name: `Open pull request #${pr.number}`, note: pr.title, run: () => window.open(pr.url, "_blank", "noopener") },
+    meta?.git && meta.remote && {
+      id: "review-pr",
+      name: "Review a pull request",
+      note: "Its changes as GitHub shows them, without checking it out",
+      run: () => openOverlay({ type: "review-pr" }),
+    },
     meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
     { id: "settings", name: "Open settings", note: phoneApp ? "" : "Also the , key", run: () => openOverlay({ type: "settings" }) },
     {
@@ -2481,6 +2515,7 @@ export default function App() {
         ))}
       {overlay?.type === "output" && <CommandOutput id={overlay.id} onClose={closeOverlay} />}
       {overlay?.type === "branch" && <BranchPalette meta={meta} onDone={(msg) => (closeOverlay(), say(msg))} onClose={closeOverlay} />}
+      {overlay?.type === "review-pr" && <PRPalette onPick={(p) => (closeOverlay(), reviewPR(p))} onClose={closeOverlay} />}
       {overlay?.type === "settings" && (
         <SettingsOverlay
           theme={theme}
@@ -2607,6 +2642,7 @@ export default function App() {
         bellOn={promptOpen}
         update={update}
         pr={pr}
+        onReviewPR={meta?.git && meta.remote ? () => openOverlay({ type: "review-pr" }) : null}
         onActions={() => openOverlay({ type: "actions" })}
         comments={threads.filter((t) => !t.resolved).length}
         commentsOn={showComments && !padShown}

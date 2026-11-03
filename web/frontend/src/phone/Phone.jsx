@@ -389,13 +389,23 @@ export default function Phone({ app }) {
       </div>
 
       {sheet === "folders" && <Folders elsewhere={app.elsewhere} here={app.requests.length} onClose={() => setSheet(null)} />}
-      {sheet === "scope" && <ScopeSheet scope={app.scope} resolved={app.diff?.scope} meta={meta} onScope={app.onScope} onClose={() => setSheet(null)} />}
+      {sheet === "scope" && (
+        <ScopeSheet
+          scope={app.scope}
+          resolved={app.diff?.scope}
+          meta={meta}
+          onScope={app.onScope}
+          onReviewPR={meta?.remote ? () => app.openOverlay({ type: "review-pr" }) : null}
+          onClose={() => setSheet(null)}
+        />
+      )}
       {sheet === "menu" && (
         <Menu
           onClose={() => setSheet(null)}
           items={[
             { icon: "settings", label: "Settings", run: () => app.openOverlay({ type: "settings" }) },
             meta?.git && !app.folder && !meta.task && { icon: "branch", label: "Switch branch", run: () => app.openOverlay({ type: "branch" }) },
+            meta?.git && meta.remote && { icon: "branch", label: "Review a pull request", run: () => app.openOverlay({ type: "review-pr" }) },
             meta?.remote && { icon: "pull", label: `Pull ${branch}`, run: () => app.pull() },
             { icon: "file", label: "Open a file", run: () => app.openOverlay({ type: "files" }) },
             boot.base && "-",
@@ -456,7 +466,7 @@ function Folders({ elsewhere, here, onClose }) {
 }
 
 // ScopeSheet is what the Diff compares: the header's menu, as a sheet.
-function ScopeSheet({ scope, resolved, meta, onScope, onClose }) {
+function ScopeSheet({ scope, resolved, meta, onScope, onReviewPR, onClose }) {
   const [custom, setCustom] = useState(scope.kind === "custom" ? scope.rev : "");
   const auto = scope.kind === "auto";
   const base = meta?.defaultBranch || "";
@@ -476,6 +486,17 @@ function ScopeSheet({ scope, resolved, meta, onScope, onClose }) {
           onClick={() => pick({ kind: p.kind, rev: "" })}
         />
       ))}
+      {scope.kind === "pr" && <Choice title={resolved?.label || `#${scope.rev}`} sub="As GitHub has it" on onClick={onClose} />}
+      {onReviewPR && (
+        <Choice
+          title="A pull request…"
+          sub="As GitHub has it, nothing checked out"
+          onClick={() => {
+            onClose();
+            onReviewPR();
+          }}
+        />
+      )}
       <div className="p-sub-label">A range</div>
       <form
         className="p-inline-form"

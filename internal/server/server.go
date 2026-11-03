@@ -303,6 +303,8 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/actions/{id}/stop", Guarded(s.handleStopCommand))
 	mux.HandleFunc("GET /api/actions/{id}/output", Guarded(s.handleCommandOutput))
 	mux.HandleFunc("GET /api/pr", Guarded(s.handlePR))
+	mux.HandleFunc("GET /api/prs", Guarded(s.handlePRs))
+	mux.HandleFunc("POST /api/pr/review", Guarded(s.handleReviewPR))
 	mux.HandleFunc("POST /api/discard", Guarded(s.handleDiscard))
 
 	mux.HandleFunc("GET /api/prefs", Guarded(s.handlePrefs))
