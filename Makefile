@@ -4,7 +4,7 @@
 build: frontend go
 
 frontend:
-	cd web/frontend && npm install --no-audit --no-fund && npm run build
+	cd web/frontend && pnpm install && pnpm run build
 
 go:
 	go build -o dv .
@@ -20,7 +20,7 @@ install: build
 
 # Rebuild the bundle on save; run `go run . -no-open` alongside it.
 watch:
-	cd web/frontend && npm run watch
+	cd web/frontend && pnpm run watch
 
 test:
 	go test ./...

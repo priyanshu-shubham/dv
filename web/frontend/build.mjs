@@ -1,5 +1,5 @@
-// Bundles the review UI into the assets the Go binary embeds. `npm run build`
-// for a one-shot production bundle, `npm run watch` while iterating on the UI.
+// Bundles the review UI into the assets the Go binary embeds. `pnpm run build`
+// for a one-shot production bundle, `pnpm run watch` while iterating on the UI.
 import * as esbuild from "esbuild";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 

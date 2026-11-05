@@ -85,7 +85,7 @@ dv needs `git` for the diff, and the `claude` or `codex` CLI on your PATH for
 the Agent view. `rg` is used for text search when present, with a built-in scanner as the
 fallback.
 
-To build it yourself: `make install`, with Go 1.24+ and Node.
+To build it yourself: `make install`, with Go 1.24+, Node and pnpm.
 
 A running dv picks up a newly installed one with Settings → Restart, or
 `curl -X POST -H 'Content-Type: application/json' <dv's address>/api/restart`.

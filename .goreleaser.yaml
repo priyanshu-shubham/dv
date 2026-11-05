@@ -5,7 +5,7 @@ version: 2
 before:
   hooks:
     # The UI is embedded in the binary, so it is bundled first.
-    - sh -c "cd web/frontend && npm ci --no-audit --no-fund && npm run build"
+    - sh -c "cd web/frontend && pnpm install --frozen-lockfile && pnpm run build"
 
 builds:
   - env:
