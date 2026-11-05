@@ -196,7 +196,7 @@ func run() error {
 	}
 	apps, stop := sendOn(notices, url)
 	defer stop()
-	return serve(ln, withNotices(srv.Handler(""), notices, apps), cmp.Or(*auth, authKey))
+	return serve(ln, withNotices(srv.Handler(""), user, notices, apps), cmp.Or(*auth, authKey))
 }
 
 const authUsage = "ask browsers for this key, as the password of HTTP basic auth (any user name); $" + authEnv + " gives it too, unseen by other users"
@@ -249,9 +249,9 @@ func sendOn(notices *notify.Center, url string) (chatApps, func()) {
 // withNotices serves the notices, which are the whole process's - a hub's
 // folders and all - at its root, ahead of the pages and API of h; and what
 // installs dv as an app, which is the process too.
-func withNotices(h http.Handler, notices *notify.Center, apps chatApps) http.Handler {
+func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps chatApps) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /manifest.webmanifest", server.HandleManifest)
+	mux.HandleFunc("GET /manifest.webmanifest", server.Manifest(user))
 	mux.HandleFunc("GET /icon/{name}", server.HandleIcon)
 	mux.HandleFunc("GET /sw.js", server.HandleWorker)
 	mux.HandleFunc("GET /api/notify", server.Guarded(notices.HandleStream))
@@ -342,7 +342,7 @@ func runHub(args []string) error {
 	}
 	apps, stop := sendOn(notices, url)
 	defer stop()
-	return serve(ln, withNotices(h.Handler(), notices, apps), cmp.Or(*auth, authKey))
+	return serve(ln, withNotices(h.Handler(), user, notices, apps), cmp.Or(*auth, authKey))
 }
 
 func hubAnswers(url string) bool {

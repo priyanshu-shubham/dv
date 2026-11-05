@@ -9,11 +9,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dv/internal/store"
 )
 
 func appMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /manifest.webmanifest", HandleManifest)
+	mux.HandleFunc("GET /manifest.webmanifest", Manifest(nil))
 	mux.HandleFunc("GET /icon/{name}", HandleIcon)
 	mux.HandleFunc("GET /sw.js", HandleWorker)
 	return mux
@@ -55,6 +57,22 @@ func TestManifestAndIcons(t *testing.T) {
 	}
 	if w := get(t, mux, "/icon/huge.png"); w.Code != 404 {
 		t.Errorf("an unknown icon: %d", w.Code)
+	}
+}
+
+func TestManifestTakesTabName(t *testing.T) {
+	user, err := store.OpenRepoPrefs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	user.Set("settings", json.RawMessage(`{"tabName":" work \"pc\" "}`), nil)
+	w := get(t, Manifest(user), "/manifest.webmanifest")
+	var m struct {
+		Name      string
+		ShortName string `json:"short_name"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.Name != `work "pc"` || m.ShortName != m.Name {
+		t.Fatalf("manifest: %+v %v\n%s", m, err, w.Body)
 	}
 }
 

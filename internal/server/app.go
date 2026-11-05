@@ -2,15 +2,19 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
-	"io"
 	"net/http"
+	"strings"
 	"sync"
+
+	"dv/internal/store"
 )
 
 // What a browser installs dv as an app from: the manifest, its icons, and the
@@ -21,15 +25,27 @@ import (
 //go:embed sw.js
 var serviceWorker []byte
 
-const manifest = `{"id":"/","name":"dv","short_name":"dv","start_url":"/","scope":"/","display":"standalone","background_color":"#131314","theme_color":"#131314","icons":[` +
+const manifest = `{"id":"/","name":%[1]s,"short_name":%[1]s,"start_url":"/","scope":"/","display":"standalone","background_color":"#131314","theme_color":"#131314","icons":[` +
 	`{"src":"/icon/192.png","sizes":"192x192","type":"image/png","purpose":"any"},` +
 	`{"src":"/icon/512.png","sizes":"512x512","type":"image/png","purpose":"any"},` +
 	`{"src":"/icon/maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}`
 
-func HandleManifest(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/manifest+json")
-	w.Header().Set("Cache-Control", "no-cache")
-	io.WriteString(w, manifest)
+// Manifest serves the manifest, the app named as the tab is: the setting
+// tabName. A phone takes the name as it installs; renaming it later is up to
+// the phone.
+func Manifest(user *store.Prefs) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var s struct {
+			TabName string `json:"tabName"`
+		}
+		if user != nil {
+			json.Unmarshal(user.All()["settings"], &s)
+		}
+		name, _ := json.Marshal(cmp.Or(strings.TrimSpace(s.TabName), "dv"))
+		w.Header().Set("Content-Type", "application/manifest+json")
+		w.Header().Set("Cache-Control", "no-cache")
+		fmt.Fprintf(w, manifest, name)
+	}
 }
 
 // HandleWorker serves the service worker, revalidated each time so a new dv's

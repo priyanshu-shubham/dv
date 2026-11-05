@@ -97,7 +97,7 @@ func TestAppFilesAreOpenAndPushIsGuarded(t *testing.T) {
 	notices := notify.New(func() time.Duration { return time.Minute })
 	defer notices.Close()
 	push := webpush.New("http://127.0.0.1:1", t.TempDir(), t.TempDir())
-	h := withNotices(http.NotFoundHandler(), notices, chatApps{push: push})
+	h := withNotices(http.NotFoundHandler(), nil, notices, chatApps{push: push})
 	for path, want := range map[string]int{
 		"/manifest.webmanifest": 200, "/sw.js": 200, "/icon/192.png": 200, "/icon/badge.png": 200, "/api/notify/push": 403,
 	} {

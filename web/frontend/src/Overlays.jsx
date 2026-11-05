@@ -879,7 +879,7 @@ export function SettingsOverlay({
                 <label className="settings-row">
                   <div className="settings-text">
                     <div>Name in the tab</div>
-                    <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's. Every dv on this computer uses it.</div>
+                    <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's, and the name it installs under as an app. Every dv on this computer uses it.</div>
                   </div>
                   <input
                     value={settings.tabName || ""}
