@@ -45,7 +45,8 @@ func (p *Push) HandleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSubscribe keeps a browser's subscription, as PushSubscription.toJSON
-// has it, with a name for the device: { endpoint, keys: { p256dh, auth }, name }.
+// has it, with a name for the device: { endpoint, keys: { p256dh, auth }, name,
+// replaces }, replaces being the endpoint of the one it was renewed from.
 func (p *Push) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Endpoint string `json:"endpoint"`
@@ -53,7 +54,8 @@ func (p *Push) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
 			P256dh string `json:"p256dh"`
 			Auth   string `json:"auth"`
 		} `json:"keys"`
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		Replaces string `json:"replaces"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -67,7 +69,7 @@ func (p *Push) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := p.add(d); err != nil {
+	if err := p.replace(d, req.Replaces); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}

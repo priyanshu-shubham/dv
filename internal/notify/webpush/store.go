@@ -1,6 +1,7 @@
 package webpush
 
 import (
+	"cmp"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -146,9 +147,18 @@ func (p *Push) device(endpoint string) (Device, bool) {
 
 // add keeps d, in place of the subscription at its endpoint, whichever dv
 // had it.
-func (p *Push) add(d Device) error {
+func (p *Push) add(d Device) error { return p.replace(d, "") }
+
+// replace is add, d also taking the place of the subscription the browser
+// renewed into it, at old, and its name when d comes without one.
+func (p *Push) replace(d Device, old string) error {
 	return p.change(func(k *kept) {
-		k.Devices = append(slices.DeleteFunc(k.Devices, func(o Device) bool { return o.Endpoint == d.Endpoint }), d)
+		if i := slices.IndexFunc(k.Devices, func(o Device) bool { return old != "" && o.Endpoint == old }); i >= 0 {
+			d.Name = cmp.Or(d.Name, k.Devices[i].Name)
+		}
+		k.Devices = append(slices.DeleteFunc(k.Devices, func(o Device) bool {
+			return o.Endpoint == d.Endpoint || old != "" && o.Endpoint == old
+		}), d)
 	})
 }
 

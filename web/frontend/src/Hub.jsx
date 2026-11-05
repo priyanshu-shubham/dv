@@ -6,6 +6,7 @@ import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { enableBack } from "./phone/back.js";
+import { usePush } from "./phone/push.js";
 import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { setTabIcon, tabDot } from "./favicon.js";
 import { PRChip } from "./Header.jsx";
@@ -41,6 +42,9 @@ export default function Hub() {
   useEffect(() => {
     document.title = `${settings.tabName?.trim() || "dv"} hub`;
   }, [settings.tabName]);
+  // The installed app opens here: a subscription renewed or permission taken
+  // back is caught without a folder opened.
+  usePush(null);
   // On a phone, the app's look (phone.css), and Back closing a dialog.
   const phoneApp = useMedia(PHONE_APP);
   useEffect(() => {

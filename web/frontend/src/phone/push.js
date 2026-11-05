@@ -3,6 +3,7 @@
 // on the other - leaves the device's list once dv is opened there.
 import { useEffect } from "react";
 import { api } from "../api.js";
+import { say } from "../Notices.jsx";
 
 export const pushable = typeof navigator !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && isSecureContext;
 
@@ -14,7 +15,9 @@ function registration() {
 
 export function usePush(notices) {
   useEffect(() => {
-    registration().catch(() => {});
+    registration()
+      .then(() => (renewed ||= renew()))
+      .catch(() => {});
   }, []);
   useEffect(() => {
     if (!pushable || !notices) return;
@@ -38,9 +41,44 @@ export async function current() {
   return (await r?.pushManager.getSubscription()) || null;
 }
 
+// The endpoint this device last gave dv. Chrome renews a subscription without
+// telling the service worker, so a page opened finds the change by it.
+const SENT_KEY = "dv:pushEndpoint";
+
+// renew gives dv this device's subscription again, in place of the one sent
+// before, when the browser has renewed or dropped it since. With none sent
+// yet, one dv already has is noted, for devices subscribed before this was.
+// Once a page's: App and the phone's screen both ask.
+let renewed = null;
+async function renew() {
+  if (!pushable) return;
+  const sent = localStorage.getItem(SENT_KEY);
+  // Permission taken back in the device's settings: nothing can subscribe
+  // again, so dv stops sending, and says why the notifications stopped.
+  if (Notification.permission !== "granted") {
+    if (!sent) return;
+    localStorage.removeItem(SENT_KEY);
+    await api.pushUnsubscribe(sent).catch(() => {});
+    say(
+      "Notifications are off for dv",
+      "They were turned off for dv in this device's settings, so they no longer come. Allow them there, then turn them on again in dv's Settings.",
+      undefined,
+      Infinity,
+    );
+    return;
+  }
+  const sub = await current();
+  if (!sent) {
+    if (sub && (await api.pushStatus(sub.endpoint)).subscribed) localStorage.setItem(SENT_KEY, sub.endpoint);
+    return;
+  }
+  if (sub?.endpoint !== sent) await subscribe(sent);
+}
+
 // subscribe asks for permission, subscribes with the hub's key, and gives the
-// subscription to dv, named for the device it is on.
-export async function subscribe() {
+// subscription to dv, named for the device it is on, in place of the one at
+// replaces.
+export async function subscribe(replaces) {
   const r = await registration();
   if (!r) throw new Error("This browser can't receive notifications here. Over plain http only localhost can.");
   if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications are blocked for dv. Allow them in the app's settings, then try again.");
@@ -54,13 +92,15 @@ export async function subscribe() {
   }
   sub ||= await r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
   const { endpoint, keys } = sub.toJSON();
-  await api.pushSubscribe({ endpoint, keys, name: await deviceName() });
+  await api.pushSubscribe({ endpoint, keys, name: await deviceName(), replaces });
+  localStorage.setItem(SENT_KEY, endpoint);
   return sub;
 }
 
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 export async function unsubscribe() {
+  localStorage.removeItem(SENT_KEY);
   const sub = await current();
   if (!sub) return;
   await api.pushUnsubscribe(sub.endpoint).catch(() => {});

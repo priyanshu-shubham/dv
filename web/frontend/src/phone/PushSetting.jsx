@@ -28,8 +28,10 @@ export function PushSetting({ phone = false }) {
   const [on, setOn] = useState(null); // null until known
   const [last, setLast] = useState(null); // how dv's last message to this device went
   const [busy, setBusy] = useState(false);
-  const look = () =>
-    current()
+  const [blocked, setBlocked] = useState(false);
+  const look = () => {
+    if (pushable) setBlocked(Notification.permission === "denied");
+    return current()
       .then((sub) => (sub ? api.pushStatus(sub.endpoint) : {}))
       .then(
         (st) => {
@@ -38,6 +40,7 @@ export function PushSetting({ phone = false }) {
         },
         () => setOn(false),
       );
+  };
   // Coming back to it, as after locking the phone for a test, it reads again.
   useEffect(() => {
     look();
@@ -84,6 +87,7 @@ export function PushSetting({ phone = false }) {
             </>
           )}
         </div>
+        {pushable && !on && blocked && <div className="settings-note error">Blocked for dv in this device's settings: allow notifications there first.</div>}
         {on && last && (
           <div className={cx("settings-note", last.error && "error")}>
             {last.error ? `The last one, ${relTime(last.at)}, failed: ${last.error}` : `Last sent ${relTime(last.at)}: “${last.title}”`}

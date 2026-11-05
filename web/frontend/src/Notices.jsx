@@ -172,8 +172,8 @@ function Notice(props) {
 }
 
 // say is a notice of the page's own, with actions as a Notice takes them.
-export const say = (title, detail, actions) =>
-  toast.custom((t) => <Notice id={t} kind="info" title={title} detail={detail} actions={actions} />, { duration: 6000 });
+export const say = (title, detail, actions, duration = 6000) =>
+  toast.custom((t) => <Notice id={t} kind="info" title={title} detail={detail} actions={actions} />, { duration });
 
 // useHubActivity is what the hub's folders are doing: every folder on the hub's
 // own page, the others on a folder's. Outside a hub there is nothing to follow.

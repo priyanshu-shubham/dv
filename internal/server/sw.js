@@ -41,6 +41,28 @@ self.addEventListener("push", (event) => {
   );
 });
 
+// The browser renewed the subscription: dv is given the new one in place of
+// the old, which its push service no longer takes. Chrome mostly renews
+// without this, which a page opened then finds (push.js's renew).
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const old = event.oldSubscription;
+  event.waitUntil(
+    (async () => {
+      let sub = event.newSubscription;
+      if (!sub) {
+        const { key } = await fetch("/api/notify/push").then((r) => r.json());
+        sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      }
+      const { endpoint, keys } = sub.toJSON();
+      await fetch("/api/notify/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint, keys, replaces: old?.endpoint }),
+      });
+    })(),
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const { url = "/", session, folder, action, terminal } = event.notification.data || {};

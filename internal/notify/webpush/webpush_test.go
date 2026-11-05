@@ -203,6 +203,11 @@ func TestDevices(t *testing.T) {
 	if len(p.devices()) != 0 || len(other.devices()) != 2 {
 		t.Fatalf("after forgetting: %v, %v", p.devices(), other.devices())
 	}
+	// Renewed by the browser, sent on with no name, it keeps the one it had.
+	other.replace(Device{Endpoint: "https://push.example/d", DV: other.self}, "https://push.example/c")
+	if d, ok := other.device("https://push.example/d"); !ok || d.Name != "tablet" || len(other.devices()) != 2 {
+		t.Fatalf("renewed: %v; %v", d, other.devices())
+	}
 }
 
 func TestMessage(t *testing.T) {
