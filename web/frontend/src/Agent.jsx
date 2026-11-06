@@ -837,6 +837,7 @@ export default function AgentView({
   // Up goes back through what was said here, as in the terminal.
   const history = useMemo(() => prompts.map(saidAs).filter((t) => t.trim()), [prompts]);
   const runs = useMemo(() => runsOf(items, !!live?.busy, running), [items, live?.busy, running]);
+  const pictures = usePictures(id, items, root);
   // What Claude left at work - agents, and commands in the background - over
   // the message box, each opening on what it is doing; peek is the call open.
   const atWork = useAtWork(id, items, !!live?.busy, running);
@@ -2100,6 +2101,7 @@ export default function AgentView({
   return (
     <AttachTarget.Provider value={attachTarget}>
     <OpenCall.Provider value={setPeek}>
+    <Pictures.Provider value={pictures}>
     <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef}>
       {!docked && <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />}
       {phone ? (
@@ -2401,6 +2403,7 @@ export default function AgentView({
         />
       )}
     </div>
+    </Pictures.Provider>
     </OpenCall.Provider>
     </AttachTarget.Provider>
   );
@@ -2411,6 +2414,19 @@ const CARET_KEY = `dv:${slug ? slug + ":" : ""}caret`; // { id, at: [start, end]
 
 // OpenCall opens the conversation page on a call, from the call's own line.
 const OpenCall = createContext(null);
+
+// Pictures is every picture in the conversation, in order, which a full-size
+// one steps through with the arrow keys.
+const Pictures = createContext(NO_IMAGES);
+
+function usePictures(session, items, root) {
+  return useMemo(() => {
+    const out = items
+      .filter((it) => sawImage(it) || (it.tool === "ImageGeneration" && it.result?.detail?.kind === "image" && !it.result.isError))
+      .map((it) => ({ src: api.agentImageURL(session, it.toolId), name: toolSummary(it.tool, it.input || {}, root).what }));
+    return out.length ? out : NO_IMAGES;
+  }, [session, items, root]);
+}
 
 // LINGER_MS is how long a call that has finished stays over the message box,
 // so one ending is seen there rather than simply gone.
@@ -2710,9 +2726,11 @@ function useAtEnd() {
 // goes. Its own agents are not opened from here.
 function SubagentView({ session, items, live, working, root, ...rest }) {
   const runs = useMemo(() => runsOf(items, working, "dv"), [items, working]);
+  const pictures = usePictures(session, items, root);
   const ref = useAtEnd();
   return (
     <OpenCall.Provider value={null}>
+    <Pictures.Provider value={pictures}>
       <div className="agent-scroll" ref={ref}>
         <div className="agent-log">
           {items.map((it) => (
@@ -2739,6 +2757,7 @@ function SubagentView({ session, items, live, working, root, ...rest }) {
           </div>
         )}
       </div>
+    </Pictures.Provider>
     </OpenCall.Provider>
   );
 }
@@ -3555,15 +3574,33 @@ function inRepo(path, root) {
 // Until it is in, its place is held by a spinner: .loading also keeps a
 // scrolled-up reader's place while it grows.
 function ToolImage({ src, detail = {}, name, thumb }) {
-  const [zoom, setZoom] = useState(false);
+  const [shown, setShown] = useState(null); // the src full size, which may be another picture's
   const [state, setState] = useState("loading");
   const phone = useMedia(PHONE_APP);
+  const pictures = useContext(Pictures);
+  const at = shown ? pictures.findIndex((p) => p.src === shown) : -1;
+  const pic = at >= 0 ? pictures[at] : { src: shown, name };
+  const prev = pictures[at - 1];
+  const next = at >= 0 ? pictures[at + 1] : undefined;
+  useEffect(() => {
+    if (!shown || phone) return;
+    const onKey = (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const to = e.key === "ArrowLeft" ? prev : e.key === "ArrowRight" ? next : null;
+      if (!to) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setShown(to.src);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [shown, phone, prev, next]);
   if (state === "failed") return <div className={cx("agent-image", "failed", thumb && "thumb")}>{thumb ? "Not loaded" : "The picture could not be loaded"}</div>;
   return (
     <>
       <button
         className={cx("agent-image", state === "loading" && "loading", thumb && "thumb")}
-        onClick={() => setZoom(true)}
+        onClick={() => setShown(src)}
         title={thumb && name ? `${name}: see it full size` : "See it full size"}
       >
         <img
@@ -3577,18 +3614,31 @@ function ToolImage({ src, detail = {}, name, thumb }) {
         />
         {state === "loading" && <span className="spinner" />}
       </button>
-      {zoom && phone && <Photo src={src} name={name} onClose={() => setZoom(false)} />}
-      {zoom && !phone && (
-        <Modal wide centred className="image-view" onClose={() => setZoom(false)}>
+      {shown && phone && <Photo src={src} name={name} onClose={() => setShown(null)} />}
+      {shown && !phone && (
+        <Modal wide centred className="image-view" onClose={() => setShown(null)}>
           <div className="viewer-head">
-            <span className="path">{name}</span>
+            <span className="path">{pic.name}</span>
             <span className="spacer" />
-            <button className="ghost" onClick={() => setZoom(false)} title="Close (Esc)">
+            {(prev || next) && (
+              <>
+                <span className="at">
+                  {at + 1} of {pictures.length}
+                </span>
+                <button className="ghost" onClick={() => setShown(prev.src)} disabled={!prev} title="Previous picture (←)">
+                  <IconBack size={13} />
+                </button>
+                <button className="ghost" onClick={() => setShown(next.src)} disabled={!next} title="Next picture (→)">
+                  <IconForward size={13} />
+                </button>
+              </>
+            )}
+            <button className="ghost" onClick={() => setShown(null)} title="Close (Esc)">
               <IconX size={13} />
             </button>
           </div>
           <div className="image-view-body">
-            <img src={src} alt="" />
+            <img src={pic.src} alt="" />
           </div>
         </Modal>
       )}
