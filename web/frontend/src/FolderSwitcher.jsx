@@ -86,7 +86,7 @@ function FolderRow({ hit: { f, name, place }, on, onPick, onHover }) {
   const state =
     f.slug === slug ? "this one" : f.open?.waiting ? "waiting on you" : f.open?.working ? workingLabel(f.open) : f.elsewhere ? "open in another dv" : "";
   return (
-    <button className={cx("palette-row", "folder-hit", on && "on")} onMouseMove={onHover} onClick={onPick}>
+    <button className={cx("palette-row", "folder-hit", on && "on", f.slug === slug && "here")} onMouseMove={onHover} onClick={onPick}>
       <span className={cx("session-dot", f.open && "live-dv", f.elsewhere && "live-terminal", f.open?.working && "busy", f.open?.waiting && "asking")} />
       <span className="sym" dangerouslySetInnerHTML={{ __html: markMatches(f.name, name) }} />
       {state && <span className={cx("why", f.open?.waiting && "session-asking")}>{state}</span>}
@@ -246,16 +246,21 @@ export default function FolderSwitcher({ mode }) {
           />
         ))}
         <button
-          className={cx("palette-row", shown.at === shown.list.length && "on")}
+          className={cx("palette-row", "folder-hit", "folder-find", shown.at === shown.list.length && "on")}
           onClick={() => {
             close();
             setFinding(shown.all);
           }}
         >
+          <IconSearch size={12} />
           <span className="dim">Find any folder…</span>
         </button>
       </div>
-      <div className="palette-foot dim">Let go to switch, Esc to stay</div>
+      <div className="palette-foot">
+        <span>
+          <kbd>↑</kbd> <kbd>↓</kbd> to move, let go to switch, <kbd>Esc</kbd> to stay
+        </span>
+      </div>
     </Modal>
   );
 }

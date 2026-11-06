@@ -2604,6 +2604,7 @@ export default function App() {
                 id: termId,
                 show: showTerm,
                 theme: "dark", // as the phone app is, whatever Settings say
+                typeAhead: settings.typeAhead !== false,
                 onSelect: setTermId,
                 onNew: newTerminal,
                 onClose: closeTerminal,
@@ -2728,6 +2729,7 @@ export default function App() {
             theme={theme}
             focus={termFocus}
             copyOnSelect={settings.copyOnSelect !== false}
+            typeAhead={settings.typeAhead !== false}
             onNew={newTerminal}
           />
         )}

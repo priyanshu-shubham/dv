@@ -3312,6 +3312,7 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
   const r = item.result;
   const d = r?.detail;
   const { name, what, mono } = toolSummary(item.tool, input, root);
+  const seen = sawImage(item);
   const state = toolState(item, busy, running);
   const command = item.tool === "Bash" || item.tool === "PowerShell";
   // One left in the background ran on after its result, so its time is not known.
@@ -3332,9 +3333,10 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
             setOpen(!open);
             toggled(ref.current, !open);
           }}
+          title={seen ? (open ? "Show the picture small" : "Show the picture larger") : undefined}
         >
           <span className={cx("agent-tool-state", state)} title={STATES[state]} />
-          <span className="agent-tool-name">{name || item.tool}</span>
+          <span className="agent-tool-name">{seen ? "Viewed" : name || item.tool}</span>
           <span className={cx("agent-tool-what", mono && "mono")}>
             {LRM}
             {what}
@@ -3355,13 +3357,16 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
         )}
       </div>
       {item.tool === "TodoWrite" && <Todos todos={input.todos} />}
-      {/* A picture made is what the call is for, so it shows without opening. */}
+      {/* A picture made is what the call is for, so it shows without opening; one
+          looked at shows what the agent saw, small enough to read past. */}
       {item.tool === "ImageGeneration" && d?.kind === "image" && !r.isError && (
         <div className="agent-tool-body">
           <ToolImage src={api.agentImageURL(session, item.toolId)} name={what} />
         </div>
       )}
+      {seen && <ToolImage src={api.agentImageURL(session, item.toolId)} detail={d} name={what} thumb={!open} />}
       {open &&
+        !seen &&
         (item.tool === "ImageGeneration" ? (
           <div className="agent-tool-body">{r?.isError ? <pre className="agent-result error">{r.text}</pre> : <Fields input={input} />}</div>
         ) : d?.kind === "image" && !r.isError ? (
@@ -3376,11 +3381,13 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
 }
 
 // ToolGroup is calls made one after another, once they are done: one line for
-// what they did together, which opens on each call's own line.
+// what they did together, which opens on each call's own line. The pictures
+// among them stay in sight under it, small.
 function ToolGroup({ calls, session, root, busy, running, onOpenFile }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const failed = calls.filter((c) => c.result?.isError).length;
+  const seen = calls.filter(sawImage);
   return (
     <div className={cx("agent-tool", "agent-tools", open && "open")} ref={ref}>
       <div className="agent-tool-row">
@@ -3397,12 +3404,20 @@ function ToolGroup({ calls, session, root, busy, running, onOpenFile }) {
           {failed > 0 && <span className="agent-tool-sum failed">{failed} failed</span>}
         </button>
       </div>
-      {open && (
+      {open ? (
         <div className="agent-tools-list">
           {calls.map((c) => (
             <ToolRow key={c.key} item={c} session={session} root={root} busy={busy} running={running} onOpenFile={onOpenFile} />
           ))}
         </div>
+      ) : (
+        seen.length > 0 && (
+          <div className="agent-image-strip">
+            {seen.map((c) => (
+              <ToolImage key={c.key} src={api.agentImageURL(session, c.toolId)} detail={c.result.detail} name={toolSummary(c.tool, c.input, root).what} thumb />
+            ))}
+          </div>
+        )
       )}
     </div>
   );
@@ -3421,16 +3436,20 @@ const DID = [
 ];
 // One kind for the rest, so they count together.
 const DID_OTHER = [[], "used", "a tool", "tools"];
+const DID_VIEW = [[], "viewed", "an image", "images"];
 
 function didTogether(calls) {
   const counts = new Map();
   for (const c of calls) {
-    const kind = DID.find(([tools]) => tools.includes(c.tool)) || DID_OTHER;
+    const kind = sawImage(c) ? DID_VIEW : DID.find(([tools]) => tools.includes(c.tool)) || DID_OTHER;
     counts.set(kind, (counts.get(kind) || 0) + 1);
   }
   const said = [...counts].map(([[, verb, one, many], n]) => `${verb} ${n === 1 ? one : `${n} ${many}`}`).join(", ");
   return said[0].toUpperCase() + said.slice(1);
 }
+
+// sawImage is a file read that was a picture, which the agent saw as one.
+const sawImage = (it) => it.tool === "Read" && it.result?.detail?.kind === "image" && !it.result.isError;
 
 // foldable is a call that goes into a run of them: done, and saying no more
 // on its own line than the run's does. An edit is its diff, the to-do list
@@ -3442,13 +3461,14 @@ function foldable(it, busy, running) {
 }
 
 // runsOf finds calls done one after another, which read as one line: by the
-// first call's key, the run; and the keys of the calls folded into it.
+// first call's key, the run; and the keys of the calls folded into it. A
+// picture looked at folds even alone, as it would among others.
 function runsOf(items, busy, running) {
   const byFirst = new Map();
   const folded = new Set();
   let run = [];
   const end = () => {
-    if (run.length > 1) {
+    if (run.length > 1 || (run.length === 1 && sawImage(run[0]))) {
       byFirst.set(run[0].key, run);
       for (const it of run.slice(1)) folded.add(it.key);
     }
@@ -3534,14 +3554,18 @@ function inRepo(path, root) {
 // ToolImage is a picture Claude was shown, under its line once that is opened.
 // Until it is in, its place is held by a spinner: .loading also keeps a
 // scrolled-up reader's place while it grows.
-function ToolImage({ src, detail = {}, name }) {
+function ToolImage({ src, detail = {}, name, thumb }) {
   const [zoom, setZoom] = useState(false);
   const [state, setState] = useState("loading");
   const phone = useMedia(PHONE_APP);
-  if (state === "failed") return <div className="agent-image failed">The picture could not be loaded</div>;
+  if (state === "failed") return <div className={cx("agent-image", "failed", thumb && "thumb")}>{thumb ? "Not loaded" : "The picture could not be loaded"}</div>;
   return (
     <>
-      <button className={cx("agent-image", state === "loading" && "loading")} onClick={() => setZoom(true)} title="See it full size">
+      <button
+        className={cx("agent-image", state === "loading" && "loading", thumb && "thumb")}
+        onClick={() => setZoom(true)}
+        title={thumb && name ? `${name}: see it full size` : "See it full size"}
+      >
         <img
           src={src}
           alt=""

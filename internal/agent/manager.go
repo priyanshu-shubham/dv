@@ -48,11 +48,18 @@ type Manager struct {
 	// Unasked are globs of the files AutoAskEdits leaves their edits to auto
 	// mode for, read at each edit. Set once, as Suggests is.
 	Unasked func() []string
+	// AutoTitles says whether dv has a small model name the sessions their
+	// agent has not. Set once, as Suggests is.
+	AutoTitles func() bool
 
 	mu      sync.Mutex
 	procs   map[string]*proc
 	follows map[string]*follow
 	rows    map[string]cachedRow // by transcript path
+	scans   map[string]*earlier  // by transcript path
+	behind  map[string]bool      // transcripts for readBehind to read on
+	reading bool
+	titled  map[string]time.Time // when a title was last asked for, by session
 	agents  map[string]string    // sessions whose agent has been worked out
 	shells  map[string]*shellRun // commands run with !, by session
 	live    map[string]running
@@ -79,7 +86,7 @@ func New(root string, broker *permit.Broker, saved *store.Sessions) *Manager {
 	m := &Manager{
 		root: root, broker: broker, saved: saved, codex: newCodexSide(root, broker, saved),
 		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{}, agents: map[string]string{},
-		shells: map[string]*shellRun{},
+		shells: map[string]*shellRun{}, scans: map[string]*earlier{}, behind: map[string]bool{}, titled: map[string]time.Time{},
 	}
 	m.codex.instructions = m.instructions
 	// A session started here but not yet sent to has no transcript, so all
@@ -241,7 +248,12 @@ func (m *Manager) Sessions() []Session {
 		return cmp.Or(b.Updated.Compare(a.Updated), cmp.Compare(a.ID, b.ID))
 	})
 	asks := m.saved.AskIDs()
-	return slices.DeleteFunc(out, func(s Session) bool { return slices.Contains(asks, s.ID) })
+	out = slices.DeleteFunc(out, func(s Session) bool { return slices.Contains(asks, s.ID) })
+	made := m.saved.Titles()
+	for i := range out {
+		m.named(&out[i], made[out[i].ID])
+	}
+	return out
 }
 
 // Activity is what a session open in dv is doing, for word of it to reach the
@@ -274,6 +286,7 @@ func (m *Manager) Activity() []Activity {
 	}
 	slices.Sort(ids)
 	files := transcriptFiles(m.root)
+	made := m.saved.Titles()
 	out := m.codex.activity(ids)
 	for _, id := range ids {
 		if m.saved.Agent(id) == "codex" {
@@ -284,7 +297,7 @@ func (m *Manager) Activity() []Activity {
 		a.Shared = m.shared(id, live[id])
 		if path := files[id]; path != "" {
 			if row, ok := m.row(path); ok {
-				a.Title, a.Updated, a.Sent = cmp.Or(row.Title, row.Prompt), row.Updated, row.Sent
+				a.Title, a.Updated, a.Sent = cmp.Or(row.Title, made[id].Text, row.Prompt), row.Updated, row.Sent
 				if row.LastBy != "you" {
 					a.Last = row.Last
 				}
@@ -323,7 +336,7 @@ func (m *Manager) Title(id string) string {
 		return ""
 	}
 	row, _ := m.row(path)
-	return cmp.Or(row.Title, row.Prompt)
+	return cmp.Or(row.Title, m.saved.Titles()[id].Text, row.Prompt)
 }
 
 // Reply is what the agent said last in a session, whole and as written - the
@@ -376,19 +389,69 @@ func (m *Manager) row(path string) (Session, bool) {
 	m.mu.Lock()
 	c, hit := m.rows[path]
 	m.mu.Unlock()
-	if hit && c.size == fi.Size() && c.mod.Equal(fi.ModTime()) {
-		return c.row, c.ok
+	row, ok := c.row, c.ok
+	if !hit || c.size != fi.Size() || !c.mod.Equal(fi.ModTime()) {
+		row, ok = summarize(path)
+		// A long turn can push the last message sent out of the end summarize
+		// reads; looked at every second, the file was seen with it.
+		if hit && row.Sent.IsZero() && fi.Size() > c.size {
+			row.Sent = c.row.Sent
+		}
+		m.mu.Lock()
+		m.rows[path] = cachedRow{fi.Size(), fi.ModTime(), row, ok}
+		m.mu.Unlock()
 	}
-	row, ok := summarize(path)
-	// A long turn can push the last message sent out of the end summarize
-	// reads; looked at every second, the file was seen with it.
-	if hit && row.Sent.IsZero() && fi.Size() > c.size {
-		row.Sent = c.row.Sent
+	e, all := m.earlier(path, fi.Size())
+	row.Title = cmp.Or(row.custom, e.custom, row.ai, e.ai)
+	if all {
+		row.prompts = max(e.prompts, 1)
 	}
-	m.mu.Lock()
-	m.rows[path] = cachedRow{fi.Size(), fi.ModTime(), row, ok}
-	m.mu.Unlock()
 	return row, ok
+}
+
+// earlier is what is known of a transcript's titles further back than the end
+// summarize reads, and whether that is all there is. A file not read through
+// to there yet is read on away from the listing, for the next one.
+func (m *Manager) earlier(path string, size int64) (earlier, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e := m.scans[path]
+	if e == nil || e.to < size {
+		m.behind[path] = true
+		if !m.reading {
+			m.reading = true
+			go m.readBehind()
+		}
+	}
+	if e == nil {
+		return earlier{}, false
+	}
+	return *e, e.to+summaryEnds >= size
+}
+
+func (m *Manager) readBehind() {
+	for {
+		m.mu.Lock()
+		path := ""
+		for path = range m.behind {
+			break
+		}
+		if path == "" {
+			m.reading = false
+			m.mu.Unlock()
+			return
+		}
+		delete(m.behind, path)
+		var e earlier
+		if was := m.scans[path]; was != nil {
+			e = *was
+		}
+		m.mu.Unlock()
+		e.readOn(path)
+		m.mu.Lock()
+		m.scans[path] = &e
+		m.mu.Unlock()
+	}
 }
 
 // running is runningSessions less often: every page listing and following

@@ -463,6 +463,25 @@ func (t *codexThread) last() (text, by string) {
 	return "", ""
 }
 
+// talked is what a title is made from besides the first prompt: the last thing
+// asked, how many turns there have been, and whether Codex has answered one.
+func (t *codexThread) talked() (asked string, turns int, replied bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, turn := range t.turns {
+		for _, it := range turn.Items {
+			switch it.Type {
+			case "agentMessage":
+				replied = true
+			case "userMessage":
+				s, _, _ := codexInputs(it.Inputs())
+				asked = cmp.Or(cleanPrompt(s), asked)
+			}
+		}
+	}
+	return asked, len(t.turns), replied
+}
+
 // ---- notifications
 
 func (t *codexThread) Notify(method string, params json.RawMessage) {

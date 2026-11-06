@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { usePref } from "./prefs.js";
 import { cx } from "./util.js";
 import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
-import { IconAsk, IconBolt, IconPlus, IconX } from "./icons.jsx";
+import {
+  AgentIcon, IconArrowDown, IconAsk, IconBack, IconBolt, IconBranch, IconComment, IconEdit, IconEye, IconFile, IconNewSession,
+  IconOpenOut, IconPad, IconPlus, IconRefresh, IconSettings, IconShell, IconSplit, IconTemporary, IconX,
+} from "./icons.jsx";
 
 // An action is kept to run in a click, from ⚡ at the top or Alt+A: a prompt,
 // sent to the session last open in the Agent view or to a new one it sets up,
@@ -144,8 +147,10 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
     if (running[a.id]) return `Running for ${elapsed(running[a.id].started, at)} · Enter stops it`;
     return canRun(a) ? describe(a, info) : "Open a session in the Agent view first";
   };
+  // Headed by where each comes from, once there is more than one place.
+  const groups = new Set(shown.map(groupOf));
   return (
-    <Modal onClose={onClose} className="palette">
+    <Modal onClose={onClose} className="palette actions">
       <div className="palette-input">
         <IconBolt size={15} />
         <input
@@ -161,13 +166,18 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
       </div>
       <div className="palette-list" ref={listRef}>
         {shown.map((a, i) => (
-          <div className="action-line" key={(a.scope || "") + a.id}>
+          <Fragment key={(a.scope || "") + a.id}>
+            {groups.size > 1 && groupOf(a) !== groupOf(shown[i - 1] || {}) && <div className="menu-label action-group">{GROUPS[groupOf(a)]}</div>}
+          <div className="action-line">
             <button
               className={cx("palette-row", "action-row", i === sel && "on", !canRun(a) && "unready", running[a.id] && "running")}
               onMouseMove={() => setSel(i)}
               onClick={() => pick(a)}
               title={a.kind === "command" ? a.command : a.prompt}
             >
+              <span className="action-kind">
+                <ActionIcon a={a} />
+              </span>
               <span className="sym">{a.name}</span>
               <span className="dim">{note(a)}</span>
             </button>
@@ -177,15 +187,40 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
               </button>
             )}
           </div>
+          </Fragment>
         ))}
         {shown.length === 0 && <div className="empty">{all.length ? "No actions match." : "No actions yet: a prompt or a command you keep here, to run in a click."}</div>}
-        <button className={cx("palette-row", "action-edit", sel === shown.length && "on")} onMouseMove={() => setSel(shown.length)} onClick={onEdit}>
+        <button className={cx("palette-row", "action-row", "action-edit", sel === shown.length && "on")} onMouseMove={() => setSel(shown.length)} onClick={onEdit}>
+          <span className="action-kind">{all.length ? <IconEdit size={13} /> : <IconPlus size={13} />}</span>
           <span className="dim">{all.length ? "Edit actions…" : "Add an action…"}</span>
         </button>
+      </div>
+      <div className="palette-foot">
+        <span>
+          <kbd>↑</kbd> <kbd>↓</kbd> to pick, <kbd>Enter</kbd> to run{Object.keys(running).length ? " or stop" : ""}
+        </span>
       </div>
     </Modal>
   );
 }
+
+// dv's own by id, or its start, as the phone's sheet has them.
+const OWN_ICONS = {
+  "new-session": IconNewSession, "new-worktree": IconBranch, "new-task": IconTemporary, "close-task": IconX,
+  comments: IconComment, notes: IconFile, pad: IconPad, ask: IconAsk, "new-note": IconPlus, scope: IconSplit,
+  pr: IconOpenOut, "review-pr": IconEye, branch: IconBranch, settings: IconSettings, restart: IconRefresh,
+  hub: IconBack, pull: IconArrowDown, main: IconArrowDown,
+};
+
+function ActionIcon({ a }) {
+  if (a.kind === "command") return <IconShell size={14} />;
+  if (a.kind === "prompt") return <AgentIcon agent={a.agent} size={13} />;
+  const Own = OWN_ICONS[a.id] || OWN_ICONS[a.id.split("-")[0]] || IconBolt;
+  return <Own size={13} />;
+}
+
+const groupOf = (a) => (a.scope === "repo" || a.scope === "user" ? a.scope : "dv");
+const GROUPS = { repo: "This repository", user: "Every repository", dv: "Built in" };
 
 // shownOutput is output as a terminal would leave it: colours dropped, and a
 // line written over with \r, as progress is, only as it ended.

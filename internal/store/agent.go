@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -44,6 +45,18 @@ type sessionsDoc struct {
 	// Shared are sessions dv talks to though another process has them open,
 	// by that process's pid: one that opens it later has it to itself again.
 	Shared map[string]int `json:"shared,omitempty"`
+	// Titles are the ones dv made for sessions their agent never named, kept
+	// here rather than in the transcript, which is the agent's.
+	Titles map[string]Title `json:"titles,omitempty"`
+}
+
+// Title is a name dv made for a session from its conversation.
+type Title struct {
+	Text string `json:"text"`
+	// Prompts is how many the conversation had had then, for knowing when it
+	// has moved on enough to be named again - which is done once, Redone.
+	Prompts int  `json:"prompts"`
+	Redone  bool `json:"redone,omitempty"`
 }
 
 // Pick is a session's model and effort, "" for the user's settings'.
@@ -372,6 +385,27 @@ func (s *Sessions) SetPicked(id string, p Pick) error {
 		}
 		s.doc.Picks[id] = p
 	}
+	return s.file.save(s.doc)
+}
+
+// Titles are the titles dv made, by session.
+func (s *Sessions) Titles() map[string]Title {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sync()
+	return maps.Clone(s.doc.Titles)
+}
+
+func (s *Sessions) SetTitle(id string, t Title) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	if s.doc.Titles == nil {
+		s.doc.Titles = map[string]Title{}
+	}
+	s.doc.Titles[id] = t
 	return s.file.save(s.doc)
 }
 

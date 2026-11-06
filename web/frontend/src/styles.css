@@ -3871,6 +3871,39 @@ mark {
   overflow-wrap: anywhere;
 }
 
+/* dv's terminal, in Settings: a command's output in a card of its own, as
+   tall as the dialog leaves it. */
+.modal.settings > .settings-body:has(> .settings-logs) {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-logs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.command-output.logs-output {
+  min-height: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  white-space: pre-wrap;
+}
+
+/* What went to stderr: warnings, and what could not be done. */
+.logs-err {
+  color: var(--mod);
+}
+
+.settings-note.error {
+  color: var(--del);
+}
+
 .help-body {
   display: grid;
   grid-template-columns: 150px 1fr;
@@ -3971,7 +4004,7 @@ mark {
   margin-top: 4px;
 }
 
-/* An action is its name over where it runs. */
+/* A pull request or branch is its name over what it is. */
 .palette-row.action-row {
   flex-direction: column;
   align-items: flex-start;
@@ -3983,8 +4016,51 @@ mark {
   font-family: var(--font-ui);
 }
 
+/* An action is a line: what kind it is, its name, then what it does, which
+   gives way first. */
+.modal.palette.actions {
+  width: min(600px, 100%);
+}
+
+.palette.actions .palette-row.action-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 3px 12px;
+}
+
+.palette.actions .action-row .sym {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-kind {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  color: var(--fg-3);
+}
+
+.palette-row.on .action-kind {
+  color: var(--fg-2);
+}
+
+.menu-label.action-group {
+  padding: 10px 12px 3px;
+}
+
 .action-line {
   position: relative;
+}
+
+.action-line:has(.action-output) .action-row {
+  padding-right: 72px;
 }
 
 .action-output {
@@ -3996,6 +4072,63 @@ mark {
 
 .action-row .dim {
   font-size: var(--fs-xs);
+}
+
+.palette.actions .action-row .dim {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-row.running .action-kind {
+  color: var(--accent);
+}
+
+.palette.actions .palette-list {
+  padding-bottom: 4px;
+}
+
+.palette.actions .palette-foot,
+.palette.folders .palette-foot {
+  gap: 4px;
+}
+
+.palette.actions .palette-foot kbd,
+.palette.folders .palette-foot kbd {
+  height: 16px;
+  padding: 0 4px;
+  line-height: 16px;
+}
+
+/* A folder is a name, not a symbol; the one you are in steps back. */
+.modal.palette.folders {
+  width: min(560px, 100%);
+}
+
+.palette.folders .palette-list {
+  padding: 4px 0;
+}
+
+.palette-row.folder-hit {
+  gap: 10px;
+  min-height: 30px;
+  padding: 3px 12px;
+}
+
+.folder-hit .sym {
+  overflow: hidden;
+  font: var(--fs-md) var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-hit.here:not(.on) .sym {
+  color: var(--fg-2);
+}
+
+.folder-find {
+  color: var(--fg-3);
 }
 
 .palette-row.unready {
@@ -4596,6 +4729,40 @@ body.resizing * {
   color: var(--fg-2);
   font-size: var(--fs-xs);
   pointer-events: none;
+}
+
+/* Typing guessed ahead of a slow link's echo, over the cells it will take;
+   the colours are the terminal's, set as it draws. */
+.term-guess {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.term-guess span {
+  position: absolute;
+  overflow: hidden;
+  white-space: pre;
+  background: var(--guess-bg);
+  color: var(--guess-fg);
+}
+
+.term-guess .guess {
+  color: color-mix(in srgb, var(--guess-fg) 55%, var(--guess-bg));
+}
+
+.term-guess .cursor.block {
+  background: var(--guess-cursor);
+  color: var(--guess-accent);
+}
+
+.term-guess .cursor.bar {
+  box-shadow: inset 2px 0 var(--guess-cursor);
+}
+
+.term-guess .cursor.underline {
+  box-shadow: inset 0 -2px var(--guess-cursor);
 }
 
 .term-empty {
@@ -6043,6 +6210,38 @@ button.ghost.agent-context {
   cursor: default;
 }
 
+/* A picture the agent looked at: small enough to read past, a click from full size. */
+.agent-image.thumb img {
+  max-width: 96px;
+  max-height: 48px;
+}
+
+.agent-image.thumb.loading {
+  min-width: 64px;
+  min-height: 48px;
+}
+
+.agent-image.thumb.failed {
+  padding: 4px 8px;
+  font-size: var(--fs-xs);
+}
+
+.agent-image.thumb:hover {
+  border-color: var(--border-strong);
+}
+
+.agent-image-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 2px 0 6px 20px;
+}
+
+.agent-image-strip > .agent-image {
+  margin: 0;
+}
+
 /* As wide as the picture, up to the wide modal's width. */
 .modal.image-view {
   width: fit-content;
@@ -7449,6 +7648,10 @@ button.ghost.back {
   height: 100%;
 }
 
+.hub > .topbar {
+  grid-template-columns: 1fr auto;
+}
+
 .hub-main {
   min-height: 0;
   overflow-y: auto;
@@ -7456,6 +7659,7 @@ button.ghost.back {
 }
 
 .hub-col {
+  container: hub / inline-size;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -7466,6 +7670,40 @@ button.ghost.back {
 .sidebar-filter.hub-bar {
   gap: 4px;
   padding: 0 0 4px;
+}
+
+.hub-search {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-3);
+}
+
+.hub-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+
+.hub-search > input {
+  flex: 1;
+  height: 28px;
+  padding-left: 27px;
+}
+
+.hub-search > kbd {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+
+.hub-search > input:focus ~ kbd {
+  display: none;
 }
 
 .hub-bar .btn {
@@ -7496,11 +7734,26 @@ button.ghost.back {
   background: var(--bg-active);
 }
 
+/* Stepped to with the arrows: the card takes the ring, not its link inside. */
+.session-row.hub-row:has(> .hub-card-link:focus-visible),
+.hub-worktree:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.session-row.hub-row:has(> .hub-card-link:focus-visible) {
+  background: var(--bg-active);
+}
+
+.hub-card-link:focus-visible {
+  outline: none;
+}
+
 .hub-card-link,
 .hub-worktree {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   color: inherit;
   text-decoration: none;
@@ -7511,32 +7764,53 @@ button.ghost.back {
   cursor: pointer;
 }
 
-.hub-remote {
+/* Under the name and lined up with it: where, from where, and when. Its
+   height holds as the actions take the place of when. */
+.hub-sub {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  min-height: 18px;
+  padding: 0 23px 0 14px; /* the menu's room, so when lines up with the branch */
   color: var(--fg-3);
   font-size: var(--fs-xs);
 }
 
-.hub-remote > span:not(.hub-branch),
+.hub-sub > .hub-place {
+  flex: 0 1 auto;
+  min-width: 3em;
+}
+
 .hub-remote-link {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
+  padding: 0;
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.hub-remote-link {
-  padding: 0;
-  color: var(--fg-2);
-  font-size: var(--fs-xs);
-}
-
-.hub-remote-link:hover {
+button.hub-remote-link:hover {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.hub-used {
+  flex: none;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-state {
+  padding-left: 14px;
+}
+
+.hub-card-link:is(:hover, :focus-visible) .hub-sub:has(.hub-action) > .hub-used,
+.hub-worktree:is(:hover, :focus-visible) .hub-sub:has(.hub-action) > .hub-used {
+  display: none;
 }
 
 .hub-branch {
@@ -7552,12 +7826,12 @@ button.ghost.back {
   flex: none;
 }
 
-/* Where the checkout stands is the shorter and the more telling of the two. */
+/* Beside the name, giving way before it does: a long branch first. */
 .hub-git {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  flex: none;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 60%;
   font: var(--fs-xs) / 1.4 var(--font-mono);
@@ -7693,34 +7967,215 @@ button.ghost.back {
   text-align: left;
 }
 
-/* A link's own actions show while it is pointed at, or its menu is open. */
+/* A link's own actions show while it is pointed at, or its menu is open. The
+   menu keeps its room, so the branch beside it stays put. */
 .hub-row .hub-action {
   display: none;
+}
+
+.hub-row .hub-menu-button.hub-action {
+  display: inline-flex;
+  visibility: hidden;
 }
 
 .hub-row .mini.hub-action {
   height: 18px;
 }
 
-.hub-card-link:hover .hub-action,
-.hub-worktree:hover .hub-action,
+.hub-card-link:is(:hover, :focus-visible) .hub-action,
+.hub-worktree:is(:hover, :focus-visible) .hub-action,
 .hub-row .hub-action[aria-expanded="true"] {
   display: inline-flex;
+  visibility: visible;
 }
+
+/* A narrow card puts where its checkout stands on a line of its own; the
+   filter keeps its room by the buttons losing their words. */
+@container hub (max-width: 520px) {
+  .hub-bar .btn-label {
+    display: none;
+  }
+
+  .hub-row .session-row-head {
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+
+  .hub-row .session-row-head > .hub-git {
+    order: 1;
+    flex-basis: 100%;
+    max-width: none;
+    padding-left: 14px;
+  }
+}
+
+/* ---------- the hub's start page ---------- */
 
 .hub-start {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
-  padding: 14vh 0;
+  gap: 24px;
+  padding: 10vh 0 0;
 }
 
-.hub-start-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+.hub-start-head {
+  max-width: 520px;
+  text-align: center;
+}
+
+.hub-start-head p {
+  margin: 0;
+  color: var(--fg-2);
+  font-size: var(--fs-lg);
+  line-height: 1.55;
+}
+
+.hub-ways {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+  width: 100%;
+}
+
+/* A choice as a session's card: a shade up, a shade more when pointed at. */
+.hub-way {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 14px 16px;
+  border-radius: var(--r-xl);
+  background: var(--bg-hover);
+  color: var(--fg);
+  text-align: left;
+}
+
+.hub-way:hover {
+  background: var(--bg-active);
+}
+
+.hub-way-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 8px;
+  border-radius: var(--r-lg);
+  background: var(--bg-active);
+  color: var(--fg-2);
+}
+
+.hub-way:hover .hub-way-icon {
+  color: var(--accent);
+}
+
+.hub-way-title {
+  font: 500 var(--fs-md) / 1.4 var(--font-ui);
+}
+
+.hub-way-note {
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.hub-way > kbd {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+
+/* The repositories found, as a palette in a card. */
+.hub-found {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
+  background: var(--bg-bar);
+}
+
+.hub-found-head {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 6px 4px;
+}
+
+.hub-found-head .link {
+  font-size: var(--fs-xs);
+}
+
+.palette-list.hub-found-list {
+  max-height: min(320px, 40vh);
+  padding: 4px 0;
+}
+
+.hub-found-list .palette-row {
+  min-height: 30px;
+  padding: 2px 12px;
+}
+
+.hub-found-list .palette-row > .hub-place {
+  flex: 0 1 auto;
+  min-width: 3em;
+}
+
+.hub-check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1.5px var(--fg-4);
+  color: var(--accent-fg);
+}
+
+.palette-row.picked .hub-check {
+  background: var(--accent-fill);
+  box-shadow: none;
+}
+
+.hub-start-tip {
+  max-width: 520px;
+  margin: 0;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.hub-start-tip code {
+  font: var(--fs-xs) var(--font-mono);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+@container hub (max-width: 560px) {
+  .hub-start {
+    padding-top: 4vh;
+  }
+
+  .hub-ways {
+    grid-template-columns: 1fr;
+  }
+
+  /* Side by side: the icon, then the title over the note. */
+  .hub-way {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 12px;
+    align-items: center;
+    padding: 12px;
+  }
+
+  .hub-way-icon {
+    grid-row: span 2;
+    margin: 0;
+  }
 }
 
 /* The folder picker is a palette whose list keeps its height as it narrows. */
@@ -7847,11 +8302,20 @@ button.ghost.back {
 
   .hub-row .hub-action {
     display: inline-flex;
+    visibility: visible;
   }
 
-  .hub-keys {
+  .hub-row .hub-sub:has(.hub-action) > .hub-used,
+  .hub-keys,
+  .hub-search > kbd,
+  .hub-way > kbd {
     display: none;
   }
+}
+
+/* Read on the phone, it is already reached. */
+html.phone .hub-start-tip {
+  display: none;
 }
 
 /* A narrow file keeps its header on one line: the line counts go first, then

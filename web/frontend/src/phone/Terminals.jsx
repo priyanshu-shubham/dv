@@ -98,7 +98,7 @@ function TermRow({ t, folder, onOpen, onHold, onSwipe }) {
 
 // TerminalScreen is a terminal over the tabs: what it runs at the top, the
 // terminal, and the keys row at the foot.
-export function TerminalScreen({ open, t, terms, id, folder, theme, onBack, onActions, onRename, onNotify, onClose, onAsk }) {
+export function TerminalScreen({ open, t, terms, id, folder, theme, typeAhead, onBack, onActions, onRename, onNotify, onClose, onAsk }) {
   const [fontSize, setFontSize] = useState(() => {
     const n = Number(localStorage.getItem(FONT_KEY));
     return n >= FONT_MIN && n <= FONT_MAX ? n : 12;
@@ -149,7 +149,7 @@ export function TerminalScreen({ open, t, terms, id, folder, theme, onBack, onAc
           <Icon name="dots" />
         </button>
       </header>
-      <TerminalView terms={terms} shownId={id} active={open} theme={theme} focus={0} copyOnSelect={false} phone={{ fontSize, onFontSize: sized, input, onAsk }} />
+      <TerminalView terms={terms} shownId={id} active={open} theme={theme} focus={0} copyOnSelect={false} typeAhead={typeAhead} phone={{ fontSize, onFontSize: sized, input, onAsk }} />
       <Keys id={id} input={input} />
 
       {sheet && t && (

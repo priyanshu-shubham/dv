@@ -41,6 +41,21 @@ func PromptSuggestions(user *store.Prefs) func() bool {
 	}
 }
 
+// AutoTitles reads whether dv has a small model name the sessions their agent
+// has not: the setting autoTitles, on unless turned off.
+func AutoTitles(user *store.Prefs) func() bool {
+	return func() bool {
+		if user == nil {
+			return false
+		}
+		var s struct {
+			On *bool `json:"autoTitles"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.On == nil || *s.On
+	}
+}
+
 // AgentInstructions reads what dv adds to a session's own instructions as it
 // starts: how to show files in a reply, unless the setting filesInReplies is off.
 func AgentInstructions(user *store.Prefs) func() string {

@@ -735,11 +735,11 @@ func TestLastReply(t *testing.T) {
 	}
 }
 
-func TestSummaryTakesTheLatestTitleAndPrompt(t *testing.T) {
+func TestSummaryTakesTheLatestTitleAndTheFirstPrompt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(path, []byte(conversation(t)), 0o644)
 	s, ok := summarize(path)
-	if !ok || s.Title != "Set x to four" || s.Prompt != "now four" || s.Cwd != "/repo" || s.Branch != "main" {
+	if !ok || s.Title != "Set x to four" || s.Prompt != "make x two" || s.asked != "now four" || s.Cwd != "/repo" || s.Branch != "main" {
 		t.Fatalf("summary %+v, %v", s, ok)
 	}
 	if s.Last != "Four, then five." || s.LastBy != "claude" {

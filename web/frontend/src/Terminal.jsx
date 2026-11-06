@@ -7,6 +7,7 @@ import { say } from "./Notices.jsx";
 import { copyText, cx, duration, isMac, relTime, useLasting } from "./util.js";
 import { Icon } from "./phone/icons.jsx";
 import { Picked, touchTerm } from "./phone/TermTouch.jsx";
+import { typeAhead } from "./typeahead.js";
 
 // The Terminal view: shells dv runs in the folder. The sidebar lists them with
 // what each is running; the one picked fills the rest. The shells are dv's, so
@@ -212,7 +213,7 @@ const PHONE_MOST = 256 << 10;
 
 // In the phone app, phone is { fontSize, onFontSize, input, onAsk }: input.current
 // changes what is typed - the keys row's Ctrl held - and onAsk takes text picked.
-export default function TerminalView({ terms, shownId, active, theme, focus, copyOnSelect, onNew, phone }) {
+export default function TerminalView({ terms, shownId, active, theme, focus, copyOnSelect, typeAhead = true, onNew, phone }) {
   const [xterm, setXterm] = useState(null);
   useEffect(() => {
     loadXterm().then(setXterm, (e) => say("Could not load the terminal", e.message));
@@ -235,6 +236,7 @@ export default function TerminalView({ terms, shownId, active, theme, focus, cop
             theme={theme}
             focus={focus}
             copyOnSelect={copyOnSelect}
+            typeAhead={typeAhead}
             phone={phone}
           />
         ))}
@@ -250,7 +252,7 @@ export default function TerminalView({ terms, shownId, active, theme, focus, cop
   );
 }
 
-function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, phone }) {
+function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, typeAhead, phone }) {
   const box = useRef(null);
   const live = useRef(null); // { term, fit, link, touch }
   const visible = shown && active;
@@ -258,6 +260,8 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, phone 
   visibleRef.current = visible;
   const copyOnSelectRef = useRef(copyOnSelect);
   copyOnSelectRef.current = copyOnSelect;
+  const typeAheadRef = useRef(typeAhead);
+  typeAheadRef.current = typeAhead;
   const phoneRef = useRef(phone);
   phoneRef.current = phone;
   const [term, setTerm] = useState(null);
@@ -346,6 +350,7 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, phone 
       most: phoneRef.current ? PHONE_MOST : 0,
       onDown: setDown,
       input: (d) => phoneRef.current?.input?.current?.(d) ?? d,
+      guess: () => typeAheadRef.current,
     });
     const scrolled = term.onScroll(() => {
       const b = term.buffer.active;
@@ -447,8 +452,8 @@ const HOLD_BYTES = 16 << 10;
 // back after a drop - dv restarting, a laptop waking - until stopped or the
 // terminal is closed. most bounds what it is sent of the past when it first
 // attaches; onDown is told when the connection goes and is back; input may
-// change what is typed before it is sent.
-function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) => d } = {}) {
+// change what is typed before it is sent; guess says whether to type ahead.
+function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) => d, guess = () => true } = {}) {
   let ws = null;
   let stopped = false;
   let timer = 0;
@@ -465,14 +470,20 @@ function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) =>
   let held = []; // typed while the connection was down
   let heldBytes = 0;
   const encode = new TextEncoder();
+  const ahead = typeAhead(term, guess);
 
   const send = (data) => ws?.readyState === WebSocket.OPEN && ws.send(data);
   const hold = (bytes) => {
+    ahead.cut();
     if (heldBytes + bytes.length > HOLD_BYTES) return;
     held.push(bytes);
     heldBytes += bytes.length;
   };
-  const type = (bytes) => send(bytes) !== false || hold(bytes);
+  const type = (s) => {
+    const bytes = encode.encode(s);
+    if (send(bytes) === false) hold(bytes);
+    else ahead.typed(s);
+  };
   // A pinch, or a phone's keyboard coming up, sizes it at every frame; the
   // shell is told once it settles.
   let sizing = 0;
@@ -515,7 +526,9 @@ function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) =>
   const open = async () => {
     let url;
     try {
+      const asked = performance.now();
       url = await api.terminalSocket(id, mark, most);
+      ahead.seed(performance.now() - asked);
     } catch (e) {
       // Gone, as dv restarting takes its shells; the list will catch up.
       return stopped || e.status === 404 || again();
@@ -539,6 +552,7 @@ function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) =>
       const s = JSON.parse(e.data);
       // All dv keeps of it is coming, the place it was at not among it.
       if (s.reset) {
+        ahead.clear();
         term.reset();
         ended = false; // until the replay says so
         mark = null;
@@ -563,6 +577,7 @@ function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) =>
     };
     sock.onclose = (e) => {
       if (ws === sock) ws = null;
+      ahead.clear();
       if (stopped || e.code === 4000) return;
       onDown(true);
       again();
@@ -573,7 +588,7 @@ function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) =>
     // The terminal's answers to what the replay asks of it all start with an
     // escape, and are not sent; what is typed meanwhile, but for such keys, waits.
     if (replaying) return void (!ended && !d.startsWith("\x1b") && hold(encode.encode(input(d))));
-    if (!ended) return type(encode.encode(input(d)));
+    if (!ended) return type(input(d));
     if (d.includes("\r") && !starting) {
       starting = true;
       api.restartTerminal(id).then(
@@ -582,12 +597,18 @@ function attach(id, term, isShown, { most = 0, onDown = () => {}, input = (d) =>
       );
     }
   });
-  term.onBinary((d) => !replaying && !ended && type(Uint8Array.from(d, (c) => c.charCodeAt(0))));
+  term.onBinary((d) => {
+    if (replaying || ended) return;
+    const bytes = Uint8Array.from(d, (c) => c.charCodeAt(0));
+    if (send(bytes) === false) hold(bytes);
+    else ahead.cut();
+  });
   open();
   return {
     size,
     stop() {
       stopped = true;
+      ahead.stop();
       clearTimeout(timer);
       clearTimeout(sizing);
       clearInterval(watch);

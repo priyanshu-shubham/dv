@@ -386,6 +386,9 @@ export const api = {
   // restarts with all its folders.
   run: () => req("/api/restart", {}, ""),
   restart: () => req("/api/restart", { method: "POST", body: "{}" }, ""),
+  // logs: { lines: [{ n, at, err, text }], next }, what this dv printed to its
+  // terminal after line `after`. At the root, as a hub's is the process's.
+  logs: (after = 0) => req(`/api/logs?after=${after}`, {}, ""),
   // updateCheck: { version, latest, newer }, or just { version: "dev" } for a
   // build of one's own, fresh from GitHub if asked; update installs latest
   // and restarts into it.

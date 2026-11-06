@@ -177,8 +177,10 @@ func (c *codexSide) sessions() []Session {
 func (c *codexSide) fill(row *Session, t *codexThread) {
 	row.Running = t.running()
 	row.Last, row.LastBy = t.last()
+	row.asked, row.prompts, row.replied = t.talked()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	row.Prompt = cmp.Or(row.Prompt, cleanPrompt(t.meta.Preview))
 	row.Busy = row.Running == "dv" && t.active != ""
 	row.Sent = t.sent
 	row.Status = t.status
@@ -213,17 +215,17 @@ func (c *codexSide) title(id string) string {
 	c.mu.Lock()
 	t := c.threads[id]
 	listed := slices.IndexFunc(c.listed, func(t codex.Thread) bool { return t.ID == id })
-	name := ""
+	name, preview := "", ""
 	if listed >= 0 {
-		name = cmp.Or(deref(c.listed[listed].Name), cleanPrompt(c.listed[listed].Preview))
+		name, preview = deref(c.listed[listed].Name), cleanPrompt(c.listed[listed].Preview)
 	}
 	c.mu.Unlock()
 	if t != nil {
 		t.mu.Lock()
-		name = cmp.Or(deref(t.meta.Name), name, cleanPrompt(t.meta.Preview))
+		name, preview = cmp.Or(deref(t.meta.Name), name), cmp.Or(preview, cleanPrompt(t.meta.Preview))
 		t.mu.Unlock()
 	}
-	return name
+	return cmp.Or(name, c.saved.Titles()[id].Text, preview)
 }
 
 // activity is what the threads dv runs or has open are doing.

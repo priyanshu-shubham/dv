@@ -29,6 +29,7 @@ import (
 	"dv/internal/codex"
 	"dv/internal/gitx"
 	"dv/internal/hub"
+	"dv/internal/logs"
 	"dv/internal/notify"
 	"dv/internal/notify/gchat"
 	"dv/internal/notify/telegram"
@@ -51,6 +52,7 @@ func main() {
 		time.AfterFunc(time.Minute, func() { os.Exit(1) }) // should what started it not stop it
 	}
 	err := run()
+	logs.Release()
 	// Only now, with run's deferred cleanup done: sessions stopped, pages closed
 	// and the prompts' routing to this dv taken down.
 	if again := (errRestart{}); errors.As(err, &again) {
@@ -132,6 +134,9 @@ func run() error {
 	default:
 		return fmt.Errorf("unknown command %q (dv -h lists them)", cmd)
 	}
+	// What a dv serving pages prints, its pages can show; a command's answer
+	// goes straight out.
+	logs.Capture()
 
 	if !server.AssetsBuilt() {
 		return errNoBundle
@@ -290,6 +295,7 @@ func runHub(args []string) error {
 	noOpen := fl.Bool("no-open", false, "do not open a browser")
 	auth := fl.String("auth", "", authUsage)
 	fl.Parse(args)
+	logs.Capture()
 
 	if !server.AssetsBuilt() {
 		return errNoBundle

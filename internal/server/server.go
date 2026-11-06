@@ -23,6 +23,7 @@ import (
 
 	"dv/internal/agent"
 	"dv/internal/gitx"
+	"dv/internal/logs"
 	"dv/internal/notify"
 	"dv/internal/permit"
 	"dv/internal/store"
@@ -142,6 +143,7 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	s.agent.Instructions = AgentInstructions(user)
 	s.agent.CloseIdle = CloseIdleAfter(user)
 	s.agent.Unasked = UnaskedEdits(user)
+	s.agent.AutoTitles = AutoTitles(user)
 	s.terms.OnFinish(s.terminalFinished)
 	// Before the page can ask, which would open a fresh terminal in their place.
 	s.terms.Restore()
@@ -312,6 +314,7 @@ func (s *Server) Handler(base string) http.Handler {
 
 	mux.HandleFunc("GET /api/restart", Guarded(HandleRestart))
 	mux.HandleFunc("POST /api/restart", Guarded(HandleRestart))
+	mux.HandleFunc("GET /api/logs", Guarded(HandleLogs))
 	mux.HandleFunc("GET /api/update", Guarded(HandleUpdateCheck))
 	mux.HandleFunc("POST /api/update", Guarded(HandleUpdateInstall))
 
@@ -432,6 +435,14 @@ func restart() {
 	case Restart <- struct{}{}:
 	default:
 	}
+}
+
+// HandleLogs is what this dv has printed to its terminal, the lines after
+// ?after; the whole process's, as HandleRestart is.
+func HandleLogs(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+	lines, next := logs.Since(after)
+	writeJSON(w, http.StatusOK, map[string]any{"lines": lines, "next": next, "started": started})
 }
 
 // HandleUpdateCheck says whether a newer release than this dv is out, asking

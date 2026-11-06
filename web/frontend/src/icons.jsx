@@ -55,10 +55,12 @@ export const IconWrap = svg(<path d="M3 4h9a2 2 0 0 1 0 4H6M8 6l-2 2 2 2M3 12h6"
 export const IconChat = svg(<path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z" />, { stroke: true });
 export const IconPin =svg(<path d="M6 2h4M7 2v4.5L4.5 9h7L9 6.5V2M8 9v5" />, { stroke: true });
 export const IconArrowUp = svg(<path d="M8 13V3.5M3.5 8L8 3.5 12.5 8" />, { stroke: true });
+export const IconArrowDown = svg(<path d="M8 3v9.5M3.5 8L8 12.5 12.5 8" />, { stroke: true });
 export const IconStop = svg(<rect x="4" y="4" width="8" height="8" rx="1.5" />);
 export const IconUndo = svg(<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2v3.5H6" />, { stroke: true });
 export const IconPad = svg(<><rect x="3" y="2" width="10" height="12.5" rx="1.5" /><path d="M5.5 5.5h5M5.5 8.25h5M5.5 11h3" /></>, { stroke: true });
 export const IconEdit = svg(<path d="M10.5 3l2.5 2.5L6 12.5H3.5V10zM9 4.5L11.5 7" />, { stroke: true });
+export const IconShell = svg(<><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M4.5 6l2 2-2 2M8 10.5h3.5" /></>, { stroke: true });
 export const IconBell = svg(<path d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1.2 1.2H2.8zM6.5 14.2a1.6 1.6 0 0 0 3 0" />, { stroke: true });
 
 // The agents' own marks, from simple-icons (CC0): Claude's, and OpenAI's for Codex.

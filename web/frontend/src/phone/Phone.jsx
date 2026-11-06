@@ -365,6 +365,7 @@ export default function Phone({ app }) {
           id={terminal.id}
           folder={meta?.repo}
           theme={terminal.theme}
+          typeAhead={terminal.typeAhead}
           onBack={() => setInTerm(false)}
           onActions={() => app.openOverlay({ type: "actions" })}
           onRename={terminal.onRename}

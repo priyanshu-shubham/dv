@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"encoding/json"
@@ -17,7 +18,7 @@ type Session struct {
 	ID      string    `json:"id"`
 	Agent   string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
 	Title   string    `json:"title"`
-	Prompt  string    `json:"prompt"` // the last thing asked, which names a session with no title
+	Prompt  string    `json:"prompt"` // the first thing asked, which names a session with no title
 	Cwd     string    `json:"cwd"`
 	Branch  string    `json:"branch,omitempty"`
 	Updated time.Time `json:"updated"`
@@ -44,6 +45,13 @@ type Session struct {
 
 	used  int
 	model string
+	// The titles the end of the transcript has, someone's and the AI's, and
+	// the last thing asked.
+	custom, ai, asked string
+	// How many prompts it has had, 0 until that is known, and whether the
+	// agent has answered one.
+	prompts int
+	replied bool
 }
 
 // lastWords is how much of the last thing said a row keeps.
@@ -54,7 +62,7 @@ var shownFile = regexp.MustCompile(`!\[([^\]\n]*)\]\([^)\s]*(?:\s+"[^"\n]*")?\)`
 
 // A transcript can run to tens of megabytes, and listing reads every one, so
 // only its two ends are read: the start has where it ran and the first prompt,
-// the end the latest title and prompt.
+// the end the latest title and prompt. Titles further back are earlier's.
 const summaryEnds = 128 << 10
 
 // summarize reads a transcript's list row, or reports that it is not a
@@ -96,7 +104,6 @@ func summarize(path string) (Session, bool) {
 		}
 		return s.Cwd == "" || first == ""
 	})
-	custom, ai := "", ""
 	said := func(text, by string) {
 		// What went with a message from dv is not what was said.
 		text, _, _ = strings.Cut(text, "<dv-context>")
@@ -107,13 +114,13 @@ func summarize(path string) (Session, bool) {
 	}
 	eachLine(tail, func(r *rawEntry) bool {
 		if r.CustomTitle != "" {
-			custom = r.CustomTitle
+			s.custom = r.CustomTitle
 		}
 		if r.AITitle != "" {
-			ai = r.AITitle
+			s.ai = r.AITitle
 		}
 		if r.LastPrompt != "" {
-			s.Prompt = r.LastPrompt
+			s.asked = r.LastPrompt
 		}
 		if r.GitBranch != "" {
 			s.Branch = r.GitBranch
@@ -121,6 +128,7 @@ func summarize(path string) (Session, bool) {
 		switch {
 		case r.Sidechain:
 		case r.Type == "assistant" && !r.APIError:
+			s.replied = true
 			if u := r.Message.Usage; u.Input+u.CacheCreate+u.CacheRead+u.Output > 0 {
 				s.used, s.model = u.Input+u.CacheCreate+u.CacheRead+u.Output, r.Message.Model
 			}
@@ -144,17 +152,73 @@ func summarize(path string) (Session, bool) {
 		return true
 	})
 	// A title someone gave the session holds; the AI's is redone as it goes on.
-	s.Title = cmp.Or(custom, ai)
-	if s.Prompt == "" {
-		s.Prompt = first
-	}
-	if s.Cwd == "" || s.Prompt == "" && s.Title == "" {
+	s.Title = cmp.Or(s.custom, s.ai)
+	if s.Cwd == "" || first == "" && s.asked == "" && s.Title == "" {
 		return Session{}, false
 	}
 	// Claude Code keeps the prompt with what dv sent along with it, which names nothing.
-	s.Prompt, _, _ = strings.Cut(s.Prompt, "<dv-context>")
-	s.Prompt = strings.TrimSpace(s.Prompt)
+	s.Prompt, s.asked = withoutContext(cmp.Or(first, s.asked)), withoutContext(s.asked)
 	return s, true
+}
+
+func withoutContext(prompt string) string {
+	prompt, _, _ = strings.Cut(prompt, "<dv-context>")
+	return strings.TrimSpace(prompt)
+}
+
+// earlier is what a transcript has said of its titles before the end that
+// summarize reads, which a long turn's output can push them out of. It is read
+// through once and then on as the file grows.
+type earlier struct {
+	to         int64 // read to here, the start of a line
+	custom, ai string
+	// prompts is how many it has had, near enough: Claude Code writes the last
+	// prompt again with each title it keeps, but only a new prompt changes it.
+	prompts    int
+	lastPrompt string
+}
+
+// Only lines with these in them are decoded, which most of a file has not.
+var titleMarks = [][]byte{[]byte(`-title"`), []byte(`"last-prompt"`)}
+
+// readOn reads a transcript on to its last whole line.
+func (e *earlier) readOn(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || fi.Size() < e.to {
+		*e = earlier{} // written anew
+	}
+	if _, err := f.Seek(e.to, io.SeekStart); err != nil {
+		return
+	}
+	rd := bufio.NewReaderSize(f, 64<<10)
+	at, long := e.to, false
+	for {
+		line, err := rd.ReadSlice('\n')
+		at += int64(len(line))
+		if err == bufio.ErrBufferFull {
+			long = true
+			continue
+		}
+		if err != nil {
+			return // a line still being written is read next time
+		}
+		var r rawEntry
+		if !long && slices.ContainsFunc(titleMarks, func(b []byte) bool { return bytes.Contains(line, b) }) && json.Unmarshal(line, &r) == nil {
+			switch {
+			case r.Type == "custom-title" && r.CustomTitle != "":
+				e.custom = r.CustomTitle
+			case r.Type == "ai-title" && r.AITitle != "":
+				e.ai = r.AITitle
+			case r.Type == "last-prompt" && r.LastPrompt != "" && r.LastPrompt != e.lastPrompt:
+				e.prompts, e.lastPrompt = e.prompts+1, r.LastPrompt
+			}
+		}
+		e.to, long = at, false
+	}
 }
 
 // lastReply is what Claude said last in a transcript, whole and as written:

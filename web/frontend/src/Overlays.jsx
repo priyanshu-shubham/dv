@@ -821,6 +821,7 @@ export function SettingsOverlay({
     ...(ask ? [["ask", "Ask"]] : []),
     ...(actions ? [["actions", "Actions"]] : []),
     ["server", "Server"],
+    ["logs", "Logs"],
   ];
   return (
     <Modal onClose={onClose} centred className="settings">
@@ -976,6 +977,13 @@ export function SettingsOverlay({
               choices={OFF_ON}
             />
             <Setting
+              label="Title sessions"
+              note="Names a session its agent has not, from how it began and where it has got to: once it has a reply, and once more after it has moved well on. Each title is one small request to Claude Code's Haiku, a fraction of a cent. Off, such a session is named by its first message. A name you give a session always stays."
+              value={settings.autoTitles !== false}
+              onPick={(on) => onChange({ autoTitles: on ? undefined : false })}
+              choices={OFF_ON}
+            />
+            <Setting
               label="Show files in replies"
               note="Tells agents they can show a picture, video, sound, PDF or a web page of their own in a reply, and to make a page when something comes across better interactively than as text. A page runs as part of dv. A session takes a change up the next time it starts."
               value={settings.filesInReplies !== false}
@@ -999,13 +1007,22 @@ export function SettingsOverlay({
           </>
         )}
         {tab === "terminal" && (
-          <Setting
-            label="Copy on select"
-            note={`Text selected in a terminal goes to the clipboard as you let go of the mouse, without ${isMac ? "Cmd" : "Ctrl"}+C, and the terminal goes back to its prompt, as tmux does.`}
-            value={settings.copyOnSelect !== false}
-            onPick={(on) => onChange({ copyOnSelect: on ? undefined : false })}
-            choices={OFF_ON}
-          />
+          <>
+            <Setting
+              label="Copy on select"
+              note={`Text selected in a terminal goes to the clipboard as you let go of the mouse, without ${isMac ? "Cmd" : "Ctrl"}+C, and the terminal goes back to its prompt, as tmux does.`}
+              value={settings.copyOnSelect !== false}
+              onPick={(on) => onChange({ copyOnSelect: on ? undefined : false })}
+              choices={OFF_ON}
+            />
+            <Setting
+              label="Type ahead"
+              note="On a slow connection, what you type at a prompt shows at once, dimmed, until the shell echoes it back. Not at a password prompt, nor in a full-screen program such as Vim."
+              value={settings.typeAhead !== false}
+              onPick={(on) => onChange({ typeAhead: on ? undefined : false })}
+              choices={OFF_ON}
+            />
+          </>
         )}
         {tab === "ask" && ask}
         {tab === "actions" && actions}
@@ -1015,8 +1032,89 @@ export function SettingsOverlay({
             <RestartRow working={working} update={update} />
           </>
         )}
+        {tab === "logs" && <Logs />}
       </div>
     </Modal>
+  );
+}
+
+const LOG_LINES = 2000;
+const clock = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+// Logs is what dv has printed to the terminal it runs in, followed while the
+// tab is open: at the foot as lines come, unless scrolled up from it.
+function Logs() {
+  const [lines, setLines] = useState(null);
+  const [error, setError] = useState("");
+  const ref = useRef(null);
+  const atEnd = useRef(true);
+  useEffect(() => {
+    let live = true;
+    let timer;
+    let after = 0;
+    let run = "";
+    const look = () =>
+      api.logs(after).then(
+        (r) => {
+          if (!live) return;
+          // A restarted dv counts from 1 again, so its lines are asked for afresh.
+          if (run && r.started !== run) {
+            run = r.started;
+            after = 0;
+            setLines([]);
+            return look();
+          }
+          run = r.started;
+          after = r.next - 1;
+          setLines((had) => [...(had || []), ...r.lines].slice(-LOG_LINES));
+          setError("");
+          timer = setTimeout(look, 1500);
+        },
+        (e) => {
+          if (!live) return;
+          setError(e.message);
+          timer = setTimeout(look, 3000);
+        },
+      );
+    look();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (atEnd.current && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [lines]);
+  const text = (lines || []).map((l) => `${clock(l.at)}  ${l.text}`).join("\n");
+  const [copied, copy] = useCopy(text);
+  return (
+    <div className="settings-logs">
+      <div className="settings-row">
+        <span className="settings-note">What this dv has printed to its terminal, its latest {LOG_LINES.toLocaleString()} lines.</span>
+        <span className="spacer" />
+        <button className="btn" disabled={!lines?.length} onClick={copy}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      {error && <div className="settings-note error">{error}</div>}
+      <pre
+        ref={ref}
+        className="command-output logs-output"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
+        {lines?.length === 0 && <span className="dim">Nothing yet.</span>}
+        {lines?.map((l) => (
+          <div key={l.n} className={cx(l.err && "logs-err")}>
+            <span className="dim">{clock(l.at)}</span>
+            {"  "}
+            {l.text}
+          </div>
+        ))}
+      </pre>
+    </div>
   );
 }
 

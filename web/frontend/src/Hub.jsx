@@ -4,10 +4,10 @@ import { api } from "./api.js";
 import { Modal, SettingsOverlay, useUpdate } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
-import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
+import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, relTime, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { enableBack } from "./phone/back.js";
 import { usePush } from "./phone/push.js";
-import { IconBranch, IconChevron, IconDots, IconPlus, IconSettings, IconTemporary, IconX } from "./icons.jsx";
+import { IconBranch, IconCheck, IconChevron, IconDots, IconPlus, IconSearch, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { setTabIcon, tabDot } from "./favicon.js";
 import { PRChip } from "./Header.jsx";
 import { startTask } from "./tasks.js";
@@ -60,11 +60,18 @@ export default function Hub() {
 
   // "settings", "folder" or "clone", or { worktree } or { hooks }, a folder.
   const [dialog, setDialog] = useState(null);
+  const filterRef = useRef(null);
+  const newTask = () => startTask().catch((e) => setError(e.message));
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key !== "," || e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || document.querySelector(".backdrop")) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || document.querySelector(".backdrop")) return;
+      const to = { ",": "settings", a: "folder", c: "clone" }[e.key];
+      if (to) setDialog(to);
+      else if (e.key === "t") newTask();
+      else if (e.key === "/" && filterRef.current) filterRef.current.focus();
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") stepLinks(e.target, e.key === "ArrowDown" ? 1 : -1);
+      else return;
       e.preventDefault();
-      setDialog("settings");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -204,7 +211,7 @@ export default function Hub() {
     dismiss: (j) => act(api.hubDismissJob(j.id)),
     error: setError,
     // Straight to the Agent view, as a task is something to ask for.
-    newTask: () => startTask().catch((e) => setError(e.message)),
+    newTask,
     closeTask: (f) => {
       const n = f.open?.sessions;
       const also = n ? `, stops ${sessions(n)} dv runs there` : "";
@@ -249,7 +256,6 @@ export default function Hub() {
         <div className="topbar-left">
           <span className="logo">dv</span>
         </div>
-        <div className="topbar-title" />
         <div className="topbar-right">
           <button
             className={cx("icon", update && "has-update")}
@@ -289,36 +295,39 @@ export default function Hub() {
           )}
 
           {empty ? (
-            <div className="hub-start">
-              <h1 className="agent-start-title">Open a folder</h1>
-              <div className="hub-start-actions">
-                <button className="primary" onClick={() => setDialog("folder")}>
-                  Add a folder
-                </button>
-                <button className="primary" onClick={() => setDialog("clone")}>
-                  Clone a repository
-                </button>
-                <button className="primary" onClick={on.newTask}>
-                  Start a one-off task
-                </button>
-              </div>
-            </div>
+            <Start onWay={(w) => (w === "task" ? newTask() : setDialog(w))} onAdded={load} />
           ) : (
             data && (
               <>
                 <div className="sidebar-filter hub-bar">
-                  <input value={filter} placeholder="Filter by name, path, remote or branch" onChange={(e) => setFilter(e.target.value)} />
-                  <button className="btn" onClick={() => setDialog("folder")} title="Add a folder on this machine">
+                  <label className="hub-search">
+                    <IconSearch size={13} />
+                    <input
+                      ref={filterRef}
+                      value={filter}
+                      placeholder="Filter by name, path, remote or branch"
+                      onChange={(e) => setFilter(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowDown") stepLinks(null, 1);
+                        else if (e.key === "Enter") hubLinks()[0]?.click();
+                        else if (e.key === "Escape") filter ? setFilter("") : e.target.blur();
+                        else return;
+                        e.preventDefault();
+                      }}
+                    />
+                    {!filter && <kbd>/</kbd>}
+                  </label>
+                  <button className="btn" onClick={() => setDialog("folder")} title="Add a folder on this machine (A)">
                     <IconPlus size={13} />
-                    Add
+                    <span className="btn-label">Add</span>
                   </button>
-                  <button className="btn" onClick={() => setDialog("clone")} title="Clone a repository into a folder">
+                  <button className="btn" onClick={() => setDialog("clone")} title="Clone a repository into a folder (C)">
                     <IconBranch size={13} />
-                    Clone
+                    <span className="btn-label">Clone</span>
                   </button>
-                  <button className="btn" onClick={on.newTask} title="Start a one-off task in a new folder, deleted when you close it">
+                  <button className="btn" onClick={on.newTask} title="Start a one-off task in a new folder, deleted when you close it (T)">
                     <IconTemporary size={13} />
-                    Task
+                    <span className="btn-label">Task</span>
                   </button>
                 </div>
                 {loose.map((j) => (
@@ -327,9 +336,11 @@ export default function Hub() {
                       <span className={cx("session-dot", !j.error && "busy")} />
                       <span className="name">{j.title}</span>
                     </div>
-                    <div className="hub-place">
-                      {LRM}
-                      {j.place}
+                    <div className="hub-sub">
+                      <span className="hub-place">
+                        {LRM}
+                        {j.place}
+                      </span>
                     </div>
                     <JobState job={j} on={on} />
                   </div>
@@ -340,7 +351,14 @@ export default function Hub() {
                     <Worktrees main={main} worktrees={worktrees} jobs={jobs.filter((j) => j.of === main.slug && j.kind !== "clone")} on={on} />
                   </div>
                 ))}
-                {q && !shown.length && <div className="empty">No folders match.</div>}
+                {q && !shown.length && (
+                  <div className="empty">
+                    No folders match.{" "}
+                    <button className="link" onClick={() => setFilter("")}>
+                      Clear the filter
+                    </button>
+                  </div>
+                )}
               </>
             )
           )}
@@ -431,13 +449,15 @@ function Worktrees({ main, worktrees, jobs, on }) {
           <div className="session-row-head">
             <span className={cx("session-dot", !j.error && "busy")} />
             <span className="name">{j.place.slice(j.place.lastIndexOf("/") + 1)}</span>
+            <span className="hub-git">
+              <Branch name={j.title} />
+            </span>
           </div>
-          <div className="hub-remote">
+          <div className="hub-sub">
             <span className="hub-place">
               {LRM}
               {j.place}
             </span>
-            <Branch name={j.title} />
           </div>
           <JobState job={j} on={on} />
         </div>
@@ -447,9 +467,11 @@ function Worktrees({ main, worktrees, jobs, on }) {
 }
 
 // Entry is a folder as its card's link, like a session's card: a dot for its
-// state, and under its name where it is, where it came from and what dv is
-// doing in it. A worktree (main given) is a row under its repository's card,
-// named with its branch. One open in another dv opens in a tab of its own, as
+// state and where its checkout stands beside its name; under it where it is,
+// where it came from and when it was last used, which its own actions take
+// the place of while it is pointed at, so nothing beside the name moves; then
+// what dv is doing in it. A worktree (main given) is a row under its
+// repository's card. One open in another dv opens in a tab of its own, as
 // that dv is not this hub's to come back from.
 function Entry({ folder: f, main, job, on }) {
   const worktree = !!main;
@@ -507,6 +529,31 @@ function Entry({ folder: f, main, job, on }) {
         ) : (
           <span className="name">{f.name}</span>
         )}
+        <GitState status={f.status} pr={f.pr} />
+        <CardMenu items={menu} />
+      </div>
+      <div className="hub-sub">
+        <span className="hub-place">
+          {LRM}
+          {f.place}
+        </span>
+        {/* A worktree's remote is its repository's. */}
+        {!worktree &&
+          (f.remote?.web ? (
+            <button className="hub-remote-link" title={`Open ${f.remote.web} in a new tab`} onClick={stop(() => window.open(f.remote.web, "_blank", "noopener"))}>
+              {f.remote.label}
+            </button>
+          ) : (
+            f.remote && (
+              <span className="hub-remote-link" title={f.remote.url}>
+                {f.remote.label}
+              </span>
+            )
+          ))}
+        <span className="spacer" />
+        <span className="hub-used" title={new Date(f.used || f.added).toLocaleString()}>
+          {relTime(f.used || f.added)}
+        </span>
         {f.elsewhere && (
           <button
             className="mini hub-action"
@@ -526,36 +573,8 @@ function Entry({ folder: f, main, job, on }) {
             Close task
           </button>
         )}
-        <CardMenu items={menu} />
       </div>
-      {/* A worktree's remote is its repository's, so where it is takes that place. */}
-      {worktree ? (
-        <div className="hub-remote">
-          <span className="hub-place">
-            {LRM}
-            {f.place}
-          </span>
-          <GitState status={f.status} pr={f.pr} />
-        </div>
-      ) : (
-        <div className="hub-place">
-          {LRM}
-          {f.place}
-        </div>
-      )}
-      {!worktree && (f.remote || f.status) && (
-        <div className="hub-remote">
-          {f.remote?.web ? (
-            <button className="hub-remote-link" title={`Open ${f.remote.web} in a new tab`} onClick={stop(() => window.open(f.remote.web, "_blank", "noopener"))}>
-              {f.remote.label}
-            </button>
-          ) : (
-            f.remote && <span title={f.remote.url}>{f.remote.label}</span>
-          )}
-          <GitState status={f.status} pr={f.pr} />
-        </div>
-      )}
-      {state && <div className="session-meta">{state}</div>}
+      {state && <div className="session-meta hub-state">{state}</div>}
       {job && <JobState job={job} on={on} />}
     </a>
   );
@@ -607,6 +626,125 @@ function GitState({ status: s, pr }) {
         )
       )}
     </span>
+  );
+}
+
+const hubLinks = () => [...document.querySelectorAll(".hub-col a[href]:is(.hub-card-link, .hub-worktree)")];
+
+// stepLinks moves the focus to the next or previous folder's link from the
+// one at, or from the top when at is no folder's.
+function stepLinks(at, step) {
+  const links = hubLinks();
+  const i = links.indexOf(at);
+  (i < 0 ? links[step > 0 ? 0 : links.length - 1] : links[i + step])?.focus();
+}
+
+// WAYS are the ways to give the hub a folder, as the start page offers them,
+// each with the key that does it on either page.
+const WAYS = [
+  { id: "folder", key: "A", Icon: IconPlus, title: "Add a folder", note: "One on this machine, or the repository it is in" },
+  { id: "clone", key: "C", Icon: IconBranch, title: "Clone a repository", note: "From a URL, or owner/repo on GitHub" },
+  { id: "task", key: "T", Icon: IconTemporary, title: "Start a task", note: "In a scratch repository of its own, deleted when you close it" },
+];
+
+// Where people tend to keep their repositories, looked in as well as home.
+const CODE_DIRS = /^(code|dev|developer|git|github|projects?|projs?|repos|repositories|source|src|work|workspace)$/i;
+
+// Start is the page of a hub with no folders yet: what a hub is for, the ways
+// to give it one, and the repositories found in home and the folders code is
+// usually kept in, to add a few at once.
+function Start({ onWay, onAdded }) {
+  const [found, setFound] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const home = await api.hubDirs("~/");
+      const places = [home, ...(await Promise.all(home.dirs.filter((d) => !d.git && CODE_DIRS.test(d.name)).map((d) => api.hubDirs(`~/${d.name}/`).catch(() => null))))];
+      const repos = places.filter(Boolean).flatMap((p) => p.dirs.filter((d) => d.git).map((d) => ({ name: d.name, place: `${p.place.replace(/\/$/, "")}/${d.name}` })));
+      if (live) setFound(repos);
+    })().catch(() => live && setFound([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const toggle = (place) =>
+    setPicked((had) => {
+      const next = new Set(had);
+      next.has(place) ? next.delete(place) : next.add(place);
+      return next;
+    });
+  const add = async () => {
+    setBusy(true);
+    setError("");
+    // One at a time, as each is written to the hub's list in turn.
+    for (const place of picked) {
+      try {
+        await api.hubAdd(place);
+      } catch (e) {
+        setError(`${place}: ${e.message}`);
+      }
+    }
+    setBusy(false);
+    onAdded();
+  };
+
+  return (
+    <div className="hub-start">
+      <div className="hub-start-head">
+        <h1 className="agent-start-title">Welcome to your hub</h1>
+        <p>One address for every folder you work in: review what changed, run Claude Code or Codex, and open terminals, from here or your phone.</p>
+      </div>
+      <div className="hub-ways">
+        {WAYS.map(({ id, key, Icon, title, note }) => (
+          <button key={id} className="hub-way" onClick={() => onWay(id)}>
+            <span className="hub-way-icon">
+              <Icon size={15} />
+            </span>
+            <span className="hub-way-title">{title}</span>
+            <span className="hub-way-note">{note}</span>
+            <kbd>{key}</kbd>
+          </button>
+        ))}
+      </div>
+      {found?.length > 0 && (
+        <section className="hub-found">
+          <div className="hub-found-head">
+            <span className="menu-label">Repositories on this machine</span>
+            <span className="spacer" />
+            <button className="link" onClick={() => setPicked(picked.size === found.length ? new Set() : new Set(found.map((r) => r.place)))}>
+              {picked.size === found.length ? "Pick none" : "Pick all"}
+            </button>
+          </div>
+          <div className="palette-list hub-found-list">
+            {found.map((r) => (
+              <button key={r.place} className={cx("palette-row", picked.has(r.place) && "picked")} aria-pressed={picked.has(r.place)} onClick={() => toggle(r.place)}>
+                <span className="hub-check">{picked.has(r.place) && <IconCheck size={11} />}</span>
+                <span className="hub-dir-name">{r.name}</span>
+                <span className="spacer" />
+                <span className="hub-place">
+                  {LRM}
+                  {r.place}
+                </span>
+              </button>
+            ))}
+          </div>
+          {error && <div className="hub-picker-error">{error}</div>}
+          <div className="hub-picker-foot">
+            <span className="hub-picker-note">{picked.size ? `${picked.size} picked` : "Pick the ones to add"}</span>
+            <button className="primary" disabled={busy || !picked.size} onClick={add}>
+              {picked.size > 1 ? `Add ${picked.size} folders` : "Add"}
+            </button>
+          </div>
+        </section>
+      )}
+      <p className="hub-start-tip">
+        To use it from your phone, open this address through a tunnel, or start the hub with <code>-host 0.0.0.0</code> on a network you trust.
+      </p>
+    </div>
   );
 }
 
