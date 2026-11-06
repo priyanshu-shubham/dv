@@ -1454,6 +1454,12 @@ export default function App() {
     meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
     { id: "settings", name: "Open settings", note: phoneApp ? "" : "Also the , key", run: () => openOverlay({ type: "settings" }) },
     {
+      id: "monitor",
+      name: "Server metrics and logs",
+      note: "CPU, memory and disks of the computer dv runs on, and what dv has printed · Settings → Monitor",
+      run: () => openOverlay({ type: "settings", tab: "monitor" }),
+    },
+    {
       id: "restart",
       name: "Restart dv",
       note: "Runs it again from the version installed · also in Settings",
@@ -2651,6 +2657,7 @@ export default function App() {
         padOn={padShown}
         onPad={() => (padShown ? leavePad() : openPad())}
         onCloseTask={meta?.task ? endTask : null}
+        settings={settings}
       />
 
       <div

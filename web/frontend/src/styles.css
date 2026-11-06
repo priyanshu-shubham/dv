@@ -532,6 +532,222 @@ a.link:hover {
   letter-spacing: 0.02em;
 }
 
+.logo-name {
+  overflow: hidden;
+  max-width: 220px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The hub bar's glance: each figure with a short meter of its own. */
+.machine-glance {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--ctl-h);
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  color: var(--fg-3);
+  font: var(--fs-xs) var(--font-ui);
+}
+
+.machine-glance:hover,
+.machine-glance.on {
+  background: var(--bg-hover);
+}
+
+.machine-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.machine-stat > .machine-meter-track {
+  width: 28px;
+}
+
+.machine-stat > b {
+  min-width: 3ch;
+  color: var(--fg-2);
+  font: 500 var(--fs-xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.machine-stat.warm > b {
+  color: var(--mod);
+}
+
+.machine-stat.high > b {
+  color: var(--del);
+}
+
+.model-list.machine-pop {
+  position: fixed;
+  z-index: 110;
+  width: 420px;
+  padding: 12px;
+}
+
+.machine {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.machine-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.machine-host {
+  color: var(--fg);
+  font: 600 var(--fs-md) var(--font-ui);
+}
+
+.machine-os {
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.machine-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.machine-pop .machine-tiles {
+  grid-template-columns: 1fr 1fr;
+}
+
+.machine-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
+  background: var(--bg-panel);
+}
+
+.machine-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.machine-label > :first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.machine-aside {
+  color: var(--fg-4);
+}
+
+.machine-value {
+  margin-top: 2px;
+  color: var(--fg);
+  font: 600 20px / 1.2 var(--font-ui);
+}
+
+.machine-sub {
+  overflow: hidden;
+  min-height: 1.4em;
+  margin-bottom: 8px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pinned to the tile's foot, so tiles side by side line their marks up. */
+.machine-tile > .machine-spark,
+.machine-tile > .machine-meter-track {
+  margin-top: auto;
+}
+
+.machine-tile > .machine-meter-track {
+  flex: none;
+  height: 6px;
+}
+
+.machine-spark {
+  display: block;
+  width: 100%;
+  height: 30px;
+}
+
+.machine-spark-area {
+  fill: var(--accent-soft);
+}
+
+.machine-spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+}
+
+.machine-spark-rule {
+  stroke: var(--fg-4);
+  stroke-width: 1px;
+}
+
+.machine-spark-dot {
+  fill: var(--accent);
+  stroke: var(--bg-panel);
+  stroke-width: 2px;
+}
+
+.machine-spark-dot.warm {
+  fill: var(--mod);
+}
+
+.machine-spark-dot.high {
+  fill: var(--del);
+}
+
+/* The unfilled part is a lighter step of the fill's own colour. */
+.machine-meter-track {
+  display: block;
+  overflow: hidden;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+}
+
+.machine-meter-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.machine-meter-track.warm {
+  background: var(--mod-bg);
+}
+
+.machine-meter-track.warm > span {
+  background: var(--mod);
+}
+
+.machine-meter-track.high {
+  background: var(--del-bg);
+}
+
+.machine-meter-track.high > span {
+  background: var(--del);
+}
+
 /* Served by a hub, the name is the way back to it. */
 a.logo.to-hub {
   display: inline-flex;

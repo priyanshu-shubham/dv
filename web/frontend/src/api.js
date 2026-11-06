@@ -400,6 +400,11 @@ export const api = {
   // as at dv while it is open and says so through presence: { page, focused,
   // input, ago }, ago in milliseconds since they last used it.
   notices: (page, on) => follow(`/api/notify?page=${page}`, on, null, "", true),
+  // machine: the computer dv runs on, the process's rather than a folder's:
+  // { host, os, uptime, cpu: { percent, cores, load }, memory, swap: { total, used },
+  // disks: [{ mount, total, used, free }], dv: { memory, processes },
+  // history: [{ at, cpu, mem }], the last ten minutes }
+  machine: () => req("/api/machine", {}, ""),
   // keepalive: the report a phone being locked makes is to arrive, not to be
   // cancelled as the page is put away.
   presence: (report) => req("/api/notify/presence", { method: "POST", body: JSON.stringify(report), keepalive: true }, ""),

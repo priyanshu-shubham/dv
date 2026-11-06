@@ -12,6 +12,7 @@ import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } fr
 import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
+import { MachineSetting } from "./Machine.jsx";
 import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
 import { Picker } from "./Picker.jsx";
 import { useBack } from "./phone/back.js";
@@ -821,7 +822,7 @@ export function SettingsOverlay({
     ...(ask ? [["ask", "Ask"]] : []),
     ...(actions ? [["actions", "Actions"]] : []),
     ["server", "Server"],
-    ["logs", "Logs"],
+    ["monitor", "Monitor"],
   ];
   return (
     <Modal onClose={onClose} centred className="settings">
@@ -880,7 +881,7 @@ export function SettingsOverlay({
                 <label className="settings-row">
                   <div className="settings-text">
                     <div>Name in the tab</div>
-                    <div className="settings-note">Shown in place of dv, to tell this computer's dv from another's, and the name it installs under as an app. Every dv on this computer uses it.</div>
+                    <div className="settings-note">Shown in place of dv in the tab and the top bar, to tell this computer's dv from another's, and the name it installs under as an app. Every dv on this computer uses it.</div>
                   </div>
                   <input
                     value={settings.tabName || ""}
@@ -892,6 +893,7 @@ export function SettingsOverlay({
                 </label>
                 <Setting
                   label="Tab icon"
+                  note="Its colour is the name's in the top bar too, and the ring on the app's icon when installed after picking it."
                   value={settings.tabColor || ""}
                   onPick={(v) => onChange({ tabColor: v || undefined })}
                   choices={TAB_ICONS}
@@ -1032,7 +1034,12 @@ export function SettingsOverlay({
             <RestartRow working={working} update={update} />
           </>
         )}
-        {tab === "logs" && <Logs />}
+        {tab === "monitor" && (
+          <>
+            <MachineSetting />
+            <Logs />
+          </>
+        )}
       </div>
     </Modal>
   );

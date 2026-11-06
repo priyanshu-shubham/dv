@@ -11,6 +11,7 @@ import { IconBranch, IconCheck, IconChevron, IconDots, IconPlus, IconSearch, Ico
 import { setTabIcon, tabDot } from "./favicon.js";
 import { PRChip } from "./Header.jsx";
 import { startTask } from "./tasks.js";
+import { HubMark, MachineMeter } from "./Machine.jsx";
 
 const POLL_MS = 2000;
 const BUSY_POLL_MS = 700;
@@ -254,9 +255,12 @@ export default function Hub() {
     <div className="hub">
       <header className="topbar">
         <div className="topbar-left">
-          <span className="logo">dv</span>
+          <span className="logo">
+            <HubMark settings={settings} />
+          </span>
         </div>
         <div className="topbar-right">
+          {!phoneApp && <MachineMeter />}
           <button
             className={cx("icon", update && "has-update")}
             onClick={() => setDialog("settings")}

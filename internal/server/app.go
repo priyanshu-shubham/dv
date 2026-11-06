@@ -26,25 +26,31 @@ import (
 var serviceWorker []byte
 
 const manifest = `{"id":"/","name":%[1]s,"short_name":%[1]s,"start_url":"/","scope":"/","display":"standalone","background_color":"#131314","theme_color":"#131314","icons":[` +
-	`{"src":"/icon/192.png","sizes":"192x192","type":"image/png","purpose":"any"},` +
-	`{"src":"/icon/512.png","sizes":"512x512","type":"image/png","purpose":"any"},` +
-	`{"src":"/icon/maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}`
+	`{"src":"/icon/192.png%[2]s","sizes":"192x192","type":"image/png","purpose":"any"},` +
+	`{"src":"/icon/512.png%[2]s","sizes":"512x512","type":"image/png","purpose":"any"},` +
+	`{"src":"/icon/maskable-512.png%[2]s","sizes":"512x512","type":"image/png","purpose":"maskable"}]}`
 
-// Manifest serves the manifest, the app named as the tab is: the setting
-// tabName. A phone takes the name as it installs; renaming it later is up to
-// the phone.
+// Manifest serves the manifest, the app named and ringed as the tab is: the
+// settings tabName and tabColor. A phone takes both as it installs; changing
+// them later is up to the phone.
 func Manifest(user *store.Prefs) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var s struct {
-			TabName string `json:"tabName"`
+			TabName  string `json:"tabName"`
+			TabColor string `json:"tabColor"`
 		}
 		if user != nil {
 			json.Unmarshal(user.All()["settings"], &s)
 		}
 		name, _ := json.Marshal(cmp.Or(strings.TrimSpace(s.TabName), "dv"))
+		// In the address, as icons are cached for a day and kept by their URL.
+		ring := ""
+		if _, ok := ringColors[s.TabColor]; ok {
+			ring = "?ring=" + s.TabColor
+		}
 		w.Header().Set("Content-Type", "application/manifest+json")
 		w.Header().Set("Cache-Control", "no-cache")
-		fmt.Fprintf(w, manifest, name)
+		fmt.Fprintf(w, manifest, name, ring)
 	}
 }
 
@@ -68,7 +74,11 @@ var worker = sync.OnceValue(func() []byte {
 // HandleIcon serves /icon/{name}: 192.png, 512.png, maskable-512.png, and
 // badge.png, the white glyph Android shows in the status bar, by its alpha.
 func HandleIcon(w http.ResponseWriter, r *http.Request) {
-	b, ok := icons()[r.PathValue("name")]
+	set := icons()
+	if c, ok := ringColors[r.URL.Query().Get("ring")]; ok {
+		set = ringedIcons(c)
+	}
+	b, ok := set[r.PathValue("name")]
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -120,6 +130,41 @@ var icons = sync.OnceValue(func() map[string][]byte {
 		"badge.png":        encode(draw(96, 3, 0, color.RGBA{}, blank)),
 	}
 })
+
+// ringColors are favicon.js's TAB_COLORS.
+var ringColors = map[string]color.RGBA{
+	"blue":   {0x2f, 0x81, 0xf7, 0xff},
+	"purple": {0x89, 0x57, 0xe5, 0xff},
+	"pink":   {0xdb, 0x61, 0xa2, 0xff},
+	"orange": {0xe0, 0x82, 0x3d, 0xff},
+	"yellow": {0xd4, 0xa7, 0x2c, 0xff},
+	"teal":   {0x1f, 0x9e, 0x9e, 0xff},
+}
+
+var ringed sync.Map // color.RGBA → map[string][]byte
+
+// ringedIcons are the app's icons ringed in c as the tab's is: the SVG's
+// 3.5-wide stroke over the frame, and on the maskable one a circle inside
+// what a launcher keeps.
+func ringedIcons(c color.RGBA) map[string][]byte {
+	if set, ok := ringed.Load(c); ok {
+		return set.(map[string][]byte)
+	}
+	inner := append([]shape{}, glyph...)
+	inner[0].y0, inner[0].y1 = 3.5, 28.5
+	whole := append([]shape{{0, 0, 32, 32, 8.75, c}, {3.5, 3.5, 28.5, 28.5, 5.25, frameFill}}, inner...)
+	const R, band = 18.6, 1.4
+	circle := append([]shape{{16 - R, 16 - R, 16 + R, 16 + R, R, c}, {16 - R + band, 16 - R + band, 16 + R - band, 16 + R - band, R - band, frameFill}}, glyph...)
+	maskScale := 512 * 0.6 / 28
+	set := map[string][]byte{
+		"192.png":          encode(draw(192, 6, 0, color.RGBA{}, whole)),
+		"512.png":          encode(draw(512, 16, 0, color.RGBA{}, whole)),
+		"maskable-512.png": encode(draw(512, maskScale, 256-16*maskScale, frameFill, circle)),
+		"badge.png":        icons()["badge.png"],
+	}
+	ringed.Store(c, set)
+	return set
+}
 
 // A shape is a rectangle, its corners rounded by r, of one opaque colour.
 type shape struct {

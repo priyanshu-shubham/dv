@@ -76,6 +76,32 @@ func TestManifestTakesTabName(t *testing.T) {
 	}
 }
 
+func TestManifestRingsIconsAsTheTab(t *testing.T) {
+	user, err := store.OpenRepoPrefs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	user.Set("settings", json.RawMessage(`{"tabColor":"teal"}`), nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /manifest.webmanifest", Manifest(user))
+	mux.HandleFunc("GET /icon/{name}", HandleIcon)
+	var m struct{ Icons []struct{ Src string } }
+	json.Unmarshal(get(t, mux, "/manifest.webmanifest").Body.Bytes(), &m)
+	teal := color.NRGBA{0x1f, 0x9e, 0x9e, 0xff}
+	for _, c := range []struct {
+		src  string
+		x, y int
+	}{{m.Icons[0].Src, 96, 4}, {m.Icons[2].Src, 256, 256 - 200}} {
+		img, err := png.Decode(get(t, mux, c.src).Body)
+		if err != nil {
+			t.Fatal(c.src, err)
+		}
+		if got := color.NRGBAModel.Convert(img.At(c.x, c.y)); got != teal {
+			t.Errorf("%s at (%d, %d) is %v, not the ring", c.src, c.x, c.y, got)
+		}
+	}
+}
+
 func TestIconsLookLikeTheTabs(t *testing.T) {
 	at := func(name string, x, y int) color.NRGBA {
 		img, _ := png.Decode(strings.NewReader(string(icons()[name])))

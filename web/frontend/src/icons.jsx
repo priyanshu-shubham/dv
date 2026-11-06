@@ -34,6 +34,7 @@ export const IconSearch = svg(<><circle cx="7" cy="7" r="4.5" /><path d="M10.5 1
 export const IconSymbol = svg(<path d="M5.5 2.5L2 8l3.5 5.5M10.5 2.5L14 8l-3.5 5.5" />, { stroke: true });
 export const IconCheck = svg(<path d="M3 8.5l3.5 3.5L13 4.5" />, { stroke: true });
 export const IconRefresh = svg(<path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2v3.5H10" />, { stroke: true });
+export const IconGauge = svg(<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0M8 11.5l2.5-3.5" />, { stroke: true });
 export const IconX = svg(<path d="M4 4l8 8M12 4l-8 8" />, { stroke: true });
 export const IconPlus = svg(<path d="M8 3.5v9M3.5 8h9" />, { stroke: true });
 export const IconMinus = svg(<path d="M3.5 8h9" />, { stroke: true });

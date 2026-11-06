@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { boot } from "./boot.js";
 import { blockedNote, branchRows, fetchNote, rowHint, rowLabel, switchDone, useBranchChoices } from "./Branches.jsx";
 import { cx, modKey, useDismiss } from "./util.js";
+import { HubMark } from "./Machine.jsx";
 import {
   IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconPad, IconPin, IconSearch, IconSettings, IconUndo,
 } from "./icons.jsx";
@@ -158,7 +159,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onReviewPR,
+  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onReviewPR, settings,
 }) {
   const agent = mode === "agent";
   return (
@@ -167,10 +168,12 @@ export default function Header({
         {boot.base ? (
           <a className="logo to-hub" href="/" title="Back to the hub (Alt+H)">
             <IconBack size={13} />
-            dv
+            <HubMark settings={settings} />
           </a>
         ) : (
-          <span className="logo">dv</span>
+          <span className="logo">
+            <HubMark settings={settings} />
+          </span>
         )}
       </div>
 
