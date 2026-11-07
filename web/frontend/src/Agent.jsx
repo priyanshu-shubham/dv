@@ -3593,6 +3593,8 @@ function ToolImage({ src, detail = {}, name, thumb }) {
       setShown(to.src);
     };
     document.addEventListener("keydown", onKey, true);
+    // Fetched ahead, so the arrows don't land on an empty frame.
+    for (const p of [prev, next]) if (p) new Image().src = p.src;
     return () => document.removeEventListener("keydown", onKey, true);
   }, [shown, phone, prev, next]);
   if (state === "failed") return <div className={cx("agent-image", "failed", thumb && "thumb")}>{thumb ? "Not loaded" : "The picture could not be loaded"}</div>;
@@ -3614,7 +3616,17 @@ function ToolImage({ src, detail = {}, name, thumb }) {
         />
         {state === "loading" && <span className="spinner" />}
       </button>
-      {shown && phone && <Photo src={src} name={name} onClose={() => setShown(null)} />}
+      {shown && phone && (
+        <Photo
+          src={pic.src}
+          name={pic.name}
+          count={(prev || next) && `${at + 1} of ${pictures.length}`}
+          prev={prev?.src}
+          next={next?.src}
+          onTurn={setShown}
+          onClose={() => setShown(null)}
+        />
+      )}
       {shown && !phone && (
         <Modal wide centred className="image-view" onClose={() => setShown(null)}>
           <div className="viewer-head">

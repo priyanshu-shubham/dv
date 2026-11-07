@@ -2067,14 +2067,46 @@ html.phone .modal.photo {
   touch-action: none;
 }
 
-.p-photo-stage img {
+.p-photo-track {
+  position: absolute;
+  inset: 0;
+}
+
+.p-photo-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hidden until drawn, then faded in where it stands. An animation, as the
+   inline transition the gestures set would override a transition here. */
+.p-photo-slot img {
   max-width: 100%;
   max-height: 100%;
   user-select: none;
+  opacity: 0;
 }
 
-.p-photo-stage .spinner {
+.p-photo-slot img.in {
+  opacity: 1;
+  animation: p-photo-fade 0.2s;
+}
+
+@keyframes p-photo-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.p-photo-slot .spinner {
   position: absolute;
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
 }
 
 .p-photo-bar {
@@ -2106,6 +2138,13 @@ html.phone .modal.photo {
   font-size: 16px;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.p-photo-count {
+  flex: none;
+  margin-left: auto;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
 }
 
 /* Settings is a screen of its own, as Android's are: the app's bar, its
