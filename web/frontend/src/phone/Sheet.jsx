@@ -1,7 +1,7 @@
 // The phone app's surfaces over the page: bottom sheets, the overflow menu,
 // and the rows both are made of. Each is a layer (the page goes inert under
 // it) and a history entry (Back closes it).
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLayer } from "../Overlays.jsx";
 import { cx } from "../util.js";
@@ -20,13 +20,23 @@ function useTapAway(away) {
   };
 }
 
-// Sheet slides up from the foot. A tap outside, Back, or a drag down by its
-// handle puts it away. aside sits at the title's end; head under it, staying
-// put as the body scrolls.
+// Sheet slides up from the foot. A tap outside, Back, or a drag down puts it
+// away: by its handle, or from anywhere in it with nothing there to scroll up.
+// aside sits at the title's end; head under it, staying put as the body scrolls.
 export function Sheet({ title, aside, head, onClose, foot, className, children }) {
   const ref = useRef(null);
+  const sheet = useRef(null);
   const [shown, setShown] = useState(false);
   const [dy, setDy] = useState(0);
+  const pulled = useRef(0); // dy, for the release, which a stale render would misread
+  const pull = (v) => {
+    pulled.current = v;
+    setDy(v);
+  };
+  const release = (cancelled) => {
+    if (!cancelled && pulled.current > 80) leave.current();
+    pull(0);
+  };
   const from = useRef(null);
   useLayer(ref, 110);
   const leave = useRef(null);
@@ -45,20 +55,69 @@ export function Sheet({ title, aside, head, onClose, foot, className, children }
       from.current = e.clientY;
       e.currentTarget.setPointerCapture(e.pointerId);
     },
-    onPointerMove: (e) => from.current !== null && setDy(Math.max(0, e.clientY - from.current)),
+    onPointerMove: (e) => from.current !== null && pull(Math.max(0, e.clientY - from.current)),
     onPointerUp: () => {
       from.current = null;
-      if (dy > 80) leave.current();
-      setDy(0);
+      release(false);
     },
     onPointerCancel: () => {
       from.current = null;
-      setDy(0);
+      release(true);
     },
   };
+
+  // From the body, a drag down is the sheet's only once it is plainly down and
+  // nothing under the finger is scrolled; before then it may yet be a scroll,
+  // a tap, or a row's swipe aside. Touch events, not pointer ones: only a
+  // non-passive touchmove can stop the browser scrolling once the sheet has it.
+  useEffect(() => {
+    const el = sheet.current;
+    let t = null;
+    const scrolled = (n) => {
+      for (; n && n !== el; n = n.parentElement) if (n.scrollTop > 0) return true;
+      return false;
+    };
+    const start = (e) => {
+      const own = e.target.closest(".p-grab, input, textarea, select, [contenteditable]");
+      t = e.touches.length === 1 && !own ? { x: e.touches[0].clientX, y: e.touches[0].clientY, under: e.target, drag: false } : null;
+    };
+    const move = (e) => {
+      if (!t) return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      if (!t.drag) {
+        if (Math.hypot(x - t.x, y - t.y) < 10) return;
+        if (y - t.y <= Math.abs(x - t.x) || scrolled(t.under)) return void (t = null);
+        t.drag = true;
+        t.y = y; // from here, so the sheet doesn't jump the slack
+      }
+      e.preventDefault();
+      pull(Math.max(0, y - t.y));
+    };
+    const end = (cancelled) => () => {
+      if (t?.drag) release(cancelled);
+      t = null;
+    };
+    const up = end(false);
+    const cancel = end(true);
+    el.addEventListener("touchstart", start, { passive: true });
+    el.addEventListener("touchmove", move, { passive: false });
+    el.addEventListener("touchend", up);
+    el.addEventListener("touchcancel", cancel);
+    return () => {
+      el.removeEventListener("touchstart", start);
+      el.removeEventListener("touchmove", move);
+      el.removeEventListener("touchend", up);
+      el.removeEventListener("touchcancel", cancel);
+    };
+  }, []);
+
   return createPortal(
     <div className={cx("p-scrim", shown && "open")} ref={ref} {...tapAway}>
-      <div className={cx("p-sheet", shown && "open", dy > 0 && "dragging", className)} style={dy ? { transform: `translateY(${dy}px)` } : undefined}>
+      <div
+        ref={sheet}
+        className={cx("p-sheet", shown && "open", dy > 0 && "dragging", className)}
+        style={dy ? { transform: `translateY(${dy}px)` } : undefined}
+      >
         <div className="p-grab" {...grab}>
           <div className="p-handle" />
           {title && (
