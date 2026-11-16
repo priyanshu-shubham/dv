@@ -29,6 +29,7 @@ import {
   modKey,
   openFolderSession,
   PHONE_APP,
+  plainText,
   relTime,
   resetsWhen,
   splitPath,
@@ -4536,7 +4537,7 @@ export function SessionList({
             <IconX size={11} />
           </button>
         </div>
-        {(req || s.last) && <div className="session-last">{req ? `Wants to ${req.headline}` : s.last}</div>}
+        {(req || s.last) && <div className="session-last">{req ? `Wants to ${req.headline}` : plainText(s.last)}</div>}
         <div className="session-meta">
           {req ? (
             <span className="session-asking">waiting on you</span>
@@ -4591,7 +4592,7 @@ export function SessionList({
         {s.last && (
           <div className="session-last">
             {s.lastBy === "you" && <span className="session-you">You: </span>}
-            {s.last}
+            {plainText(s.last)}
           </div>
         )}
         <div className="session-meta">

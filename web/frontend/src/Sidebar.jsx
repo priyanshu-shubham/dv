@@ -448,7 +448,8 @@ export function CommentsPanel({ tab, onTab, padFocus, notes, threads, commentsPa
       {tab === "ask" && ask}
       {tab === "notes" && <Notes {...notes} />}
       {tab === "pad" && <Pad focus={padFocus} />}
-      {tab === "comments" && threads.length > 0 && onSend && (
+      {/* A lone comment's own tick is its All; the bar comes with what it ticks. */}
+      {tab === "comments" && (threads.length > 1 || picked.length > 0) && onSend && (
         <div className="comment-picks">
           <label className="pick-all" title={all ? "Take the ticks off" : "Tick them all"}>
             <input type="checkbox" className="tick" checked={all} onChange={() => setTicked(all ? new Set() : new Set(threads.map((t) => t.id)))} />
@@ -491,8 +492,9 @@ export function CommentsPanel({ tab, onTab, padFocus, notes, threads, commentsPa
       )}
       {(tab === "comments" || tab === "notes") && (
         <div className="sidebar-foot">
+          {/* The file agents read them from, by its folder and name; hovered, in full. */}
           <span className="saved-to" title={savedTo}>
-            saved to {savedTo}
+            Saved in {savedTo?.split("/").slice(-2).join("/")}
           </span>
         </div>
       )}

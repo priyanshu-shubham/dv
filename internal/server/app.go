@@ -145,7 +145,7 @@ func PageAppearance(theme string, settings json.RawMessage) string {
 		attr("code-size", fmt.Sprint(s.CodeSize))
 	}
 	_, mark := tabMark(theme, s.Accent, s.TabColor, s.TabIcon)
-	style := "--mark:#" + hexOf(mark)
+	style := "--tab-mark:#" + hexOf(mark)
 	if c, ok := accentOf(s.Accent, s.TabColor); ok {
 		attr("accent", "on")
 		style += ";--pick:#" + hexOf(c)

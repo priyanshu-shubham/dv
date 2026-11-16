@@ -272,14 +272,15 @@
   --accent-soft: rgb(from var(--pick) r g b / 0.1);
 }
 
-/* The tab's colour, which the name in the top bar takes: --mark, the accent
-   or the theme's own, readable on the ground as the accent is. */
+/* The tab's colour, which the name in the top bar takes: --tab-mark, the
+   accent or the theme's own, readable on the ground as the accent is. Not
+   --mark, which is what a match is highlighted in. */
 :root {
-  --tab-color: oklch(from var(--mark, #888888) max(l, 0.7) c h);
+  --tab-color: oklch(from var(--tab-mark, #888888) max(l, 0.7) c h);
 }
 
 :root:not(.phone)[data-theme="light"] {
-  --tab-color: oklch(from var(--mark, #888888) min(l, 0.52) c h);
+  --tab-color: oklch(from var(--tab-mark, #888888) min(l, 0.52) c h);
 }
 
 :root:not(.phone)[data-ui-font="inter"] {
@@ -477,6 +478,10 @@
 
   --blur: 16px;
   --glass-a: 0.6;
+
+  /* The conversation's measure: what was said, the box to say more in, and
+     what is at work between them all line up on it. */
+  --agent-w: 880px;
 }
 
 * {
@@ -1456,6 +1461,16 @@ button.headref:hover {
 
 .comments-panel .sidebar-modes .seg {
   flex: 1;
+  min-width: 0;
+}
+
+/* Each as wide as its name and count, the room left shared out: even shares
+   left "Comments 1" wider than its quarter, spilling out of the track. */
+.comments-panel .sidebar-modes .seg > button {
+  flex: 1 1 auto;
+  gap: 0;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .sidebar-modes .seg {
@@ -2013,8 +2028,11 @@ textarea.pad:focus {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  background: var(--bg-bar);
+  min-height: calc(var(--ctl-h) + 8px);
+  margin: 6px 8px 0;
+  padding: 0 6px 0 10px;
+  border-radius: var(--r-lg);
+  background: var(--bg-hover);
   font-size: var(--fs-xs);
 }
 
@@ -3642,11 +3660,34 @@ button.note-label:hover {
   font-size: var(--fs-xs);
 }
 
+/* A card of its own, whatever ground the Markdown is on: the Agent view's is
+   the page's, which a block in that shade vanished into. */
 .markdown pre {
-  background: var(--bg);
-  border-radius: var(--r-md);
-  padding: calc(8px * var(--space));
+  padding: calc(10px * var(--space)) calc(14px * var(--space));
   overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+}
+
+/* Its language over it, in a strip the copy button sits at the end of. */
+.code-block[data-lang]::before {
+  content: attr(data-lang);
+  display: flex;
+  align-items: center;
+  height: calc(var(--ctl-h) + 8px);
+  padding: 0 calc(14px * var(--space));
+  border: 1px solid var(--border-soft);
+  border-bottom: 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--bg-shell);
+  color: var(--fg-3);
+  font: 500 var(--fs-xs) / 1 var(--font-ui);
+}
+
+.code-block[data-lang] > pre {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .markdown pre code {
@@ -3786,6 +3827,7 @@ a.path-link:hover {
 
 .md-preview pre {
   padding: calc(12px * var(--space)) calc(14px * var(--space));
+  border: 1px solid var(--border-soft);
   border-radius: var(--r-lg);
   background: var(--bg-panel);
   overflow-x: auto;
@@ -6033,6 +6075,26 @@ body.resizing * {
   inset: 12px 4px 4px 12px;
 }
 
+/* On a computer it is a card, as a file is: ringed, the ring held off the
+   text by the terminal's own ground. */
+:root:not(.phone) .term-view::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
+  pointer-events: none;
+}
+
+:root:not(.phone) .term-pane {
+  inset: 22px 14px 22px 24px;
+}
+
+:root:not(.phone) .term-link {
+  top: 22px;
+  right: 24px;
+}
+
 /* The connection gone a while: what is typed waits for it. */
 .term-link {
   position: absolute;
@@ -6131,7 +6193,7 @@ body.resizing * {
 }
 
 .agent-pane.docked .agent-composer {
-  padding-bottom: 10px;
+  padding-bottom: 12px;
 }
 
 /* One line, the send button in reach: the pickers' names give way first. */
@@ -6445,7 +6507,7 @@ button.ghost.agent-context {
   flex-direction: column;
   /* Squared, so Roomy parts what was said more than it pads each part. */
   gap: calc(4px * var(--space) * var(--space));
-  max-width: calc(1100px - (100cqw - 100%));
+  max-width: calc(var(--agent-w) + 2 * var(--log-pad) - (100cqw - 100%));
   margin: 0 auto;
   padding: 8px calc(var(--log-pad) - (100cqw - 100%)) 32px var(--log-pad);
 }
@@ -6819,6 +6881,16 @@ button.ghost.agent-context {
   visibility: visible;
 }
 
+/* In the language's strip it is always there, as the strip has room for it. */
+.code-block[data-lang] > .code-copy {
+  visibility: visible;
+  background: none;
+}
+
+.code-block[data-lang] > .code-copy:hover {
+  background: var(--bg-hover);
+}
+
 .code-copy .done-icon,
 .code-copy.copied .copy-icon {
   display: none;
@@ -6919,11 +6991,38 @@ button.ghost.agent-context {
   border-collapse: collapse;
 }
 
-.agent-text th,
-.agent-text td {
-  padding: calc(3px * var(--space)) calc(7px * var(--space));
-  border: 1px solid var(--border-soft);
+/* Rounded, lined only between rows, the head shaded. The ring is a shadow, as
+   a collapsed table's own border would square the corners off. */
+:is(.agent-text, .md-preview) table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+:is(.agent-text, .md-preview) :is(th, td) {
+  padding: calc(5px * var(--space)) calc(12px * var(--space));
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
   text-align: left;
+}
+
+:is(.agent-text, .md-preview) tr:last-child > td {
+  border-bottom: 0;
+}
+
+:is(.agent-text, .md-preview) th {
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+:is(.agent-text, .md-preview) th:first-child {
+  border-top-left-radius: var(--r-lg);
+}
+
+:is(.agent-text, .md-preview) th:last-child {
+  border-top-right-radius: var(--r-lg);
 }
 
 /* What a command printed: Claude Code's words rather than Claude's, in a card. */
@@ -7235,7 +7334,7 @@ button.ghost.agent-context {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-width: 1060px;
+  max-width: calc(var(--agent-w) + 40px);
   width: 100%;
   margin-inline: auto;
   padding: 0 20px 8px;
@@ -7780,7 +7879,7 @@ button.ghost.agent-context {
 
 .composer-card {
   position: relative;
-  max-width: 1060px;
+  max-width: var(--agent-w);
   margin-inline: auto;
   padding: 10px 10px 8px 14px;
   border: 1px solid var(--border);

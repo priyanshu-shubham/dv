@@ -162,7 +162,7 @@ func TestPageStartsInItsAppearance(t *testing.T) {
 		"settings": json.RawMessage(`{"density":"compact","corners":"round","glass":true,"glow":"x\" onload=\"y"}`),
 	}}})
 	html := w.Body.String()
-	want := `<html lang="en" data-theme="ember" data-code="github" data-density="compact" data-corners="round" data-glass="on" style="--mark:#f2a65a;--blur:16px;--glass-a:0.6">`
+	want := `<html lang="en" data-theme="ember" data-code="github" data-density="compact" data-corners="round" data-glass="on" style="--tab-mark:#f2a65a;--blur:16px;--glass-a:0.6">`
 	if !strings.Contains(html, want) {
 		t.Fatalf("no %s in\n%.300s", want, html)
 	}
@@ -172,9 +172,9 @@ func TestPageStartsInItsAppearance(t *testing.T) {
 // before the accent give the tab's colour by name for both.
 func TestPageAppearanceAccent(t *testing.T) {
 	for _, c := range []struct{ settings, want string }{
-		{`{"accent":"#F472B6","codeSize":13,"uiFont":"geist"}`, ` data-theme="dark" data-code="github" data-ui-font="geist" data-code-size="13" data-accent="on" style="--mark:#f472b6;--pick:#f472b6"`},
-		{`{"tabColor":"teal"}`, ` data-theme="dark" data-code="github" data-accent="on" style="--mark:#1f9e9e;--pick:#1f9e9e"`},
-		{`{"accent":"red;x:y","codeSize":99}`, ` data-theme="dark" data-code="github" style="--mark:#5b9dff"`},
+		{`{"accent":"#F472B6","codeSize":13,"uiFont":"geist"}`, ` data-theme="dark" data-code="github" data-ui-font="geist" data-code-size="13" data-accent="on" style="--tab-mark:#f472b6;--pick:#f472b6"`},
+		{`{"tabColor":"teal"}`, ` data-theme="dark" data-code="github" data-accent="on" style="--tab-mark:#1f9e9e;--pick:#1f9e9e"`},
+		{`{"accent":"red;x:y","codeSize":99}`, ` data-theme="dark" data-code="github" style="--tab-mark:#5b9dff"`},
 	} {
 		if got := PageAppearance("dark", json.RawMessage(c.settings)); got != c.want {
 			t.Errorf("%s:\n got %s\nwant %s", c.settings, got, c.want)

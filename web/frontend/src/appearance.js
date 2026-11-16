@@ -82,7 +82,7 @@ export function appearanceOf(theme, s) {
     "code-size": CODE_SIZES.includes(s.codeSize) ? String(s.codeSize) : undefined,
     accent: accent ? "on" : undefined,
   };
-  const vars = { "--mark": tabMark(theme, s).color };
+  const vars = { "--tab-mark": tabMark(theme, s).color };
   if (accent) vars["--pick"] = accent;
   if (s.glass) {
     vars["--blur"] = `${clamp(s.glassBlur ?? 16, 0, 40)}px`;
@@ -108,7 +108,7 @@ export function useAppearance(theme, settings) {
       if (v) html.setAttribute(name, v);
       else html.removeAttribute(name);
     }
-    for (const k of ["--mark", "--pick", "--blur", "--glass-a"]) {
+    for (const k of ["--tab-mark", "--pick", "--blur", "--glass-a"]) {
       if (vars[k]) html.style.setProperty(k, vars[k]);
       else html.style.removeProperty(k);
     }

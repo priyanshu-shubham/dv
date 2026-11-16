@@ -330,6 +330,27 @@ export const LRM = "\u200e";
 
 // agentName names the agent a session, request or activity is with: "codex",
 // or Claude's "".
+// plainText is Markdown flattened to a line of what it says, for a preview of
+// a reply: its words without the marks, headings, list bullets, quote bars,
+// table rules and fences, a link as its text. The server has made it one line
+// already, so a bullet or quote is only taken where a line could have begun:
+// at the start or after a sentence, which leaves 3 - 2 and a > b alone.
+export const plainText = (s) =>
+  (s || "")
+    .replace(/```\w*/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\|?(?:\s*:?-{3,}:?\s*\|)+\s*(?::?-{3,}:?)?/g, " ")
+    .replace(/\s*\|\s*/g, " · ")
+    .replace(/(^|\s)#{1,6}(?=\s)/g, "$1")
+    .replace(/(^|[.:!?]\s+)(?:>|[-*+]|\d+[.)])(?=\s)/g, "$1")
+    .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, "$2")
+    .replace(/(^|[\s(])([*_])(?=\S)(.+?)(?<=\S)\2(?=[\s).,;:!?]|$)/g, "$1$3")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/(?:\s*·\s*){2,}/g, " · ")
+    .replace(/^\s*·\s*|\s*·\s*$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
 export const agentName = (agent) => (agent === "codex" ? "Codex" : "Claude");
 
 // Only followed in dv: another process has it open and dv was not let in too.

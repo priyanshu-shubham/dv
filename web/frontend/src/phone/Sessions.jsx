@@ -4,7 +4,7 @@
 // else can be done to it; swiped aside, it closes.
 import { useState } from "react";
 import { AgentIcon } from "../icons.jsx";
-import { agentName, byLastSent, heldElsewhere, openFolderSession, cx, limitWindow, relTime, resetsWhen } from "../util.js";
+import { agentName, byLastSent, heldElsewhere, openFolderSession, cx, limitWindow, plainText, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
 import { Row, Sheet, useLongPress, useSwipe } from "./Sheet.jsx";
 import { Marks } from "./Session.jsx";
@@ -156,7 +156,7 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
   ) : s.busy && isOpen(s) ? (
     <span className="p-dot busy" />
   ) : null;
-  const last = s.last && s.last.replace(/\*\*|__|`/g, "");
+  const last = plainText(s.last);
   const what = req ? `Wants to ${req.headline}` : last ? (s.lastBy === "you" ? `You: ${last}` : last) : s.prompt;
   const when = s.running === "terminal" ? "terminal" : s.busy && isOpen(s) ? s.status || "working" : relTime(s.updated);
 

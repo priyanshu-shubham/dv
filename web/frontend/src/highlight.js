@@ -128,8 +128,12 @@ export function codeBlocks(md) {
     },
   });
   const fence = md.renderer.rules.fence;
-  md.renderer.rules.fence = (...args) =>
-    `<div class="code-block">${fence(...args)}<button class="ghost code-copy" title="Copy the code">${COPY_ICONS}</button></div>`;
+  // The fence's language heads the block, a strip its copy button sits in.
+  md.renderer.rules.fence = (...args) => {
+    const [tokens, idx] = args;
+    const lang = md.utils.escapeHtml(tokens[idx].info.trim().split(/\s+/)[0] || "");
+    return `<div class="code-block"${lang ? ` data-lang="${lang}"` : ""}>${fence(...args)}<button class="ghost code-copy" title="Copy the code">${COPY_ICONS}</button></div>`;
+  };
   return md;
 }
 
