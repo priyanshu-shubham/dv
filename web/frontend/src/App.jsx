@@ -2804,7 +2804,7 @@ export default function App() {
           onWidth={setSideWidth}
         />
 
-        <div className="content" ref={scrollRef} onMouseOver={onMouseOver} hidden={mode !== "diff"}>
+        <div className={cx("content", oneFile && "one-file")} ref={scrollRef} onMouseOver={onMouseOver} hidden={mode !== "diff"}>
           {diffInner}
         </div>
 
@@ -2934,6 +2934,10 @@ function stepChange(root, dir, need) {
         ? stops.find((el) => el.getBoundingClientRect().top > y + 3)
         : stops.findLast((el) => el.getBoundingClientRect().bottom < y - 3);
   if (!stop) return false;
+  // At the page's end a step cannot bring a change any nearer, and one already
+  // on screen has been seen, so there is no change left that way to go to.
+  const box = root.getBoundingClientRect();
+  if (dir > 0 && root.scrollTop >= root.scrollHeight - root.clientHeight - 1 && stop.getBoundingClientRect().bottom <= box.bottom) return false;
 
   const aim = (row) => ({ y: root.scrollTop + row.getBoundingClientRect().top - line(), final: true });
   const go = (row) => {

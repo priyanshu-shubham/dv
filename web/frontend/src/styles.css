@@ -2140,9 +2140,15 @@ button.headref:hover {
   height: calc(100vh - 110px);
 }
 
-/* Code mode is one file; room after it would only be empty space. */
-.code-pane::after {
+/* Code mode is one file, and so is the diff read one at a time; room after it
+   would only be empty space. n moves on to the next file instead. */
+.code-pane::after,
+.content.one-file::after {
   display: none;
+}
+
+.content.one-file > :last-child {
+  margin-bottom: 12px;
 }
 
 /* ---------- sidebar ---------- */
