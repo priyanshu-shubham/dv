@@ -6291,8 +6291,14 @@ body.resizing * {
   margin: 0 0 -4px calc(-1 * var(--log-pad));
   background: var(--bg);
   /* The right padding is thinner by the scrollbar: a margin reaching over
-     it would push past the scroller and scroll it sideways. */
-  box-shadow: var(--log-pad) 0 var(--bg);
+     it would push past the scroller and scroll it sideways. The copies
+     further out cover edits wider than the column, which reach past it. */
+  box-shadow:
+    var(--log-pad) 0 var(--bg),
+    -900px 0 var(--bg),
+    900px 0 var(--bg),
+    -1800px 0 var(--bg),
+    1800px 0 var(--bg);
 }
 
 .agent-log .file-head {
@@ -7807,6 +7813,13 @@ button.ghost.agent-context {
 .agent-edit {
   margin: 6px 0;
   content-visibility: visible;
+}
+
+/* Code wants the width prose doesn't: an edit reaches out of the reading
+   column to the pane's padding either side. The pane is the container, so
+   this is half of what it has beyond the column; nothing when it has none. */
+.agent-log .agent-edit {
+  margin-inline: min(0px, (var(--agent-w) + 2 * var(--log-pad) - 100cqw) / 2);
 }
 
 /* A gap in an edit the transcript kept only the hunks of: nothing to open. */
