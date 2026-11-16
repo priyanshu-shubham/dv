@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import Header, { AUTO, CommitNote, PRESETS, prBase, usePR } from "./Header.jsx";
 import { CommitLog } from "./Commits.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
-import FileDiff, { cssId } from "./FileDiff.jsx";
+import FileDiff, { cssId, unshownBody } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, FinishWorktree, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
@@ -23,6 +23,7 @@ import { compareTreePaths, sortTreePaths } from "./tree.js";
 import { mapLine, newLineFor, plainDiff } from "./hunks.js";
 import { captureAnchor, restoreAnchor, useVersionPoll } from "./live.js";
 import FindBar from "./FindBar.jsx";
+import { IconBack, IconForward } from "./icons.jsx";
 import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find.js";
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
@@ -42,6 +43,7 @@ import {
   PHONE_APP,
   searchSeed,
   selecting,
+  splitPath,
   TERMINAL_KEY,
   useDebounced,
   useMedia,
@@ -85,6 +87,9 @@ export default function App() {
   const [wrapWide, setWrapWide] = usePersisted("wrap", false);
   const [wrapPhone, setWrapPhone] = usePersisted("wrapPhone", true);
   const [wrap, setWrap] = phoneApp ? [wrapPhone, setWrapPhone] : [wrapWide, setWrapWide];
+  // The phone app lists its files apart already, so it keeps to the one scroll.
+  const [oneFilePicked, setOneFile] = usePersisted("oneFile", false);
+  const oneFile = oneFilePicked && !phoneApp;
   const [theme, setTheme] = usePref("user", "theme", "dark");
   const [hideGenerated, setHideGenerated] = usePref("repo", "hideGenerated", false);
   const [pathFilter, setPathFilter] = usePref("repo", "pathFilter", NO_FILTER);
@@ -611,6 +616,9 @@ export default function App() {
     });
     return { files, filteredOut, hiddenGenerated };
   }, [diff, hideGenerated, pathFilter, filtersPaused]);
+  // A file the filters hide, or none yet, gives way to the first.
+  const shownPath = oneFile ? (files.some((f) => f.path === activePath) ? activePath : files[0]?.path) : null;
+  const currentPath = oneFile ? shownPath : activePath;
   const showAll = useCallback(() => setFiltersPaused(true), []);
   const changeHideGenerated = useCallback(
     (v) => {
@@ -646,15 +654,31 @@ export default function App() {
       if (line) setReveal({ path, line });
       needFile(path); // do not wait for the observer to notice we are heading there
       const root = scrollRef.current;
-      const el = document.getElementById("file-" + cssId(path));
-      if (!root || !el) return;
+      const section = () => document.getElementById("file-" + cssId(path));
+      if (!root) return;
+      // One file at a time, the file is only drawn once this render lands, and
+      // it starts at the top. Scrolling first leaves no frame of the old file mid-way.
+      if (oneFile) {
+        root.scrollTo({ top: 0, behavior: "instant" });
+        if (!line) return;
+      } else if (!section()) return;
       chase(root, () => {
+        const el = section();
+        if (!el) return null;
         const anchor = line ? el.querySelector(`[data-line="${line}"]`) : null;
         return { y: yOf(root, anchor || el, anchor ? root.clientHeight / 3 : FILE_TOP), final: !line || !!anchor };
       });
     },
-    [needFile],
+    [needFile, oneFile],
   );
+
+  // Switching between the two, the file being read stays on screen.
+  const wasOneFile = useRef(oneFile);
+  useEffect(() => {
+    if (wasOneFile.current === oneFile) return;
+    wasOneFile.current = oneFile;
+    if (activePath) jumpToFile(activePath);
+  }, [oneFile]);
 
   // openCode shows a file in Code mode as a new step in its trail, with `line`
   // brought to `top` px down (a third of the way when not given). `replace`
@@ -841,6 +865,19 @@ export default function App() {
   const findPaths = useMemo(() => (mode === "code" ? (codePath ? [codePath] : []) : files.map((f) => f.path)), [mode, codePath, files]);
   // In the diff a file's header path is found too, expanded or not; in Code
   // mode the one header is the file already open, so only its lines are.
+  // One file at a time, the files not shown publish nothing, so find lays them
+  // out itself. Kept per fd, as the search re-runs with each keystroke.
+  const unshownCache = useRef(new WeakMap());
+  const unshown = (path) => {
+    const fd = fileData[path]?.fd;
+    if (!fd) return null;
+    const threads = threadsByFile.get(path) || NO_THREADS;
+    const hit = unshownCache.current.get(fd);
+    if (hit?.view === view && hit.contextLines === contextLines && hit.threads === threads) return hit.body;
+    const body = unshownBody(fd, view, contextLines, threads);
+    unshownCache.current.set(fd, { view, contextLines, threads, body });
+    return body;
+  };
   const found = useMemo(() => {
     if (!compiled?.re) return null;
     const list = [];
@@ -857,14 +894,14 @@ export default function App() {
         heads.set(path, head.ranges);
         for (const m of head.list) list.push(m);
       }
-      const body = bodies.current[mode].get(path);
+      const body = bodies.current[mode].get(path) || (mode === "diff" && oneFile && unshown(path));
       const f = body && fileMatches(path, body, compiled.re);
       if (!f?.list.length) continue;
       byFile.set(path, f.byLine);
       for (const m of f.list) list.push(m);
     }
     return { list, byFile, heads, capped: capped || list.length > MAX_FOUND };
-  }, [compiled, findPaths, files, mode, bodiesAt]);
+  }, [compiled, findPaths, files, mode, bodiesAt, oneFile, fileData, view, contextLines, threadsByFile]);
   const findIndex = useMemo(() => (found && findCur ? found.list.findIndex((m) => sameMatch(m, findCur)) : -1), [found, findCur]);
 
   // The diff's files still to load: a match in one of them is not found yet.
@@ -886,15 +923,20 @@ export default function App() {
       setFindCur({ path: m.path, side: m.side, line: m.line, start: m.start });
       const code = modeRef.current === "code";
       const root = code ? codeRef.current : scrollRef.current;
-      const section = code ? root?.querySelector(".code-file") : document.getElementById("file-" + cssId(m.path));
-      if (!root || !section) return;
+      // One file at a time, a match in another file is drawn only once it is shown.
+      const sectionOf = () => (code ? root?.querySelector(".code-file") : document.getElementById("file-" + cssId(m.path)));
+      if (!root || (!sectionOf() && (code || !oneFile))) return;
       if (!m.line) {
         setActivePath(m.path);
-        const top = section.getBoundingClientRect().top - root.getBoundingClientRect().top;
+        const section = sectionOf();
+        const top = section ? section.getBoundingClientRect().top - root.getBoundingClientRect().top : -1;
         if (top >= 0 && top <= root.clientHeight - 80) return;
-        return chase(root, () => ({ y: yOf(root, section, FILE_TOP), final: true }));
+        return chase(root, () => {
+          const s = sectionOf();
+          return s && { y: yOf(root, s, FILE_TOP), final: true };
+        });
       }
-      const cellAt = () => section.querySelector(`[data-side="${m.side}"][data-line="${m.line}"]`);
+      const cellAt = () => sectionOf()?.querySelector(`[data-side="${m.side}"][data-line="${m.line}"]`);
       const cell = cellAt();
       if (cell && inView(root, cell)) return;
       setReveal({ path: m.path, line: m.line });
@@ -903,11 +945,13 @@ export default function App() {
         needFile(m.path);
       }
       chase(root, () => {
+        const s = sectionOf();
+        if (!s) return null;
         const c = cellAt();
-        return c ? { y: yOf(root, c, root.clientHeight / 3), final: true } : { y: yOf(root, section, FILE_TOP), final: false };
+        return c ? { y: yOf(root, c, root.clientHeight / 3), final: true } : { y: yOf(root, s, FILE_TOP), final: false };
       });
     },
-    [needFile],
+    [needFile, oneFile],
   );
 
   // nearestMatch is the first match at or after the line at the top of the view.
@@ -1098,6 +1142,21 @@ export default function App() {
     },
     [setFolded, loadViewed],
   );
+
+  // One file at a time, a file marked viewed gives way to the next still to
+  // view, coming round to those skipped earlier.
+  const viewAndNext = useCallback(
+    (path) => {
+      const was = viewedRef.current.has(path);
+      toggleViewed(path);
+      if (was) return;
+      const i = files.findIndex((f) => f.path === path);
+      const next = [...files.slice(i + 1), ...files.slice(0, i)].find((f) => !viewedRef.current.has(f.path));
+      if (next) jumpToFile(next.path);
+    },
+    [files, toggleViewed, jumpToFile],
+  );
+  const onToggleViewed = oneFile ? viewAndNext : toggleViewed;
 
   const resetReview = useCallback(async () => {
     const n = threads.length;
@@ -2026,7 +2085,7 @@ export default function App() {
   // is rebuilt whenever the viewport height changes.
   useEffect(() => {
     const root = scrollRef.current;
-    if (!root || files.length === 0) return;
+    if (!root || files.length === 0 || oneFile) return;
 
     let io = null;
     const inBand = new Set();
@@ -2060,7 +2119,7 @@ export default function App() {
       ro.disconnect();
       io?.disconnect();
     };
-  }, [files.length]);
+  }, [files.length, oneFile]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -2105,7 +2164,7 @@ export default function App() {
       // starts from the open file, which need not be one of them.
       const stepFile = (dir) => {
         if (!code) {
-          const i = files.findIndex((f) => f.path === activePath);
+          const i = files.findIndex((f) => f.path === currentPath);
           const next = dir > 0 ? Math.min(files.length - 1, i + 1) : Math.max(0, i - 1);
           if (files[next]) jumpToFile(files[next].path);
           return;
@@ -2145,9 +2204,12 @@ export default function App() {
           // Shift makes it a whole file. Read off shiftKey rather than the
           // letter's case, which caps lock flips.
           if (e.shiftKey) stepFile(dir);
-          else stepChange(code ? codeRef.current : scrollRef.current, dir, needFile);
+          else if (!stepChange(code ? codeRef.current : scrollRef.current, dir, needFile) && oneFile && !code) stepFile(dir);
           break;
         }
+        case "o":
+          if (!code) setOneFile(!oneFile);
+          break;
         case "c":
           e.preventDefault();
           startCommentAtCursor();
@@ -2161,13 +2223,13 @@ export default function App() {
           if (code) break; // Code mode is already the whole file
           // The file under the pointer, if it is over a line; else the one being read.
           const cell = scrollRef.current?.querySelector("[data-line][data-side]:hover");
-          const path = cell?.closest("section.file")?.dataset.path || activePath;
+          const path = cell?.closest("section.file")?.dataset.path || currentPath;
           if (path) viewFile(path);
           break;
         }
         case "v":
           // Viewed is a mark on the diff; Code mode reads files, it does not review them.
-          if (!code && activePath) toggleViewed(activePath);
+          if (!code && currentPath) onToggleViewed(currentPath);
           break;
         case "u":
           setView(view === "split" ? "unified" : "split");
@@ -2186,7 +2248,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
-    files, activePath, view, wrap, jumpToFile, toggleViewed, setView, setWrap,
+    files, currentPath, oneFile, setOneFile, view, wrap, jumpToFile, onToggleViewed, setView, setWrap,
     loadDiff, loadThreads, startCommentAtCursor, attachHere, openOverlay, openSearch, closeOverlay, closeFind, needFile, viewFile,
     mode, modes, codePath, openCode, stepCode, switchMode,
   ]);
@@ -2226,7 +2288,7 @@ export default function App() {
           )}
         </div>
       )}
-      {files.map((entry) => (
+      {(oneFile ? files.filter((f) => f.path === shownPath) : files).map((entry) => (
         <FileSection
           key={entry.path}
           entry={entry}
@@ -2239,7 +2301,7 @@ export default function App() {
           collapsed={collapsed.has(entry.path)}
           onToggleCollapse={toggleCollapse}
           viewed={viewed.has(entry.path)}
-          onToggleViewed={toggleViewed}
+          onToggleViewed={onToggleViewed}
           composing={mode === "diff" && composing?.path === entry.path ? composing : null}
           setComposing={setComposing}
           onComment={createComment}
@@ -2258,6 +2320,7 @@ export default function App() {
           foundAt={mode === "diff" && findCur?.path === entry.path ? findCur : null}
         />
       ))}
+      {oneFile && files.length > 1 && <FilePager files={files} path={shownPath} onGo={jumpToFile} />}
     </>
   );
 
@@ -2542,6 +2605,8 @@ export default function App() {
           onContext={setContextLines}
           wrap={wrap}
           onWrap={setWrap}
+          oneFile={oneFile}
+          onOneFile={setOneFile}
           phone={phoneApp}
           phoneApp={phoneApp}
           notices={desktopNotices}
@@ -2693,7 +2758,7 @@ export default function App() {
           files={mode === "code" ? explorer : files}
           onOpenIgnored={listIgnored}
           threads={threads}
-          activePath={mode === "code" ? codePath : activePath}
+          activePath={mode === "code" ? codePath : currentPath}
           viewed={viewed}
           onSelect={mode === "code" ? openCode : jumpToFile}
           generatedCount={generatedCount}
@@ -2706,6 +2771,8 @@ export default function App() {
           filtersPaused={filtersPaused}
           onPauseFilters={setFiltersPaused}
           onReset={resetReview}
+          oneFile={oneFile}
+          onOneFile={phoneApp ? null : setOneFile}
           agent={{
             sessions: agent.sessions,
             available: agent.available || !!agent.codex?.available,
@@ -2810,6 +2877,28 @@ const FileSection = memo(function FileSection({ entry, state, onNeed, ...rest })
   );
 });
 
+// FilePager is the way on from the one file shown, named so the next one is
+// known before it is opened.
+function FilePager({ files, path, onGo }) {
+  const i = files.findIndex((f) => f.path === path);
+  const side = (f, dir) => (
+    <button className={cx("ghost", dir)} disabled={!f} title={f?.path} onClick={() => onGo(f.path)}>
+      {dir === "prev" && <IconBack size={13} />}
+      {f && <span className="file-pager-name">{splitPath(f.path)[1]}</span>}
+      {dir === "next" && <IconForward size={13} />}
+    </button>
+  );
+  return (
+    <nav className="file-pager">
+      {side(files[i - 1], "prev")}
+      <span className="count">
+        {i + 1} of {files.length}
+      </span>
+      {side(files[i + 1], "next")}
+    </nav>
+  );
+}
+
 // A diff's changed rows, and Code mode's marked ones.
 const CHANGED = ".row:has(> .cell.add, > .cell.del, > .cell.mk)";
 const UNRENDERED = ".block[data-changes]:empty, section.file[data-pending]";
@@ -2819,9 +2908,10 @@ const UNRENDERED = ".block[data-changes]:empty, section.file[data-pending]";
 // context above. The reader is taken to be at that line - where a step lands -
 // so each press moves on from the change the last one brought there. (It once
 // measured from one place and landed at another, so `n` kept finding the change
-// it had just shown and never moved.)
+// it had just shown and never moved.) It is false when there is no change left
+// that way.
 function stepChange(root, dir, need) {
-  if (!root) return;
+  if (!root) return true;
   const lead = FILE_INSET + (root.querySelector(".file-head")?.offsetHeight ?? 40) + 60;
   const line = () => root.getBoundingClientRect().top + lead;
   // Every place a step can land, in page order: the first row of each rendered
@@ -2843,14 +2933,17 @@ function stepChange(root, dir, need) {
       : dir > 0
         ? stops.find((el) => el.getBoundingClientRect().top > y + 3)
         : stops.findLast((el) => el.getBoundingClientRect().bottom < y - 3);
-  if (!stop) return;
+  if (!stop) return false;
 
   const aim = (row) => ({ y: root.scrollTop + row.getBoundingClientRect().top - line(), final: true });
   const go = (row) => {
     glide.row = row;
     glideTo(root, () => row.isConnected && aim(row));
   };
-  if (stop.matches(CHANGED)) return go(stop);
+  if (stop.matches(CHANGED)) {
+    go(stop);
+    return true;
+  }
 
   // Head for the unrendered place, and switch to its change the moment the
   // rows exist; the glide bends onto it without slowing. Fetching the file now
@@ -2871,6 +2964,7 @@ function stepChange(root, dir, need) {
     const r = stop.getBoundingClientRect();
     return { y: root.scrollTop + (dir > 0 ? r.top : r.bottom) - line(), final: false };
   });
+  return true;
 }
 
 // glideTo carries the diff towards whatever `aim` returns, reading it afresh

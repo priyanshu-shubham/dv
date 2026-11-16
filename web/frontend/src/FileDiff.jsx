@@ -341,6 +341,14 @@ function chunk(blocks, split) {
   return out;
 }
 
+// unshownBody is what DiffBody would publish for a file not on the page, as
+// it will lay out once shown: nothing expanded, its threads kept in view.
+export const unshownBody = (fd, view, contextLines, threads) => ({
+  blocks: chunk(buildBlocks(fd, contextLines, {}, threads.map((t) => ({ side: t.side, start: t.startLine, end: t.endLine }))), view === "split"),
+  view,
+  fd,
+});
+
 // DiffBody renders a file's rows. view "code" is Code mode: just `side` of the
 // file, whole, with changes marked in the gutter. drawAll keeps every row
 // mounted, for a request's preview, which the browser's own find searches. `unknown` is a diff

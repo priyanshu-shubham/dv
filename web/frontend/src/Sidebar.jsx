@@ -7,7 +7,7 @@ import { SessionList } from "./Agent.jsx";
 import { TerminalList } from "./Terminal.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
-  IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFilter, IconX,
+  IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFile, IconFilter, IconX,
 } from "./icons.jsx";
 
 const MIN_WIDTH = 180;
@@ -22,7 +22,7 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 export default function Sidebar({
   meta, pr, right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
-  filtersPaused, onPauseFilters, onReset, agent, terminal, onWidth, modes, onMode, attached, uncommitted, onFinishWorktree, onLog,
+  filtersPaused, onPauseFilters, onReset, oneFile, onOneFile, agent, terminal, onWidth, modes, onMode, attached, uncommitted, onFinishWorktree, onLog,
 }) {
   const code = mode === "code";
   const [filter, setFilter] = useState("");
@@ -215,6 +215,16 @@ export default function Sidebar({
                 onClick={() => setPathFilterOpen((o) => !o)}
               >
                 <IconFilter size={13} />
+              </button>
+            )}
+            {!code && onOneFile && (
+              <button
+                className={cx("ghost", oneFile && "on")}
+                aria-pressed={oneFile}
+                title={oneFile ? "Show every file in one scroll (o)" : "Review one file at a time (o)"}
+                onClick={() => onOneFile(!oneFile)}
+              >
+                <IconFile size={13} />
               </button>
             )}
             {allDirs.length > 0 && (

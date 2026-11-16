@@ -1030,7 +1030,7 @@ function LookPicture({ theme, accent, glass }) {
 // keys to toggle the diff with (keys false). Its tabs are its sections, and
 // actions, a folder page's, a tab of their own; tab is the one it opens on.
 export function SettingsOverlay({
-  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, phone, phoneApp, notices, onNotices, hooks, onHooks, terminal, settings, onChange, onClose, keys = true,
+  theme, onTheme, view, onView, contextLines, onContext, wrap, onWrap, oneFile, onOneFile, phone, phoneApp, notices, onNotices, hooks, onHooks, terminal, settings, onChange, onClose, keys = true,
   working = 0,
   update,
   actions,
@@ -1091,6 +1091,15 @@ export function SettingsOverlay({
             {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
             <Setting label="Context around each change" value={contextLines} onPick={onContext} choices={CONTEXT_LINES.map((n) => [n, n ? String(n) : "None"])} />
             <Setting label="Wrap long lines" note={phone || !keys ? "" : "w toggles it"} value={wrap} onPick={onWrap} choices={OFF_ON} />
+            {!phone && onOneFile && (
+              <Setting
+                label="One file at a time"
+                note={`Show the files one by one, marking one viewed moving on to the next${keys ? "; o toggles it" : ""}`}
+                value={oneFile}
+                onPick={onOneFile}
+                choices={OFF_ON}
+              />
+            )}
           </>
         )}
         {tab === "notifications" && (
@@ -2104,12 +2113,13 @@ export function HelpOverlay({ onClose }) {
       [
         ["/", "Filter the file list"],
         ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
-        ["n / p", "Next / previous change"],
+        ["n / p", "Next / previous change (one file at a time, on into the next file)"],
         ["f", "View the whole file at the focused line"],
         ["c", "Comment on the focused line"],
         ["a", "Ask about the focused line, or the file, in the Ask panel"],
         ["Shift+A", "Add the focused line, or the file, to your next message to Claude or Codex"],
-        ["v", "Mark the current file viewed, in Diff"],
+        ["v", "Mark the current file viewed, in Diff (one file at a time, then on to the next)"],
+        ["o", "One file at a time, or every file in one scroll, in Diff"],
         ["u", "Toggle split / unified"],
         ["w", "Toggle line wrapping"],
         ["r", "Reload the diff"],

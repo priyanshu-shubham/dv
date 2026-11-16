@@ -2090,6 +2090,37 @@ button.headref:hover {
   margin-bottom: 12px;
 }
 
+/* One file at a time, the way on to its neighbours. Each side takes half, so
+   the count stays centred whatever the names' lengths. */
+.file-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 12px 0;
+}
+
+.file-pager > button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.file-pager > .prev {
+  justify-content: flex-start;
+}
+
+.file-pager > .next {
+  justify-content: flex-end;
+}
+
+.file-pager > button:disabled {
+  visibility: hidden;
+}
+
+.file-pager-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .content {
   overflow-y: auto;
   overscroll-behavior-x: contain;
