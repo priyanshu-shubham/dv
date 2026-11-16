@@ -240,31 +240,142 @@ func (r *Repo) Branches() []string {
 	return names
 }
 
-// RecentCommits lists the last n commits on HEAD for the scope picker.
 type Commit struct {
 	SHA     string `json:"sha"`
 	Short   string `json:"short"`
 	Subject string `json:"subject"`
+	Body    string `json:"body,omitempty"` // the message after its subject
 	Author  string `json:"author"`
 	When    string `json:"when"`
 }
 
+// RecentCommits lists the last n commits on HEAD for the scope picker.
 func (r *Repo) RecentCommits(n int) []Commit {
+	return r.Log("HEAD", n)
+}
+
+// Log lists up to n commits of a revision range, newest first.
+func (r *Repo) Log(rng string, n int) []Commit {
 	if !r.IsGit() {
 		return nil
 	}
-	out, err := r.run("log", fmt.Sprintf("-%d", n), "--pretty=%H%x1f%h%x1f%s%x1f%an%x1f%ar")
+	out, err := r.run("log", fmt.Sprintf("-%d", n), "--pretty="+logFormat, rng, "--")
 	if err != nil {
 		return nil
 	}
+	return parseLog(out)
+}
+
+// logFormat is what parseLog reads. Records end in \x1e, as a body has
+// newlines of its own.
+const logFormat = "%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%b%x1e"
+
+func parseLog(out string) []Commit {
 	var cs []Commit
-	for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		f := strings.Split(l, "\x1f")
-		if len(f) == 5 {
-			cs = append(cs, Commit{SHA: f[0], Short: f[1], Subject: f[2], Author: f[3], When: f[4]})
+	for _, rec := range strings.Split(out, "\x1e") {
+		f := strings.Split(strings.TrimLeft(rec, "\n"), "\x1f")
+		if len(f) == 6 {
+			cs = append(cs, Commit{SHA: f[0], Short: f[1], Subject: f[2], Author: f[3], When: f[4], Body: strings.TrimSpace(f[5])})
 		}
 	}
 	return cs
+}
+
+// LogPage is a page of a branch's history for reading through: n commits of
+// ref after the first skip, newest first, those whose message has q in it
+// when q is given, and whether there are more. ref is checked first, so a
+// name that is not a commit errs rather than being read as an option.
+func (r *Repo) LogPage(ref string, skip, n int, q string) ([]Commit, bool, error) {
+	if !r.IsGit() || !r.hasHead() {
+		return nil, false, nil
+	}
+	if strings.HasPrefix(ref, "-") {
+		return nil, false, fmt.Errorf("unknown revision %q", ref)
+	}
+	if _, err := r.run("rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		return nil, false, fmt.Errorf("unknown revision %q", ref)
+	}
+	args := []string{"log", fmt.Sprintf("--skip=%d", skip), fmt.Sprintf("-%d", n+1), "--pretty=" + logFormat}
+	if q != "" {
+		args = append(args, "--regexp-ignore-case", "--fixed-strings", "--grep="+q)
+	}
+	out, err := r.run(append(args, ref, "--")...)
+	if err != nil {
+		return nil, false, err
+	}
+	cs := parseLog(out)
+	if len(cs) > n {
+		return cs[:n], true, nil
+	}
+	return cs, false, nil
+}
+
+// Missing is which of shas HEAD does not have, of the commits ref has: what
+// reading another branch's history marks as not on this one.
+func (r *Repo) Missing(ref string, shas []string) map[string]bool {
+	missing := map[string]bool{}
+	if len(shas) == 0 {
+		return missing
+	}
+	want := map[string]bool{}
+	for _, s := range shas {
+		want[s] = true
+	}
+	// What HEAD lacks of ref, newest first; the page is among the newest.
+	out, err := r.run("rev-list", "--max-count=5000", "HEAD.."+ref, "--")
+	if err != nil {
+		return missing
+	}
+	for _, s := range strings.Fields(out) {
+		if want[s] {
+			missing[s] = true
+		}
+	}
+	return missing
+}
+
+func (r *Repo) commit(rev string) *Commit {
+	if cs := r.Log(rev, 1); len(cs) == 1 {
+		return &cs[0]
+	}
+	return nil
+}
+
+// BranchCommits lists up to n of the commits this branch adds to what it is
+// measured from, as the "branch" scope measures it, and names that base.
+// Without such commits - on the trunk itself, or with no trunk - it is the
+// last n on HEAD, and base is "".
+func (r *Repo) BranchCommits(n int) (string, []Commit) {
+	if !r.IsGit() || !r.hasHead() {
+		return "", nil
+	}
+	if b, err := r.branchBase(); err == nil {
+		if cs := r.Log(b.mergeBase+"..HEAD", n); len(cs) > 0 {
+			return b.name, cs
+		}
+	}
+	return "", r.RecentCommits(n)
+}
+
+// BranchTip is what a branch's last commit says, and when it was made.
+type BranchTip struct {
+	Subject string `json:"subject"`
+	When    string `json:"when"`
+}
+
+// BranchTips is each local branch's last commit, by branch.
+func (r *Repo) BranchTips() map[string]BranchTip {
+	tips := map[string]BranchTip{}
+	out, err := r.run("for-each-ref", "--format=%(refname:short)%1f%(contents:subject)%1f%(committerdate:relative)", "refs/heads")
+	if err != nil {
+		return tips
+	}
+	for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if f := strings.Split(l, "\x1f"); len(f) == 3 {
+			tips[f[0]] = BranchTip{f[1], f[2]}
+		}
+	}
+	return tips
 }
 
 // TrackedFiles lists every file git knows about plus untracked-but-not-ignored

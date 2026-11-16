@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { boot, slug } from "./boot.js";
-import { IconSearch } from "./icons.jsx";
+import { IconBranch, IconSearch } from "./icons.jsx";
 import { say } from "./Notices.jsx";
 import { markMatches, Modal, usePaletteNav } from "./Overlays.jsx";
 import { cx, isMac, isTyping, LRM, workingLabel } from "./util.js";
@@ -26,6 +26,15 @@ function byRecent(folders) {
   const recent = readRecent();
   const rank = (f) => (f.slug === slug ? -1 : recent.includes(f.slug) ? recent.indexOf(f.slug) : recent.length);
   return folders.sort((a, b) => rank(a) - rank(b) || (Date.parse(b.used) || 0) - (Date.parse(a.used) || 0));
+}
+
+// markSiblings marks the other checkouts of this folder's repository, by the
+// main checkout each is a worktree of.
+function markSiblings(folders) {
+  const repoOf = (f) => f.worktreeOf || f.path;
+  const here = folders.find((f) => f.slug === slug);
+  for (const f of folders) f.sibling = !!here && f !== here && repoOf(f) === repoOf(here);
+  return folders;
 }
 
 const wordStart = (s, i) => i === 0 || /[\s_\-./:]/.test(s[i - 1]) || (/[a-z]/.test(s[i - 1]) && /[A-Z]/.test(s[i]));
@@ -89,7 +98,13 @@ function FolderRow({ hit: { f, name, place }, on, onPick, onHover }) {
     <button className={cx("palette-row", "folder-hit", on && "on", f.slug === slug && "here")} onMouseMove={onHover} onClick={onPick}>
       <span className={cx("session-dot", f.open && "live-dv", f.elsewhere && "live-terminal", f.open?.working && "busy", f.open?.waiting && "asking")} />
       <span className="sym" dangerouslySetInnerHTML={{ __html: markMatches(f.name, name) }} />
-      {state && <span className={cx("why", f.open?.waiting && "session-asking")}>{state}</span>}
+      {f.sibling && f.branch && (
+        <span className="why folder-branch" title="A worktree of this repository">
+          <IconBranch size={11} />
+          {f.branch}
+        </span>
+      )}
+      {state &&<span className={cx("why", f.open?.waiting && "session-asking")}>{state}</span>}
       <span className="spacer" />
       <span className="dim loc" dangerouslySetInnerHTML={{ __html: LRM + markMatches(f.place, place) }} />
     </button>
@@ -119,7 +134,11 @@ function FindFolder({ folders, onClose }) {
         {hits.length === 0 && <div className="empty">No folders match.</div>}
       </div>
       <div className="palette-foot dim">
-        {q.trim() ? `${hits.length} of ${folders.length} folders match` : "Every other folder on the hub, last used first"}
+        {q.trim()
+          ? `${hits.length} of ${folders.length} folders match`
+          : folders.some((f) => f.sibling)
+            ? "This repository's worktrees, then every other folder on the hub, last used first"
+            : "Every other folder on the hub, last used first"}
       </div>
     </Modal>
   );
@@ -192,9 +211,11 @@ export default function FolderSwitcher({ mode }) {
       api.hubFolders().then(
         ({ folders }) => {
           if (run.current !== started) return;
-          const list = byRecent(folders.filter((f) => !f.missing));
+          const list = markSiblings(byRecent(folders.filter((f) => !f.missing)));
           started.list = list.filter((f) => f.open || f.slug === slug);
-          started.all = list.filter((f) => f.slug !== slug);
+          // A worktree's siblings are what it is most often left for.
+          const all = list.filter((f) => f.slug !== slug);
+          started.all = [...all.filter((f) => f.sibling), ...all.filter((f) => !f.sibling)];
           if (started.list.length < 2) {
             cancel();
             if (started.all.length) setFinding(started.all);

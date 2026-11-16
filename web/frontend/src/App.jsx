@@ -1,11 +1,12 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
-import Header, { AUTO, PRESETS, prBase, usePR } from "./Header.jsx";
+import Header, { AUTO, CommitNote, PRESETS, prBase, usePR } from "./Header.jsx";
+import { CommitLog } from "./Commits.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
+import { FilePalette, FileViewer, FinishWorktree, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction, useAskSettings } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
@@ -1343,6 +1344,15 @@ export default function App() {
   const [worktreeOpen, setWorktreeOpen] = useState(false);
   // A worktree starts from a commit; a task has no worktrees at all.
   const newWorktree = boot.base && meta?.git && meta.head?.sha && !meta.task ? () => setWorktreeOpen(true) : null;
+  const [finishOpen, setFinishOpen] = useState(false);
+  // The branch whose commits are being read, "" for this one; null when closed.
+  const [logRef, setLogRef] = useState(null);
+  const openLog = meta?.git && meta.head?.sha ? (ref = "") => setLogRef(ref) : null;
+  const showCommit = (sha) => {
+    setScope({ kind: "custom", rev: sha });
+    switchMode("diff");
+  };
+  const finishWorktree = boot.base && meta?.git && meta.repoRoot !== meta.root && !meta.task ? () => setFinishOpen(true) : null;
   // endTask closes this page's task, every session in it stopping, asking
   // first if that would lose work.
   const endTask = useCallback(async () => {
@@ -1410,6 +1420,8 @@ export default function App() {
       },
     },
     newWorktree && { id: "new-worktree", name: "New worktree", note: "A session in a new worktree of this repo", run: newWorktree },
+    finishWorktree && { id: "finish-worktree", name: "Finish worktree", note: "Merge its branch, then delete this worktree", run: finishWorktree },
+    openLog && { id: "commits", name: "Recent commits", note: "Read any branch's commits, and show one in the Diff", run: () => openLog() },
     // A task's folder is the hub's to make and hold, as the hub's button does.
     boot.base && {
       id: "new-task",
@@ -2196,6 +2208,7 @@ export default function App() {
     <>
       {mode === "diff" && findBar}
       {error && <div className="banner error">{error}</div>}
+      {diff?.scope?.commit && !error && <CommitNote key={diff.scope.commit.sha} commit={diff.scope.commit} />}
       {meta && !folder && diff && files.length === 0 && !error && (
         <div className="empty-state">
           <h2>Nothing to review</h2>
@@ -2554,6 +2567,8 @@ export default function App() {
       <AttachTarget.Provider value={attachTarget}>
         <Notices phone />
         {worktreeOpen && <WorktreeSession repo={meta.repo} from={meta.head?.branch || meta.head?.sha || "HEAD"} onClose={() => setWorktreeOpen(false)} />}
+        {finishOpen && <FinishWorktree meta={meta} pr={pr} onClose={() => setFinishOpen(false)} />}
+        {logRef !== null && <CommitLog meta={meta} initialRef={logRef} onPick={showCommit} onClose={() => setLogRef(null)} />}
         <Suspense fallback={null}>
           <Phone
             app={{
@@ -2628,6 +2643,8 @@ export default function App() {
     {/* Out of the page's grid, whose rows are the header's and the rest's. */}
     <Notices />
     {worktreeOpen && <WorktreeSession repo={meta.repo} from={meta.head?.branch || meta.head?.sha || "HEAD"} onClose={() => setWorktreeOpen(false)} />}
+    {finishOpen && <FinishWorktree meta={meta} pr={pr} onClose={() => setFinishOpen(false)} />}
+    {logRef !== null && <CommitLog meta={meta} initialRef={logRef} onPick={showCommit} onClose={() => setLogRef(null)} />}
     <div className={cx("app", offline && "offline")}>
       <Header
         meta={meta}
@@ -2653,6 +2670,8 @@ export default function App() {
         padOn={padShown}
         onPad={() => (padShown ? leavePad() : openPad())}
         onCloseTask={meta?.task ? endTask : null}
+        onFinishWorktree={finishWorktree}
+        onLog={openLog}
         settings={settings}
       />
 
@@ -2663,6 +2682,8 @@ export default function App() {
         <Sidebar
           meta={meta}
           pr={pr}
+          onFinishWorktree={finishWorktree}
+          onLog={openLog}
           right={sideRight}
           mode={mode}
           modes={modes}
@@ -2694,6 +2715,7 @@ export default function App() {
             added: attachedLive,
             asking: askingSessions,
             elsewhere,
+            repoRoot: meta?.repoRoot,
             onSelect: selectSession,
             onNew: startSession,
             onNewWorktree: newWorktree,

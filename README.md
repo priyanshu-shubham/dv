@@ -118,6 +118,13 @@ folder's page or on the hub's own, named by its folder.
 - A Claude Code session in a cloned repository uses that repository's own
   settings and hooks, so clone what you trust.
 - Worktree hooks are kept in the hub, never committed to the repository.
+- A repository's worktrees know each other. The branch menu lists the other
+  worktrees and opens one's page, adding it to the hub if need be; Go to
+  folder lists them first, by branch; and the Agent view shows their sessions
+  under Worktrees, apart from other folders'. **Finish…** in a worktree's
+  branch menu merges its branch into what the main checkout has (a conflict
+  is undone), runs the teardown hook, deletes the worktree and, if asked, its
+  merged branch, listing the commits it would merge.
 - **Task** starts a one-off task in a new folder of its own - a fresh git
   repository in dv's data folder (`~/.local/share/dv/tasks` on Linux) - and
   opens it on the Agent view. Closing the task stops its sessions and deletes

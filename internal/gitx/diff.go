@@ -42,6 +42,8 @@ type Scope struct {
 	// the working tree.
 	OldAt string `json:"oldAt,omitempty"`
 	NewAt string `json:"newAt,omitempty"`
+	// Commit is the one commit shown against its parent, with its message.
+	Commit *Commit `json:"commit,omitempty"`
 
 	old, new         side
 	includeUntracked bool
@@ -117,38 +119,23 @@ func (r *Repo) resolve(kind, rev string) (*Scope, error) {
 		s.new = side{rev: "HEAD"}
 		s.Label = "Last commit"
 		s.Desc = "HEAD vs its parent"
+		s.Commit = r.commit("HEAD")
 
 	case "branch":
 		if !r.hasHead() {
 			return nil, fmt.Errorf("this repository has no commits yet")
 		}
-		base, from := r.DefaultBranch(), ""
-		// With a pull request, from where GitHub counts it: the trunk here may
-		// be ahead of its base, or behind, or not be its base at all.
-		// Its baseSha is the base's tip when it was last pushed to, so the
-		// remote's own branch, as last fetched, goes first.
-		pr := r.knownPR()
-		if pr != nil {
-			if name := r.remoteNamed(pr.URL); name != "" && r.hasCommit("refs/remotes/"+name+"/"+pr.Base) {
-				base, from = pr.Base, "refs/remotes/"+name+"/"+pr.Base
-			} else if r.hasCommit(pr.BaseSHA) {
-				base, from = pr.Base, pr.BaseSHA
-			}
-		}
-		if base == "" {
-			return nil, fmt.Errorf("no default branch found; pick a custom range instead")
-		}
-		mb, err := r.run("merge-base", cmp.Or(from, base), "HEAD")
+		b, err := r.branchBase()
 		if err != nil {
-			return nil, fmt.Errorf("no merge base with %s: %w", base, err)
+			return nil, err
 		}
-		s.old = side{rev: strings.TrimSpace(mb)}
+		s.old = side{rev: b.mergeBase}
 		s.new = side{worktree: true}
 		s.includeUntracked = true
-		s.Label = base + "...working tree"
-		s.Desc = "Everything on this branch since it diverged from " + base + ", plus uncommitted work"
-		if from != "" {
-			s.Desc = fmt.Sprintf("Everything on this branch since it left %s as #%d has it, plus uncommitted work", base, pr.Number)
+		s.Label = b.name + "...working tree"
+		s.Desc = "Everything on this branch since it diverged from " + b.name + ", plus uncommitted work"
+		if b.pr != nil {
+			s.Desc = fmt.Sprintf("Everything on this branch since it left %s as #%d has it, plus uncommitted work", b.name, b.pr.Number)
 		}
 
 	case "pr":
@@ -177,6 +164,42 @@ func (r *Repo) resolve(kind, rev string) (*Scope, error) {
 		return nil, fmt.Errorf("unknown scope %q", kind)
 	}
 	return s, nil
+}
+
+// base is what this branch is measured from: the trunk, or the base of its
+// pull request, and where HEAD left it. pr is set when the pull request's
+// base was used.
+type base struct {
+	name, mergeBase string
+	pr              *PR
+}
+
+func (r *Repo) branchBase() (base, error) {
+	name, from := r.DefaultBranch(), ""
+	// With a pull request, from where GitHub counts it: the trunk here may
+	// be ahead of its base, or behind, or not be its base at all.
+	// Its baseSha is the base's tip when it was last pushed to, so the
+	// remote's own branch, as last fetched, goes first.
+	pr := r.knownPR()
+	if pr != nil {
+		if remote := r.remoteNamed(pr.URL); remote != "" && r.hasCommit("refs/remotes/"+remote+"/"+pr.Base) {
+			name, from = pr.Base, "refs/remotes/"+remote+"/"+pr.Base
+		} else if r.hasCommit(pr.BaseSHA) {
+			name, from = pr.Base, pr.BaseSHA
+		}
+	}
+	if name == "" {
+		return base{}, fmt.Errorf("no default branch found; pick a custom range instead")
+	}
+	mb, err := r.run("merge-base", cmp.Or(from, name), "HEAD")
+	if err != nil {
+		return base{}, fmt.Errorf("no merge base with %s: %w", name, err)
+	}
+	b := base{name: name, mergeBase: strings.TrimSpace(mb)}
+	if from != "" {
+		b.pr = pr
+	}
+	return b, nil
 }
 
 // autoOrder is what "auto" tries, in order. The chain matches how a review
@@ -290,6 +313,9 @@ func (r *Repo) resolveCustom(s *Scope) (*Scope, error) {
 		s.new = side{rev: rev}
 		s.Label = spec
 		s.Desc = "That commit against its parent"
+		if s.Commit = r.commit(rev); s.Commit != nil && spec == rev {
+			s.Label = s.Commit.Short
+		}
 	}
 	return s, nil
 }

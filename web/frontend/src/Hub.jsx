@@ -204,8 +204,9 @@ export default function Hub() {
     },
     retry: (j) => {
       if (j.retry === "setup") return act(api.hubSetup(j.slug));
-      if (j.retry === "remove") return act(api.hubDeleteWorktree(j.slug, { skipTeardown: true, force: j.force }));
-      if (confirm(`Delete ${j.place} anyway? Its uncommitted changes are lost for good. The branch stays.`)) act(api.hubDeleteWorktree(j.slug, { force: true }));
+      if (j.retry === "remove") return act(api.hubDeleteWorktree(j.slug, { skipTeardown: true, force: j.force, deleteBranch: j.deleteBranch }));
+      const branch = j.deleteBranch ? "The branch goes too, if merged." : "The branch stays.";
+      if (confirm(`Delete ${j.place} anyway? Its uncommitted changes are lost for good. ${branch}`)) act(api.hubDeleteWorktree(j.slug, { force: true, deleteBranch: j.deleteBranch }));
     },
     dismiss: (j) => act(api.hubDismissJob(j.id)),
     error: setError,

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"git":           s.repo.IsGit(),
 		"root":          s.repo.Root,
 		"place":         HomeRelative(s.repo.Root),
+		"repoRoot":      cmp.Or(s.repo.MainRoot(), s.repo.Root), // the main checkout, which every worktree shares
 		"head":          s.repo.Head(),
 		"defaultBranch": s.repo.DefaultBranch(),
 		"remote":        s.repo.Origin() != nil,
@@ -467,9 +469,10 @@ func (s *Server) switchBlocker() string {
 const FetchEvery = 30 * time.Second
 
 // handleCanSwitch is whether a branch can be checked out or made now: {
-// blocked, createBlocked, branches, remote, elsewhere, fetchError }, with the
-// remotes' branches no local one is named for and the branches other
-// worktrees have. With ?fetch the remotes are fetched first.
+// blocked, createBlocked, branches, remote, elsewhere, worktrees, fetchError },
+// with the remotes' branches no local one is named for, the branches other
+// worktrees have, and those worktrees. With ?fetch the remotes are fetched
+// first.
 func (s *Server) handleCanSwitch(w http.ResponseWriter, r *http.Request) {
 	var fetchErr string
 	if r.URL.Query().Has("fetch") {
@@ -477,7 +480,17 @@ func (s *Server) handleCanSwitch(w http.ResponseWriter, r *http.Request) {
 			fetchErr = err.Error()
 		}
 	}
+	type worktree struct {
+		gitx.Worktree
+		Place string `json:"place"`
+	}
+	worktrees := []worktree{}
+	for _, wt := range s.repo.OtherWorktrees() {
+		worktrees = append(worktrees, worktree{wt, HomeRelative(wt.Path)})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"worktrees":     worktrees,
+		"tips":          s.repo.BranchTips(),
 		"blocked":       s.switchBlocker(),
 		"createBlocked": s.repo.CreateBlocker(),
 		"branches":      s.repo.Branches(),
@@ -485,6 +498,45 @@ func (s *Server) handleCanSwitch(w http.ResponseWriter, r *http.Request) {
 		"elsewhere":     s.repo.Elsewhere(),
 		"fetchError":    fetchErr,
 	})
+}
+
+// maxCommits is how many of a branch's commits the scope menu lists.
+const maxCommits = 50
+
+// handleCommits is what the scope menu offers to show one at a time: { base,
+// commits }, the commits this branch adds since base, or the latest on HEAD
+// with base "" when it adds none.
+func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
+	base, commits := s.repo.BranchCommits(maxCommits)
+	writeJSON(w, http.StatusOK, map[string]any{"base": base, "commits": append([]gitx.Commit{}, commits...)})
+}
+
+// logPage is how many commits the commit browser loads at a time.
+const logPage = 100
+
+// handleHistory is a page of a branch's history for the commit browser:
+// ?branch=&skip=&q= gives { commits, more, missing }, branch "" being HEAD, q
+// searching the messages, and missing the commits HEAD does not have.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ref := cmp.Or(q.Get("branch"), "HEAD")
+	skip, _ := strconv.Atoi(q.Get("skip"))
+	commits, more, err := s.repo.LogPage(ref, max(skip, 0), logPage, strings.TrimSpace(q.Get("q")))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	missing := []string{}
+	if ref != "HEAD" {
+		shas := make([]string, len(commits))
+		for i, c := range commits {
+			shas[i] = c.SHA
+		}
+		for sha := range s.repo.Missing(ref, shas) {
+			missing = append(missing, sha)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commits": append([]gitx.Commit{}, commits...), "more": more, "missing": missing})
 }
 
 // handleSwitch checks out { branch }, when nothing would be lost to it, or

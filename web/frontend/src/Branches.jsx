@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import { boot } from "./boot.js";
 import { cx } from "./util.js";
 import { Modal, usePaletteNav } from "./Overlays.jsx";
 import { IconBranch, IconPlus } from "./icons.jsx";
@@ -31,18 +32,21 @@ export function useBranchChoices(open, head) {
   return can;
 }
 
-// branchRows is what the picker offers for q: the other branches matching it,
-// then the remotes' ones no local branch is named for, and a row making q
-// when it names none of them - not even a remote's, which it would only
-// shadow with a branch of nothing in common.
+// branchRows is what the picker offers for q: the repository's other
+// worktrees, which a hub opens, matching it by branch or place; the other
+// branches; then the remotes' ones no local branch is named for, and a row
+// making q when it names none of them - not even a remote's, which it would
+// only shadow with a branch of nothing in common.
 export function branchRows(can, fallback, current, q, max) {
   const others = (can?.branches || fallback || []).filter((b) => b !== current);
   const t = q.trim();
   const has = (s) => s.toLowerCase().includes(t.toLowerCase());
-  const rows = others
-    .filter(has)
+  const rows = (can?.worktrees || [])
+    .filter((w) => has(w.branch || w.sha) || has(w.place))
     .slice(0, max)
-    .map((b) => ({ branch: b, off: !can || !!can.blocked || !!can.elsewhere?.includes(b) }));
+    .map((w) => ({ branch: w.branch || w.sha, worktree: w, off: !boot.base }));
+  const away = new Set(can?.elsewhere);
+  for (const b of others.filter((b) => !away.has(b) && has(b)).slice(0, max - rows.length)) rows.push({ branch: b, off: !can || !!can.blocked });
   const remote = can?.remote || [];
   for (const r of remote.filter((r) => has(r.ref)).slice(0, max - rows.length)) {
     rows.push({ branch: r.branch, track: r.ref, off: !!can.blocked });
@@ -52,12 +56,41 @@ export function branchRows(can, fallback, current, q, max) {
   return rows;
 }
 
-export const rowLabel = (row) => (row.create ? `Create ${row.branch}` : row.track || row.branch);
+const rowLabel = (row) => (row.create ? `Create ${row.branch}` : row.track || row.branch);
 
-export function rowHint(row, can) {
+export function rowHint(row) {
   if (row.create) return "A new branch at HEAD";
   if (row.track) return `A new branch ${row.branch}, tracking it`;
-  return can?.elsewhere?.includes(row.branch) ? "Checked out in another worktree" : "";
+  if (!row.worktree) return "";
+  const what = row.worktree.branch ? "" : "Detached, ";
+  return boot.base ? `${what}in ${row.worktree.place}: open its page` : `${what}checked out in ${row.worktree.place}`;
+}
+
+// BranchText is a row's branch, over what its last commit says and when, so a
+// branch is known by its work as well as its name.
+export function BranchText({ row, can }) {
+  const tip = !row.track && can?.tips?.[row.branch];
+  if (!tip) return <span className="branch-name">{rowLabel(row)}</span>;
+  return (
+    <span className="branch-text">
+      <span className="branch-name">{rowLabel(row)}</span>
+      <span className="branch-sub branch-tip" title={tip.subject}>
+        <span className="branch-tip-subject">{tip.subject}</span>
+        <span className="branch-tip-when">· {tip.when}</span>
+      </span>
+    </span>
+  );
+}
+
+// rowTag is the word at a row's end saying what kind of row it is.
+export const rowTag = (row) => (row.create ? "from HEAD" : row.track ? "remote" : row.worktree ? row.worktree.place : "");
+
+// openWorktree goes to another worktree's page, putting it on the hub first
+// when it is not yet.
+export async function openWorktree(w) {
+  const { folders } = await api.hubFolders();
+  const f = folders.find((f) => f.path === w.path) || (await api.hubAdd(w.path));
+  location.href = `/${f.slug}/`;
 }
 
 export function switchDone(row) {
@@ -82,12 +115,13 @@ export function blockedNote(can) {
 // palette, with Enter switching to the selected branch or making the typed one.
 export function BranchPalette({ meta, onDone, onClose }) {
   const [q, setQ] = useState("");
-  const [state, setState] = useState(null); // { busy } | { error }
+  const [state, setState] = useState(null); // { busy: what it does } | { error }
   const can = useBranchChoices(true, meta?.head);
   const rows = branchRows(can, meta?.branches, meta?.head?.branch, q, 50);
   const pick = (row) => {
     if (row.off || state?.busy) return;
-    setState({ busy: true });
+    setState({ busy: row.worktree ? "Opening…" : "Switching…" });
+    if (row.worktree) return openWorktree(row.worktree).catch((e) => setState({ error: e.message }));
     api.switchTo(row).then(() => onDone(switchDone(row)), (e) => setState({ error: e.message }));
   };
   const { sel, setSel, onKey, listRef } = usePaletteNav(rows.length, (i) => pick(rows[i]));
@@ -111,9 +145,9 @@ export function BranchPalette({ meta, onDone, onClose }) {
       <div className="palette-list" ref={listRef}>
         {rows.map((r, i) => (
           <button
-            key={(r.create ? "+" : "") + (r.track || r.branch)}
+            key={(r.create ? "+" : r.worktree ? "@" : "") + (r.track || r.branch)}
             className={cx("palette-row", "branch-pick", i === sel && "on", r.off && "unready", r.create && "create")}
-            title={rowHint(r, can)}
+            title={rowHint(r)}
             onMouseMove={() => setSel(i)}
             onClick={() => pick(r)}
           >
@@ -123,15 +157,15 @@ export function BranchPalette({ meta, onDone, onClose }) {
                 Create <b>{r.branch}</b>
               </span>
             ) : (
-              <span className="branch-name">{rowLabel(r)}</span>
+              <BranchText row={r} can={can} />
             )}
-            {(r.create || r.track || can?.elsewhere?.includes(r.branch)) && <span className="branch-hint">{r.create ? "from HEAD" : r.track ? "remote" : "in a worktree"}</span>}
+            {rowTag(r) && <span className={cx("branch-hint", r.worktree && "place")}>{rowTag(r)}</span>}
           </button>
         ))}
         {rows.length === 0 && <div className="empty">{q.trim() ? "That branch is checked out." : "No other branches yet. Type a name to make one."}</div>}
       </div>
       {(state || note) && (
-        <div className={cx("palette-foot", "dim", state?.error && "del")}>{state?.busy ? "Switching…" : state?.error || note}</div>
+        <div className={cx("palette-foot", "dim", state?.error && "del")}>{state?.busy || state?.error || note}</div>
       )}
     </Modal>
   );

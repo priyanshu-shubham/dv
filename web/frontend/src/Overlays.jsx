@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { commentsOn, NO_EXPAND, noop } from "./CodeView.jsx";
-import { CONTEXT_LINES } from "./Header.jsx";
+import { CONTEXT_LINES, PRChip } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
@@ -1378,6 +1378,160 @@ export function WorktreeSession({ repo, from, onClose }) {
         <span className="hub-picker-note">{note}</span>
         <button className="primary" disabled={!b || (!!job && !error)} onClick={create}>
           {job && !error ? "Creating…" : "Create"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+// FinishCommits lists what merging would bring in, newest first.
+function FinishCommits({ info }) {
+  const rest = info.ahead - info.commits.length;
+  return (
+    <ul className="finish-commits">
+      {info.commits.map((c) => (
+        <li key={c.sha} title={c.body ? `${c.subject}\n\n${c.body}` : c.subject}>
+          <span className="finish-commit-subject">{c.subject}</span>
+          <span className="finish-commit-meta">
+            <span className="mono">{c.short}</span> · {c.when}
+          </span>
+        </li>
+      ))}
+      {rest > 0 && <li className="finish-commit-meta">and {plural(rest, "more commit")}</li>}
+    </ul>
+  );
+}
+
+// FinishWorktree closes the worktree the page is in: its branch merged first,
+// if asked, into what the main checkout has, then the worktree deleted as the
+// hub's card deletes it, and the branch too if asked. The page then goes to
+// the main checkout's.
+export function FinishWorktree({ meta, pr, onClose }) {
+  const [info, setInfo] = useState(null);
+  const [merge, setMerge] = useState(false);
+  const [dropBranch, setDropBranch] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState(null); // { message, retry, gone, id }
+  const lastHow = useRef({});
+
+  useEffect(() => {
+    api.hubFinish(slug).then(
+      (i) => {
+        setInfo(i);
+        setMerge(i.ahead > 0 && !i.mergeBlocked);
+      },
+      (e) => setError({ message: e.message }),
+    );
+  }, []);
+
+  const leave = () => (location.href = info?.main ? `/${info.main}/` : "/");
+
+  // The page's own review closes as the worktree goes, so the hub is asked.
+  const remove = async (how) => {
+    setBusy(info.teardown && !how.skipTeardown ? "Tearing down…" : "Deleting…");
+    const job = await api.hubDeleteWorktree(slug, { ...how, deleteBranch: dropBranch });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 600));
+      const data = await api.hubFolders().catch(() => null);
+      const j = data?.jobs.find((x) => x.id === job.id);
+      if (data && !j) return leave();
+      if (j?.error) throw Object.assign(new Error(j.error), { retry: j.retry, id: j.id, gone: !data.folders.some((f) => f.slug === slug) });
+      if (j?.step) setBusy(`${j.step}…`);
+    }
+  };
+
+  const finish = async (how = {}) => {
+    lastHow.current = how;
+    setError(null);
+    try {
+      // Merged, it shows as such, and is not merged again if the delete is tried again.
+      if (merge) {
+        setBusy(`Merging into ${info.into}…`);
+        await api.hubMerge(slug);
+        setMerge(false);
+        setInfo(await api.hubFinish(slug));
+      }
+      await remove(how);
+    } catch (e) {
+      setBusy("");
+      setError({ message: e.message, retry: e.retry, gone: e.gone, id: e.id });
+    }
+  };
+
+  const i = info;
+  const facts = i && [
+    !i.branch
+      ? ["HEAD is on no branch here, so there is nothing to merge."]
+      : i.ahead
+        ? [`${plural(i.ahead, "commit")} on ${i.branch} that ${i.into || "the main checkout"} doesn't have:`, "", <FinishCommits key="c" info={i} />]
+        : [`Everything on ${i.branch} is in ${i.into}.`],
+    i.uncommitted > 0 && [`${plural(i.uncommitted, "file")} not committed, lost when the worktree goes.`, "del"],
+    i.unpushed > 0 && [`${plural(i.unpushed, "commit")} not pushed to ${i.upstream}.`],
+  ].filter(Boolean);
+
+  let button = [merge ? "Merge and delete" : "Delete worktree", () => finish()];
+  const after = i?.main ? i.intoPlace : "the hub";
+  if (error?.gone) button = [`Go to ${after}`, () => api.hubDismissJob(error.id).finally(leave)];
+  else if (error?.retry === "force") button = ["Delete anyway", () => finish({ force: true })];
+  else if (error?.retry === "remove") button = ["Delete without teardown", () => finish({ ...lastHow.current, skipTeardown: true })];
+
+  return (
+    <Modal onClose={onClose} centred className="hub-form">
+      <div className="viewer-head dialog-head">
+        <span className="path">Finish this worktree</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={onClose}>
+          <IconX size={13} />
+        </button>
+      </div>
+      {i && (
+        <div className="settings-body hub-form-body">
+          <ul className="finish-facts">
+            {facts.map(([text, tone, more]) => (
+              <li key={text} className={tone}>
+                {text}
+                {more}
+              </li>
+            ))}
+            {pr && (
+              <li>
+                Pull request <PRChip pr={pr} /> {pr.title}
+              </li>
+            )}
+          </ul>
+          {i.branch && (
+            <div className="settings-row">
+              <div className="settings-text">
+                <div>Merge into {i.into || "the main checkout"} first</div>
+                <div className={cx("settings-note", i.mergeBlocked && i.ahead > 0 && "error")}>
+                  {i.ahead === 0 ? "Nothing to merge." : i.mergeBlocked ? `Can't: ${i.mergeBlocked}.` : `In ${i.intoPlace}, as git merge does. A conflict leaves it as it was.`}
+                </div>
+              </div>
+              <Switch on={merge} label="Merge first" disabled={!!i.mergeBlocked || !i.ahead || !!busy} onChange={setMerge} />
+            </div>
+          )}
+          {i.branch && (
+            <div className="settings-row">
+              <div className="settings-text">
+                <div>Delete the branch {i.branch}</div>
+                <div className="settings-note">Only if it is merged: git keeps a branch with work nothing else has.</div>
+              </div>
+              <Switch on={dropBranch} label="Delete the branch" disabled={!!busy} onChange={setDropBranch} />
+            </div>
+          )}
+        </div>
+      )}
+      {error && <div className="hub-picker-error">{error.message}</div>}
+      <div className="hub-picker-foot">
+        <span className="hub-picker-note">
+          {busy ||
+            (i &&
+              `${i.teardown ? "The teardown hook runs, then the" : "The"} worktree at ${meta?.place} is deleted and you go to ${after}. Its sessions stop.`)}
+        </span>
+        <button className="primary" disabled={!i || !!busy} onClick={button[1]}>
+          {button[0]}
         </button>
       </div>
     </Modal>

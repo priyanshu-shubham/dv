@@ -280,16 +280,18 @@ func (h *Hub) handleSetup(w http.ResponseWriter, r *http.Request) {
 // maxListed is how many uncommitted files a refusal to delete names.
 const maxListed = 20
 
-// handleDeleteWorktree deletes a worktree the hub lists: { skipTeardown }. One
-// with uncommitted changes is left as it is, before anything runs or closes,
-// as git would refuse it only after the teardown hook had run; force deletes
-// it anyway, and the changes with it. Otherwise the repository's teardown hook
-// runs, unless skipped; then git removes the worktree and the hub lets it go.
-// The branch stays.
+// handleDeleteWorktree deletes a worktree the hub lists: { skipTeardown, force,
+// deleteBranch }. One with uncommitted changes is left as it is, before
+// anything runs or closes, as git would refuse it only after the teardown hook
+// had run; force deletes it anyway, and the changes with it. Otherwise the
+// repository's teardown hook runs, unless skipped; then git removes the
+// worktree and the hub lets it go. The branch stays unless deleteBranch, and
+// then only if it is merged.
 func (h *Hub) handleDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SkipTeardown bool `json:"skipTeardown"`
 		Force        bool `json:"force"`
+		DeleteBranch bool `json:"deleteBranch"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	wt, main, ok := h.worktree(w, r.PathValue("slug"))
@@ -297,7 +299,8 @@ func (h *Hub) handleDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.forget(wt.Path)
-	j := &job{Kind: "remove", Title: displayName(wt), Path: wt.Path, Place: server.HomeRelative(wt.Path), Of: main.Slug, Slug: wt.Slug, Step: "Checking", Force: body.Force}
+	j := &job{Kind: "remove", Title: displayName(wt), Path: wt.Path, Place: server.HomeRelative(wt.Path), Of: main.Slug, Slug: wt.Slug, Step: "Checking", Force: body.Force, DeleteBranch: body.DeleteBranch}
+	branch := branchOf(wt.Path)
 	writeJSON(w, http.StatusOK, h.start(j, func(ctx context.Context) (string, error) {
 		if repo, err := gitx.Open(wt.Path); err == nil && !body.Force {
 			changed, err := repo.Uncommitted()
@@ -339,8 +342,102 @@ func (h *Hub) handleDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		h.closeReview(wt.Slug)
+		if body.DeleteBranch && branch != "" {
+			repo, err := gitx.Open(wt.WorktreeOf)
+			if err == nil {
+				err = repo.DeleteBranch(branch)
+			}
+			if err != nil {
+				return "", fmt.Errorf("Deleted the worktree, but kept the branch %s:\n%w", branch, err)
+			}
+		}
 		return "", nil
 	}))
+}
+
+// maxFinishCommits is how many of the commits to merge Finish lists.
+const maxFinishCommits = 30
+
+// handleFinish is where a worktree stands, for closing it: { branch, into,
+// intoPlace, main, ahead, commits, uncommitted, upstream, unpushed,
+// mergeBlocked, teardown }. into is what the main checkout has checked out,
+// which merging goes into, and ahead the commits on branch that into has not,
+// the first of which are listed.
+func (h *Hub) handleFinish(w http.ResponseWriter, r *http.Request) {
+	wt, main, ok := h.worktree(w, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	repo, err := gitx.Open(wt.Path)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	changed, _ := repo.Uncommitted()
+	st, _ := repo.Status()
+	if st == nil {
+		st = &gitx.Status{}
+	}
+	branch, into := gitx.BranchAt(wt.Path), gitx.BranchAt(main.Path)
+	blocked, ahead, commits := "", 0, []gitx.Commit{}
+	switch {
+	case branch == "":
+		blocked = "HEAD is on no branch here"
+	case into == "":
+		blocked = server.HomeRelative(main.Path) + " is on no branch"
+	default:
+		ahead = repo.Count(into, branch)
+		commits = repo.Log(into+".."+branch, maxFinishCommits)
+		if m, err := gitx.Open(main.Path); err != nil {
+			blocked = err.Error()
+		} else if why := m.MergeBlocker(); why != "" {
+			blocked = why + " in " + server.HomeRelative(main.Path)
+		}
+	}
+	unpushed := 0
+	if st.Upstream != "" {
+		unpushed = st.Ahead
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"branch":       branch,
+		"into":         into,
+		"intoPlace":    server.HomeRelative(main.Path),
+		"main":         main.Slug,
+		"ahead":        ahead,
+		"commits":      commits,
+		"uncommitted":  len(changed),
+		"upstream":     st.Upstream,
+		"unpushed":     unpushed,
+		"mergeBlocked": blocked,
+		"teardown":     main.Teardown != "",
+	})
+}
+
+// handleMerge merges a worktree's branch into what the main checkout has
+// checked out, there: { into, merged }, merged the commits it brought in.
+// What is not committed in the worktree stays behind.
+func (h *Hub) handleMerge(w http.ResponseWriter, r *http.Request) {
+	wt, main, ok := h.worktree(w, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	branch := gitx.BranchAt(wt.Path)
+	if branch == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("HEAD is on no branch in %s, so there is nothing to merge", server.HomeRelative(wt.Path)))
+		return
+	}
+	m, err := gitx.Open(main.Path)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	into := gitx.BranchAt(main.Path)
+	n := m.Count(into, branch)
+	if err := m.Merge(branch); err != nil {
+		writeErr(w, http.StatusConflict, fmt.Errorf("Could not merge into %s in %s: %w", into, server.HomeRelative(main.Path), err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"into": into, "merged": n})
 }
 
 // worktree finds a listed worktree and the repository it belongs to, or

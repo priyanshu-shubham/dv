@@ -32,6 +32,8 @@ type job struct {
 	Slug    string    `json:"slug,omitempty"`  // the worktree's, once it is on the list
 	Force   bool      `json:"force,omitempty"` // a delete that loses uncommitted changes
 	Started time.Time `json:"started"`
+	// A delete that takes the branch too, which trying again keeps.
+	DeleteBranch bool `json:"deleteBranch,omitempty"`
 
 	// Guarded by the hub's mu.
 	Step     string `json:"step,omitempty"`

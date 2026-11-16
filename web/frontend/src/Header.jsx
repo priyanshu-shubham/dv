@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { boot } from "./boot.js";
-import { blockedNote, branchRows, fetchNote, rowHint, rowLabel, switchDone, useBranchChoices } from "./Branches.jsx";
-import { cx, modKey, useDismiss } from "./util.js";
+import { blockedNote, BranchText, branchRows, fetchNote, openWorktree, rowHint, rowTag, switchDone, useBranchChoices } from "./Branches.jsx";
+import { cx, modKey, useCopy, useDismiss } from "./util.js";
 import { HubMark } from "./Machine.jsx";
 import {
-  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconDownload, IconPad, IconPin, IconPlus, IconSearch, IconSettings,
+  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconCommit, IconDownload, IconPad, IconPin, IconPlus, IconSearch, IconSettings,
   IconUndo,
 } from "./icons.jsx";
 
@@ -60,11 +60,11 @@ export function PRChip({ pr }) {
 
 // BranchRow is the bar's branch and pull request at the top of the sidebar,
 // for windows too narrow for the bar to have them.
-export function BranchRow({ meta, pr }) {
+export function BranchRow({ meta, pr, onFinish, onLog }) {
   if (!meta?.head?.branch && !meta?.head?.sha) return null;
   return (
     <div className="side-branch">
-      <HeadRef meta={meta} />
+      <HeadRef meta={meta} onFinish={onFinish} onLog={onLog} />
       <PRChip pr={pr} />
     </div>
   );
@@ -74,9 +74,11 @@ const SWITCH_SHOWN = 12;
 
 // HeadRef is the branch in the bar. It opens on pulling it, and main when on
 // another, with a remote to pull from; and on switching to another branch,
-// which the server allows only with nothing to lose, or making one at HEAD.
-// Outcomes show in the menu, as the diff follows the new HEAD on its own.
-function HeadRef({ meta }) {
+// which the server allows only with nothing to lose, or making one at HEAD;
+// the repository's other worktrees open their own pages. Any branch's commits
+// can be read from it too. Outcomes show in the menu, as the diff follows the
+// new HEAD on its own.
+function HeadRef({ meta, onFinish, onLog }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState(null); // { busy, doing } | { done } | { error }
   const [filter, setFilter] = useState("");
@@ -94,6 +96,7 @@ function HeadRef({ meta }) {
     run("Fetching…", api.pull(main), ({ branch, pulled }) => (pulled ? `Pulled ${pulled} commit${pulled === 1 ? "" : "s"} into ${branch}.` : `${branch} is up to date.`));
   const switchTo = (row) => {
     if (row.off || state?.busy) return;
+    if (row.worktree) return run(`Opening ${row.worktree.place}…`, openWorktree(row.worktree), () => "");
     run(row.create ? `Making ${row.branch}…` : `Switching to ${row.branch}…`, api.switchTo(row), () => (setFilter(""), switchDone(row) + "."));
   };
   const rows = branchRows(can, meta.branches, branch, filter, SWITCH_SHOWN);
@@ -146,9 +149,24 @@ function HeadRef({ meta }) {
                 <IconBranch size={14} />
                 <span className="branch-text">
                   <span className="branch-name">{branch || sha}</span>
-                  {subject && <span className="branch-sub">{subject}</span>}
+                  {subject && (
+                    <span className="branch-sub" title={subject}>
+                      {subject}
+                    </span>
+                  )}
                 </span>
-                <IconCheck size={13} className="branch-tick" />
+                {onLog && (
+                  <button className="mini branch-finish" title="Read this branch's commits" onClick={() => (setOpen(false), onLog(""))}>
+                    Commits
+                  </button>
+                )}
+                {onFinish ? (
+                  <button className="mini branch-finish" title="Merge this worktree's branch, then delete the worktree" onClick={() => (setOpen(false), onFinish())}>
+                    Finish…
+                  </button>
+                ) : (
+                  !onLog && <IconCheck size={13} className="branch-tick" />
+                )}
               </div>
             )}
             {items.map((it, i) => {
@@ -161,29 +179,35 @@ function HeadRef({ meta }) {
                   </button>
                 );
               const r = it.row;
-              const first = i === pulling.length;
+              const prev = items[i - 1]?.row;
+              const sep = r.worktree ? !prev?.worktree && "Worktrees" : !r.create && (!prev || prev.worktree) && (filter ? "Matches" : "Switch to");
               return (
-                <div key={(r.create ? "+" : "") + (r.track || r.branch)} className="branch-group">
-                  {first && !r.create && <div className="branch-sep">{filter ? "Matches" : "Switch to"}</div>}
-                  <button
-                    className={cx("branch-row", i === at && "on", r.create && "create")}
-                    disabled={r.off || state?.busy}
-                    title={rowHint(r, can)}
-                    onMouseMove={() => setSel(i)}
-                    onClick={() => choose(it)}
-                  >
-                    {r.create ? <IconPlus size={14} /> : <IconBranch size={14} />}
-                    {r.create ? (
-                      <span className="branch-name ui">
-                        Create <b>{r.branch}</b>
-                      </span>
-                    ) : (
-                      <span className="branch-name">{rowLabel(r)}</span>
+                <div key={(r.create ? "+" : r.worktree ? "@" : "") + (r.track || r.branch)} className="branch-group">
+                  {sep && <div className="branch-sep">{sep}</div>}
+                  <div className="branch-row-wrap">
+                    <button
+                      className={cx("branch-row", i === at && "on", r.create && "create")}
+                      disabled={r.off || state?.busy}
+                      title={rowHint(r)}
+                      onMouseMove={() => setSel(i)}
+                      onClick={() => choose(it)}
+                    >
+                      {r.create ? <IconPlus size={14} /> : <IconBranch size={14} />}
+                      {r.create ? (
+                        <span className="branch-name ui">
+                          Create <b>{r.branch}</b>
+                        </span>
+                      ) : (
+                        <BranchText row={r} can={can} />
+                      )}
+                      {rowTag(r) && <span className={cx("branch-hint", r.worktree && "place")}>{rowTag(r)}</span>}
+                    </button>
+                    {onLog && !r.create && (r.track || r.worktree?.branch || !r.worktree) && (
+                      <button className="mini branch-log" title={`Read ${r.track || r.branch}'s commits`} onClick={() => (setOpen(false), onLog(r.track || r.branch))}>
+                        Commits
+                      </button>
                     )}
-                    {(r.create || r.track || can?.elsewhere?.includes(r.branch)) && (
-                      <span className="branch-hint">{r.create ? "from HEAD" : r.track ? "remote" : "in a worktree"}</span>
-                    )}
-                  </button>
+                  </div>
                 </div>
               );
             })}
@@ -207,7 +231,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onReviewPR, settings,
+  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onFinishWorktree, onLog, onReviewPR, settings,
 }) {
   const agent = mode === "agent";
   return (
@@ -230,7 +254,7 @@ export default function Header({
           {meta?.repo}
         </span>
         {/* A task's branch is only its folder's git, made to show a diff. */}
-        {!onCloseTask && (meta?.head?.branch || meta?.head?.sha) && <HeadRef meta={meta} />}
+        {!onCloseTask && (meta?.head?.branch || meta?.head?.sha) && <HeadRef meta={meta} onFinish={onFinishWorktree} onLog={onLog} />}
         <PRChip pr={pr} />
         {onCloseTask && (
           <button className="mini" onClick={onCloseTask} title="Every session in this task stops, and its folder is deleted">
@@ -394,6 +418,17 @@ function ScopePicker({ scope, resolved, meta, pr, mode, onScope, onReviewPR }) {
     };
   }, [open]);
 
+  // The branch's own commits, each to be shown alone.
+  const [commits, setCommits] = useState(null); // { base, commits }
+  useEffect(() => {
+    if (!open || code) return;
+    let live = true;
+    api.commits().then((c) => live && setCommits(c), () => {});
+    return () => {
+      live = false;
+    };
+  }, [open, code]);
+
   // What automatic would show now, so the way back says where it leads.
   useEffect(() => {
     if (!open || auto) return;
@@ -481,6 +516,7 @@ function ScopePicker({ scope, resolved, meta, pr, mode, onScope, onReviewPR }) {
                     label={p.label}
                     // What the last commit is, which the bar no longer spells out.
                     sub={p.kind === "head" ? meta?.head?.subject : ""}
+                    title={p.kind === "head" ? meta?.head?.subject : undefined}
                     hint={p.hint(base)}
                     onClick={() => pick({ kind: p.kind, rev: "" })}
                   />
@@ -496,6 +532,25 @@ function ScopePicker({ scope, resolved, meta, pr, mode, onScope, onReviewPR }) {
                     onReviewPR();
                   }}
                 />
+              )}
+              {commits?.commits.length > 0 && (
+                <>
+                  <div className="scope-sep">{commits.base ? `Commits since ${commits.base}` : "Recent commits"}</div>
+                  <div className="scope-commits">
+                    {commits.commits.map((c) => (
+                      <ScopeItem
+                        key={c.sha}
+                        className="scope-commit"
+                        on={scope.kind === "custom" && scope.rev === c.sha}
+                        label={c.subject}
+                        sub={`${c.short} · ${c.author}`}
+                        hint={c.when}
+                        title={c.body ? `${c.subject}\n\n${c.body}` : c.subject}
+                        onClick={() => pick({ kind: "custom", rev: c.sha })}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </>
           )}
@@ -551,9 +606,58 @@ function ScopePicker({ scope, resolved, meta, pr, mode, onScope, onReviewPR }) {
   );
 }
 
-function ScopeItem({ on, label, sub, hint, mono, onClick }) {
+// CommitNote heads the diff of one commit with what its message says. A long
+// one starts cut short, two lines of subject and four of body, so the files
+// stay in view; a click on it opens the rest and another closes it, unless
+// the click ended a selection. Keyed by commit, it starts cut short again for
+// the next.
+export function CommitNote({ commit }) {
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  const [copied, copy] = useCopy(commit.sha);
+  const ref = useRef(null);
+  // Measured while cut short, and again as the pane's width moves the lines.
+  useLayoutEffect(() => {
+    if (open) return;
+    const over = (el) => el.scrollHeight > el.clientHeight + 1;
+    const measure = () => setLong([...ref.current.querySelectorAll(".commit-note-subject, .commit-note-body")].some(over));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, [open, commit.sha]);
+  const toggle = () => window.getSelection()?.toString() || setOpen((o) => !o);
   return (
-    <button className={cx("scope-item", on && "on")} onClick={onClick}>
+    <div
+      ref={ref}
+      className={cx("commit-note", !open && "short", long && "long")}
+      {...(long && {
+        role: "button",
+        tabIndex: 0,
+        "aria-expanded": open,
+        onClick: toggle,
+        onKeyDown: (e) => e.key === "Enter" && e.target === e.currentTarget && toggle(),
+      })}
+    >
+      <div className="commit-note-head">
+        <IconCommit size={14} />
+        <div className="commit-note-subject">{commit.subject}</div>
+        <span className="commit-note-meta">
+          {commit.author}, {commit.when}
+        </span>
+        <button className={cx("session-id", copied && "copied")} title={`Copy ${commit.sha}`} onClick={copy}>
+          {copied ? "copied" : commit.short}
+        </button>
+        {long && <IconChevronDown size={12} className={cx("commit-note-caret", open && "open")} />}
+      </div>
+      {commit.body && <div className="commit-note-body">{commit.body}</div>}
+    </div>
+  );
+}
+
+function ScopeItem({ on, label, sub, hint, mono, title, className, onClick }) {
+  return (
+    <button className={cx("scope-item", on && "on", className)} title={title} onClick={onClick}>
       <span className="scope-tick">{on && <IconCheck size={12} />}</span>
       <span className={cx("scope-label", mono && "mono")}>
         {label}

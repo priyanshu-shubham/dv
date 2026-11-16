@@ -1,11 +1,13 @@
 package hub
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	"dv/internal/gitx"
 	"dv/internal/server"
 )
 
@@ -29,6 +31,10 @@ func (h *Hub) handleActivity(w http.ResponseWriter, r *http.Request) {
 	type folderLive struct {
 		Slug string `json:"slug"`
 		Name string `json:"name"`
+		// Which repository it is a checkout of, and on what, so a worktree's
+		// page can tell its siblings from other folders.
+		RepoRoot string `json:"repoRoot"`
+		Branch   string `json:"branch,omitempty"`
 		server.Live
 	}
 	tick := time.NewTicker(activityTick)
@@ -40,7 +46,7 @@ func (h *Hub) handleActivity(w http.ResponseWriter, r *http.Request) {
 		folders := []folderLive{}
 		for _, f := range h.folders.List() {
 			if rv := h.opened(f.Slug); rv != nil {
-				folders = append(folders, folderLive{f.Slug, displayName(f), rv.srv.Live()})
+				folders = append(folders, folderLive{f.Slug, displayName(f), cmp.Or(f.WorktreeOf, f.Path), gitx.BranchAt(f.Path), rv.srv.Live()})
 			}
 		}
 		b, err := json.Marshal(map[string]any{"folders": folders})

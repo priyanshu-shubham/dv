@@ -1292,6 +1292,101 @@ button.headref:hover {
   font-size: var(--fs-tag);
 }
 
+/* A long subject is cut short before its age is. */
+.branch-tip {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.branch-tip-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.branch-tip-when {
+  flex: none;
+}
+
+.branch-hint.place {
+  flex: 0 1 auto;
+  max-width: 50%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Another branch's Commits shows over its row's end as the pointer reaches it. */
+.branch-row-wrap {
+  position: relative;
+}
+
+.model-list .branch-log {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: none;
+  width: auto;
+  padding: 0 6px;
+  background: var(--bg-raised);
+  transform: translateY(-50%);
+}
+
+.branch-row-wrap:hover .branch-log {
+  display: inline-flex;
+}
+
+.branch-row-wrap:hover:has(.branch-log) .branch-hint {
+  visibility: hidden;
+}
+
+.commit-log .palette-input .model-menu {
+  flex: none;
+}
+
+.commit-log .palette-input .mini {
+  gap: 5px;
+  max-width: 220px;
+  font-family: var(--font-mono);
+}
+
+.palette-row.commit-row {
+  gap: 10px;
+}
+
+.commit-row-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-row .branch-hint {
+  margin-left: 0;
+}
+
+.commit-row-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.commit-row-meta .mono {
+  font-family: var(--font-mono);
+}
+
+.model-list .branch-finish {
+  display: inline-flex;
+  flex: none;
+  width: auto;
+  margin-left: auto;
+  padding: 0 6px;
+}
+
 .model-list .branch-row.on:not(:disabled) {
   background: var(--bg-active);
 }
@@ -1568,16 +1663,135 @@ button.headref:hover {
 .scope-sub {
   display: block;
   margin-top: 1px;
+  overflow: hidden;
   color: var(--fg-3);
   font: 400 var(--fs-xs) / 1.3 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* So a long sub line is cut short rather than squeezing the hint. */
+.scope-label {
+  min-width: 0;
+}
+
+/* The way back says where it leads, which is the one hint long enough to give way. */
+.scope-item.back .scope-label {
+  flex: none;
+}
+
+.scope-item.back .scope-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A sibling of the file cards under it, its text kept to a reading measure. */
+.commit-note {
+  margin: 0 12px 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.commit-note.long {
+  cursor: pointer;
+}
+
+.commit-note.long:hover {
+  border-color: var(--border);
+}
+
+.commit-note-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.commit-note-head > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--fg-3);
+}
+
+.commit-note-subject {
+  flex: 0 1 80ch;
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.commit-note-meta {
+  flex: none;
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: calc(var(--fs-sm) * 1.5);
+  white-space: nowrap;
+}
+
+.commit-note-head .session-id {
+  flex: none;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: calc(var(--fs-sm) * 1.5);
+}
+
+.commit-note-head .commit-note-caret {
+  margin-top: 4px;
+  transition: transform 0.15s;
+}
+
+.commit-note-caret.open {
+  transform: rotate(180deg);
+}
+
+/* Under the subject, past the icon. */
+.commit-note-body {
+  max-width: 80ch;
+  margin: 6px 0 0 22px;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.commit-note.short :is(.commit-note-subject, .commit-note-body) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.commit-note.short .commit-note-body {
+  -webkit-line-clamp: 4;
+}
+
+/* A long branch scrolls within the menu, which stays on screen. */
+.scope-commits {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.scope-commit .scope-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scope-hint {
+  flex: none;
   margin-left: auto;
   padding-left: 12px;
   color: var(--fg-3);
   font-size: var(--fs-xs);
   text-align: right;
+  white-space: nowrap;
 }
 
 .scope-item.back,
@@ -5630,6 +5844,17 @@ mark {
 
 .folder-hit.here:not(.on) .sym {
   color: var(--fg-2);
+}
+
+.folder-hit .folder-branch {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
 }
 
 .folder-find {
@@ -9872,6 +10097,65 @@ button.hub-remote-link:hover {
 
 .hub-form-body code {
   font: var(--fs-xs) var(--font-mono);
+}
+
+.finish-facts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-bar);
+  font-size: var(--fs-sm);
+  list-style: none;
+}
+
+.finish-facts .del {
+  color: var(--del);
+}
+
+.finish-facts .pr-chip {
+  vertical-align: baseline;
+}
+
+.finish-commits {
+  display: grid;
+  gap: 2px;
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 0 0 0 2px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.finish-commits > li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.finish-commit-subject {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finish-commit-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.finish-commit-meta .mono {
+  font-family: var(--font-mono);
+}
+
+.finish-commits > li.finish-commit-meta {
+  margin-left: 0;
 }
 
 /* No pointer to hover with: what shows on pointing shows always. */

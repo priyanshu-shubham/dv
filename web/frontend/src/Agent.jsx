@@ -4484,15 +4484,18 @@ function SessionID({ id }) {
 }
 
 // SessionList is the sidebar in Agent mode: sessions open in dv, the last
-// written to first, then those open in the hub's other folders, then the rest
-// of the repository's, newest first. asking is the set of sessions with a prompt or question waiting on the
-// reader; elsewhere, the other folders' activity.
+// written to first, then those open in the repository's other worktrees on the
+// hub, then in its other folders, then the rest of the repository's, newest
+// first. asking is the set of sessions with a prompt or question waiting on
+// the reader; elsewhere, the other folders' activity; repoRoot, the main
+// checkout, which tells this repository's worktrees from other folders.
 export function SessionList({
   sessions,
   available,
   usage,
   asking,
   elsewhere,
+  repoRoot,
   activeId,
   added = {},
   onSelect,
@@ -4516,10 +4519,16 @@ export function SessionList({
   const recent = shown.filter((s) => !isOpen(s));
 
   const [away, closeAway] = useOpenIn(elsewhere);
-  const awayShown = q ? away.filter(({ f, s }) => `${s.title} ${s.id} ${f.name}`.toLowerCase().includes(q)) : away;
+  const awayShown = q ? away.filter(({ f, s }) => `${s.title} ${s.id} ${f.name} ${f.branch || ""}`.toLowerCase().includes(q)) : away;
+  const sibling = ({ f }) => !!repoRoot && f.repoRoot === repoRoot;
+  const siblings = awayShown.filter(sibling);
+  const others = awayShown.filter((a) => !sibling(a));
 
-  // Another folder's: opened, it takes the page to that folder.
-  const awayRow = ({ f, s, req }) => {
+  // Another folder's: opened, it takes the page to that folder. A worktree of
+  // this repository is named by its branch, which is what tells them apart.
+  const awayRow = (a) => {
+    const { f, s, req } = a;
+    const where = sibling(a) && f.branch ? f.branch : f.name;
     const go = () => openFolderSession(f.slug, s.id);
     return (
       <div key={f.slug + s.id} role="button" tabIndex={0} className="session-row" onClick={go} onKeyDown={(e) => e.key === "Enter" && go()}>
@@ -4548,7 +4557,7 @@ export function SessionList({
             <AgentIcon agent={s.agent} size={11} />
           </span>
           <span className="spacer" />
-          <span className="session-folder">{f.name}</span>
+          <span className="session-folder">{where}</span>
         </div>
       </div>
     );
@@ -4655,8 +4664,10 @@ export function SessionList({
       <div className="file-list session-list" ref={listRef}>
         {open.length > 0 && <div className="session-group">Open</div>}
         {open.map(row)}
-        {awayShown.length > 0 && <div className="session-group">Other folders</div>}
-        {awayShown.map(awayRow)}
+        {siblings.length > 0 && <div className="session-group">Worktrees</div>}
+        {siblings.map(awayRow)}
+        {others.length > 0 && <div className="session-group">Other folders</div>}
+        {others.map(awayRow)}
         {recent.length > 0 && <div className="session-group">Recent</div>}
         {recent.map(row)}
         {!available && <div className="empty">Neither the claude nor the codex CLI is on your PATH.</div>}

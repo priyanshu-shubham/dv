@@ -299,6 +299,9 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/pull", Guarded(s.handlePull))
 	mux.HandleFunc("GET /api/switch", Guarded(s.handleCanSwitch))
 	mux.HandleFunc("POST /api/switch", Guarded(s.handleSwitch))
+	mux.HandleFunc("GET /api/commits", s.handleCommits)
+	// Not /api/log?ref=: tracker blocklists (EasyPrivacy) block that URL.
+	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/actions/run", Guarded(s.handleRunAction))
 	mux.HandleFunc("GET /api/actions/running", Guarded(s.handleCommands))
 	mux.HandleFunc("POST /api/actions/{id}/stop", Guarded(s.handleStopCommand))

@@ -609,3 +609,76 @@ func TestWorktreeOfARemoteBranch(t *testing.T) {
 	}
 	tracks(filepath.Join(home, "code", "alpha-dup"), "dup", "upstream/dup")
 }
+
+// A worktree is finished from its own page: merged into what the main
+// checkout has, then deleted with its branch.
+func TestFinishWorktree(t *testing.T) {
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	alpha := filepath.Join(home, "code", "alpha")
+	repo(t, alpha)
+	user, _ := store.OpenUserPrefs()
+	list, _ := store.OpenFolders()
+	ts := httptest.NewUnstartedServer(nil)
+	notices := notify.New(func() time.Duration { return time.Minute })
+	defer notices.Close()
+	h := New("http://"+ts.Listener.Addr().String(), user, list, notices)
+	ts.Config.Handler = h.Handler()
+	ts.Start()
+	defer ts.Close()
+	defer h.Close()
+	c := client{t, ts.URL}
+	list.Add(store.Folder{Path: alpha})
+
+	wt, err := h.Worktree("alpha", "feature", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature := filepath.Join(home, "code", "alpha-feature")
+	os.WriteFile(filepath.Join(feature, "b.txt"), []byte("b\n"), 0o644)
+	git(t, feature, "add", "b.txt")
+	git(t, feature, "commit", "-qm", "feature work")
+
+	type finish struct {
+		Branch, Into, Main, MergeBlocked string
+		Ahead, Uncommitted               int
+	}
+	var got finish
+	c.do("GET", "/api/hub/folders/"+wt.Slug+"/finish", "", &got)
+	if got != (finish{Branch: "feature", Into: "main", Main: "alpha", Ahead: 1}) {
+		t.Fatalf("finish: %+v", got)
+	}
+
+	// The main checkout's own changes stop a merge into it.
+	os.WriteFile(filepath.Join(alpha, "sub", "a.txt"), []byte("dirty\n"), 0o644)
+	c.do("GET", "/api/hub/folders/"+wt.Slug+"/finish", "", &got)
+	if !strings.Contains(got.MergeBlocked, "uncommitted") {
+		t.Fatalf("blocked: %+v", got)
+	}
+	if r := c.do("POST", "/api/hub/folders/"+wt.Slug+"/merge", "{}", nil); r.StatusCode != http.StatusConflict {
+		t.Fatalf("merge into a dirty checkout: %d", r.StatusCode)
+	}
+	git(t, alpha, "checkout", "--", ".")
+
+	var merged struct {
+		Into   string
+		Merged int
+	}
+	if r := c.do("POST", "/api/hub/folders/"+wt.Slug+"/merge", "{}", &merged); r.StatusCode != 200 || merged.Into != "main" || merged.Merged != 1 {
+		t.Fatalf("merge: %d %+v", r.StatusCode, merged)
+	}
+	if _, err := os.Stat(filepath.Join(alpha, "b.txt")); err != nil {
+		t.Fatal("the merge did not reach the main checkout")
+	}
+
+	var started job
+	c.do("POST", "/api/hub/folders/"+wt.Slug+"/delete", `{"deleteBranch": true}`, &started)
+	if l := c.settle(); len(l.Jobs) != 0 || len(l.Folders) != 1 {
+		t.Fatalf("delete: %+v", l)
+	}
+	if out, _ := exec.Command("git", "-C", alpha, "branch", "--list", "feature").Output(); len(out) != 0 {
+		t.Fatalf("the branch stayed: %q", out)
+	}
+}

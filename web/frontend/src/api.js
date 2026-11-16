@@ -150,9 +150,16 @@ export const api = {
   version: () => req("/api/version", { retry: false, signal: AbortSignal.timeout(VERSION_WAIT_MS) }),
   // pull fast-forwards the checked-out branch, or with main the trunk: { branch, pulled }.
   pull: (main = false) => req("/api/pull", { method: "POST", body: JSON.stringify({ main }) }),
-  // canSwitch: { blocked, createBlocked, branches, elsewhere }, each blocked the reason it can't be done now.
+  // canSwitch: { blocked, createBlocked, branches, elsewhere, worktrees }, each blocked the reason it can't
+  // be done now; worktrees the repository's other checkouts, [{ path, place, branch, sha }].
   // remote is the remotes' branches no local one is named for, { ref, branch };
   // fetch has the remotes fetched first, which fetchError says went wrong.
+  // commits: { base, commits: [{ sha, short, subject, body, author, when }] }, what the
+  // branch adds since base, or the latest on HEAD with base "" when it adds none.
+  commits: () => req("/api/commits"),
+  // history: { commits, more, missing }, a page of branch's history ("" for
+  // HEAD), q searching the messages; missing the shas of it HEAD does not have.
+  history: (branch, skip, q) => req(`/api/history?${new URLSearchParams({ branch, skip, q })}`),
   canSwitch: (fetch) => req("/api/switch" + (fetch ? "?fetch" : "")),
   // switchTo checks out a local branch, refused where anything could be lost, or with create makes it at HEAD,
   // or with track makes it tracking that remote branch, as a switch: { head }. Given a branch menu's row.
@@ -435,7 +442,7 @@ export const api = {
   hubFolders: (details) => req(`/api/hub/folders${details ? "?details=1" : ""}`, {}, ""),
   // hubPRs: { prs: { slug: pr } }, for the folders whose branch has one.
   hubPRs: () => req("/api/hub/prs", {}, ""),
-  hubAdd: (path) => req("/api/hub/folders", { method: "POST", body: JSON.stringify({ path }) }),
+  hubAdd: (path) => req("/api/hub/folders", { method: "POST", body: JSON.stringify({ path }) }, ""),
   // patch: { name, setup, teardown }, any of them.
   hubUpdate: (slug, patch) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   hubRemove: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}`, { method: "DELETE" }),
@@ -448,9 +455,15 @@ export const api = {
   // folder has checked out. A folder's page asks it too, so it goes to the root.
   hubWorktree: (slug, wt) => req(`/api/hub/folders/${encodeURIComponent(slug)}/worktrees`, { method: "POST", body: JSON.stringify(wt) }, ""),
   hubSetup: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/setup`, { method: "POST", body: "{}" }),
-  // how: { skipTeardown, force }, force deleting it with uncommitted changes.
+  // how: { skipTeardown, force, deleteBranch }, force deleting it with uncommitted changes.
   hubDeleteWorktree: (slug, how = {}) =>
-    req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }),
+    req(`/api/hub/folders/${encodeURIComponent(slug)}/delete`, { method: "POST", body: JSON.stringify(how) }, ""),
+  // hubFinish: { branch, into, intoPlace, main, ahead, uncommitted, upstream,
+  // unpushed, mergeBlocked, teardown }, a worktree's state against the main
+  // checkout, ahead the commits into has not. A folder's page asks it too.
+  hubFinish: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/finish`, {}, ""),
+  // hubMerge merges a worktree's branch into what the main checkout has: { into, merged }.
+  hubMerge: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/merge`, { method: "POST", body: "{}" }, ""),
   // A task is a folder the hub makes, deleted when closed.
   hubNewTask: (name = "") => req("/api/hub/tasks", { method: "POST", body: JSON.stringify({ name }) }, ""),
   hubCloseTask: (slug) => req(`/api/hub/folders/${encodeURIComponent(slug)}/discard`, { method: "POST", body: "{}" }, ""),

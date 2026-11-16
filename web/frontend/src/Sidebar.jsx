@@ -22,7 +22,7 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 export default function Sidebar({
   meta, pr, right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
-  filtersPaused, onPauseFilters, onReset, agent, terminal, onWidth, modes, onMode, attached, uncommitted,
+  filtersPaused, onPauseFilters, onReset, agent, terminal, onWidth, modes, onMode, attached, uncommitted, onFinishWorktree, onLog,
 }) {
   const code = mode === "code";
   const [filter, setFilter] = useState("");
@@ -182,7 +182,7 @@ export default function Sidebar({
           onWidth(0);
         }}
       />
-      <BranchRow meta={meta} pr={pr} />
+      <BranchRow meta={meta} pr={pr} onFinish={onFinishWorktree} onLog={onLog} />
       <div className="sidebar-modes">
         <ModeSwitch mode={mode} modes={modes} onMode={onMode} attached={attached} uncommitted={uncommitted} />
       </div>

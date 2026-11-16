@@ -100,6 +100,8 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("POST /api/hub/folders/{slug}/worktrees", server.Guarded(h.handleWorktree))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/setup", server.Guarded(h.handleSetup))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/delete", server.Guarded(h.handleDeleteWorktree))
+	mux.HandleFunc("GET /api/hub/folders/{slug}/finish", server.Guarded(h.handleFinish))
+	mux.HandleFunc("POST /api/hub/folders/{slug}/merge", server.Guarded(h.handleMerge))
 	mux.HandleFunc("POST /api/hub/folders/{slug}/discard", server.Guarded(h.handleCloseTask))
 	mux.HandleFunc("POST /api/hub/tasks", server.Guarded(h.handleNewTask))
 	mux.HandleFunc("GET /api/hub/activity", server.Guarded(h.handleActivity))
@@ -204,6 +206,7 @@ type folderView struct {
 	store.Folder
 	Name      string         `json:"name"` // what to call it, its own name or the one given
 	Place     string         `json:"place"`
+	Branch    string         `json:"branch,omitempty"`
 	Missing   bool           `json:"missing,omitempty"`
 	Open      *server.Status `json:"open,omitempty"`      // served here
 	Elsewhere string         `json:"elsewhere,omitempty"` // another dv's address
@@ -227,6 +230,7 @@ func (h *Hub) handleFolders(w http.ResponseWriter, r *http.Request) {
 			v.Missing = true
 			continue
 		}
+		v.Branch = gitx.BranchAt(f.Path)
 		rv := h.opened(f.Slug)
 		if rv != nil {
 			st := rv.srv.Status()
