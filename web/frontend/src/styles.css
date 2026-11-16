@@ -639,7 +639,6 @@ button.ghost,
 .attach-btn,
 .mini,
 .toggles > button,
-.scope-chips > button,
 .file-note.skipped button,
 .gap button,
 .file-collapse,
@@ -669,7 +668,6 @@ button.ghost:hover,
 .attach-btn:hover,
 .mini:hover,
 .toggles > button:hover,
-.scope-chips > button:hover,
 .file-note.skipped button:hover,
 .gap button:hover,
 .file-collapse:hover,
@@ -685,12 +683,10 @@ button.ghost:hover,
 }
 
 /* Chips: choices offered rather than actions, so they carry a fill at rest. */
-.scope-chips > button,
 .file-note.skipped button {
   background: var(--bg-active);
 }
 
-.scope-chips > button:hover,
 .file-note.skipped button:hover {
   background: var(--bg-active);
   color: var(--fg);
@@ -726,11 +722,6 @@ button.ghost.on {
 .file-head .nav:disabled {
   color: var(--fg-4);
   cursor: default;
-}
-
-.scope-chips > button {
-  border-radius: var(--r-md);
-  padding: 0 8px;
 }
 
 button.primary {
@@ -1616,32 +1607,52 @@ button.headref:hover {
   padding-top: 6px;
 }
 
+/* One field, its Go inside it. */
 .scope-custom {
   display: flex;
-  gap: 6px;
-  padding: 4px 8px;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 4px 4px;
+  padding: 3px 3px 3px 10px;
+  border-radius: var(--r-lg);
+  background: var(--bg-input);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+.scope-custom:focus-within {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .scope-custom input {
   flex: 1;
   min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
   font: var(--fs-xs) var(--font-mono);
 }
 
-.scope-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 8px 4px;
+.scope-custom input:focus {
+  box-shadow: none;
 }
 
-.scope-chips > button {
-  display: block;
-  max-width: 100%;
+.scope-custom button.primary {
   height: var(--ctl-h-sm);
+  padding: 0 10px;
+  border-radius: var(--r-md);
+}
+
+.scope-branch .scope-tick {
+  color: var(--fg-3);
+}
+
+.scope-branch .scope-label {
+  min-width: 0;
   overflow: hidden;
+  font-weight: 400;
   text-overflow: ellipsis;
-  font: 500 var(--fs-xs) / var(--ctl-h-sm) var(--font-mono);
+  white-space: nowrap;
 }
 
 .scope-desc {
@@ -2013,13 +2024,16 @@ textarea.pad {
   flex: 1;
   min-height: 0;
   margin: 8px;
-  padding: 10px 12px;
-  border-radius: var(--r-lg);
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
+  background: var(--bg-raised);
   resize: none;
-  font: var(--fs-sm) / 1.6 var(--font-mono);
+  font: var(--fs-md) / 1.6 var(--font-ui);
 }
 
 textarea.pad:focus {
+  border-color: var(--border-strong);
   box-shadow: none;
 }
 
@@ -3000,7 +3014,8 @@ textarea.pad:focus {
 
 /* A card: lighter than the strip it sits on, and no line around it. */
 .thread {
-  border-radius: var(--r-lg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
   background: var(--bg-raised);
   font: var(--fs-md) / 1.5 var(--font-ui);
   overflow: hidden;
@@ -3045,10 +3060,10 @@ textarea.pad:focus {
 /* Alpha rather than a shade: the card is lighter than its strip in dark and
    in light, and this has to stay inside the card in both. */
 .quote {
-  margin: 0;
+  margin: 8px 8px 0;
   padding: 6px 10px;
+  border-radius: var(--r-md);
   background: var(--bg-active);
-  border-left: 2px solid var(--border-strong);
   color: var(--fg-2);
   font-size: var(--fs-xs);
   line-height: 18px;
@@ -3096,8 +3111,28 @@ textarea.pad:focus {
 .thread-foot {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 6px;
+  gap: 2px;
+  margin: 6px 0 0 -7px;
+}
+
+.thread-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--ctl-h-sm);
+  padding: 0 7px;
+  border-radius: var(--r-md);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.thread-act:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.thread-foot .resolved-tag {
+  margin-left: 6px;
 }
 
 /* Resolved fades its words, not the whole card, so the location and the way
@@ -3585,7 +3620,7 @@ button.note-label:hover {
   border-radius: 0;
   background: none;
   resize: none;
-  font: var(--fs-md) / 1.7 var(--font-mono);
+  font: var(--fs-md) / 1.65 var(--font-ui);
 }
 
 .note-form .composer-error {
@@ -3596,8 +3631,33 @@ button.note-label:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 10px 8px 16px;
-  background: var(--bg-bar);
+  padding: 10px 12px 10px 36px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+
+.note-form-foot > button {
+  border-radius: var(--r-lg);
+}
+
+/* Unused, an outlined chip that says what it is for; it widens as labels come. */
+.note-form .note-labels-field {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.note-form .note-labels-input:not(:focus-within):has(> input:placeholder-shown:first-child) {
+  margin-left: 0;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 1px var(--border);
+  background-image: none;
+}
+
+.note-form .note-labels-input:not(:focus-within):has(> input:placeholder-shown:first-child) input {
+  min-width: 0;
+  width: 9ch;
+  cursor: pointer;
 }
 
 .note-labels-field {
@@ -4117,31 +4177,34 @@ a.path-link:hover {
    one: a field with its own frame inside a frame was two lines for one box. */
 .composer {
   width: min(720px, 100%);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
   background: var(--bg-raised);
   font-family: var(--font-ui);
 }
 
 .composer:focus-within {
-  box-shadow: var(--field-ring);
+  border-color: var(--border-strong);
 }
 
 .composer-title {
-  padding: 8px 10px 0;
+  padding: 10px 12px 0;
   color: var(--fg-3);
-  font-size: var(--fs-xs);
+  font: 600 var(--fs-tag) / 1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
+/* It grows with what is written, so a grip to drag would be one more thing. */
 .composer textarea {
   display: block;
   width: 100%;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: 0;
   border-radius: 0;
   background: none;
-  resize: vertical;
-  font-size: var(--fs-md);
-  line-height: 1.5;
+  resize: none;
+  font: var(--fs-md) / 1.5 var(--font-ui);
 }
 
 .composer textarea:focus {
@@ -4152,7 +4215,28 @@ a.path-link:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px 8px;
+  padding: 0 8px 8px 12px;
+}
+
+.composer-actions > button {
+  border-radius: var(--r-lg);
+}
+
+.keys-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.keys-hint kbd {
+  height: 16px;
+  padding: 0 4px;
+  font-size: var(--fs-tag);
+  line-height: 16px;
+}
+
+.keys-hint kbd:last-of-type {
+  margin-right: 2px;
 }
 
 .composer-error {
@@ -4350,9 +4434,11 @@ a.path-link:hover {
 .palette-input .glob {
   flex: none;
   width: 110px;
-  height: var(--ctl-h);
+  height: calc(var(--ctl-h-sm) + 4px);
   padding: 0 8px;
+  border-radius: var(--r-lg);
   background: var(--bg-input);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
   font: var(--fs-xs) var(--font-mono);
 }
 
@@ -4382,17 +4468,18 @@ a.path-link:hover {
   display: flex;
   align-items: center;
   gap: 2px;
-  width: min(460px, calc(100% - 24px));
-  padding: 4px;
+  width: min(480px, calc(100% - 24px));
+  padding: 5px;
   background: var(--bg-raised);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   box-shadow: var(--shadow-pop);
 }
 
 .find-bar input {
   flex: 1;
   min-width: 0;
-  margin-right: 2px;
+  margin-right: 4px;
+  border-radius: var(--r-lg);
   font-family: var(--font-mono);
 }
 
@@ -4425,6 +4512,20 @@ a.path-link:hover {
   min-width: var(--ctl-h-sm);
   padding: 0 6px;
   font: 500 var(--fs-xs) / 1 var(--font-mono);
+}
+
+/* One track for the three, so they read as switches on the query, not words. */
+:root:not(.phone) .toggles {
+  padding: 2px;
+  border-radius: var(--r-lg);
+  background: var(--bg-input);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+:root:not(.phone) .toggles > button.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .palette-list,
@@ -4675,6 +4776,59 @@ a.path-link:hover {
 .search-more {
   color: var(--accent);
   font-size: var(--fs-xs);
+}
+
+/* On a computer the results are rounded rows inset in the list, the picked one
+   lifted, as the palettes' are; the labels are quiet captions over them. */
+:root:not(.phone) .search-results {
+  padding: 0 6px 6px;
+}
+
+:root:not(.phone) .search-section {
+  height: auto;
+  padding: 12px 8px 6px;
+  background: none;
+  color: var(--fg-3);
+  font: 600 var(--fs-tag) / 1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:root:not(.phone) .search-section .dim {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root:not(.phone) .search-results .search-file {
+  margin: 0 -6px;
+  padding: 0 14px;
+  background: var(--bg);
+}
+
+:root:not(.phone) .search-results .search-hit,
+:root:not(.phone) .search-results .palette-row {
+  border-radius: var(--r-md);
+}
+
+:root:not(.phone) .search-results .search-hit {
+  padding-inline: 8px;
+}
+
+:root:not(.phone) .search-results .search-hit.on {
+  box-shadow: none;
+}
+
+/* The line it stands on, tinted across rather than marked down its edge. */
+:root:not(.phone) .search-preview .search-hit.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: none;
+}
+
+:root:not(.phone) .search-preview > .search-file {
+  height: calc(var(--row-h) + 6px);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
 }
 
 .palette-foot button.ghost {
@@ -5855,15 +6009,14 @@ body.resizing * {
 .model-list.attach-menu {
   position: fixed;
   z-index: 110;
-  width: 240px;
+  width: 300px;
   max-height: 60vh;
+  padding: 0 6px 6px;
   overflow-y: auto;
 }
 
-.attach-menu .model-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.attach-menu .branch-sep {
+  padding-top: 12px;
 }
 
 .menu-label {

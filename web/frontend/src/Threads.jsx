@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, Markdown } from "./links.js";
 import { agentName, cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
-import { AgentIcon, IconAsk, IconCheck, IconChevronDown, IconNewSession, IconSpark, IconX } from "./icons.jsx";
+import { AgentIcon, IconAsk, IconCheck, IconChevronDown, IconNewSession, IconReply, IconSpark, IconUndo } from "./icons.jsx";
 import { useBack } from "./phone/back.js";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
@@ -96,13 +96,14 @@ function Thread({ thread, onAction, onAttach, compact, ticked, onTick }) {
           {/* A draft goes out with an answer, so there is nothing to reply to or resolve. */}
           {i === thread.comments.length - 1 && !replying && !editing && !thread.draft && (
             <div className="thread-foot">
-              <button className="link" onClick={() => setReplying(true)}>
-                Reply
+              <button className="thread-act" onClick={() => setReplying(true)}>
+                <IconReply size={13} /> Reply
               </button>
               <button
-                className="link"
+                className="thread-act"
                 onClick={() => onAction({ type: "resolve", thread, resolved: !thread.resolved })}
               >
+                {thread.resolved ? <IconUndo size={13} /> : <IconCheck size={13} />}
                 {thread.resolved ? "Reopen" : "Resolve"}
               </button>
               {thread.resolved ? (
@@ -203,34 +204,34 @@ export function AttachButton({ className, onClick, what, instead, ask }) {
       {open &&
         createPortal(
         <div className="model-list attach-menu" ref={menu} style={at}>
-          <div className="menu-label">Send to</div>
+          <div className="branch-sep">Send to</div>
           {t.choices.map((c) => (
             <button
               key={c.id}
-              className={cx(c.id === t.target && "on")}
+              className="branch-row"
+              title={c.label}
               onClick={() => {
                 setOpen(false);
                 t.onTarget(c.id);
                 onClick(c.id);
               }}
             >
-              <span className="model-name agent-label">
-                <AgentIcon agent={c.agent} size={12} />
-                {c.label}
-              </span>
+              <AgentIcon agent={c.agent} size={14} />
+              <span className="branch-name ui">{c.label}</span>
+              {c.id === t.target && <IconCheck size={14} className="branch-tick" />}
             </button>
           ))}
           <button
+            className="branch-row create"
             onClick={() => {
               setOpen(false);
               onClick("");
             }}
             title={`Send to a new ${agentName(t.newAgent)} session, and go to it`}
           >
-            <span className="model-name agent-label">
-              <IconNewSession size={12} />
-              New session
-            </span>
+            <IconNewSession size={14} />
+            <span className="branch-name ui">New session</span>
+            <span className="branch-hint">{agentName(t.newAgent)}</span>
           </button>
         </div>,
           document.body,
@@ -335,12 +336,15 @@ export function Composer({
       />
       {error && <div className="composer-error">{error}</div>}
       <div className="composer-actions">
-        <span className="dim hint">{modKey}+Enter to save</span>
+        <span className="hint keys-hint">
+          <kbd>{modKey}</kbd>
+          <kbd>Enter</kbd> to save
+        </span>
         {typeof aside === "function" ? aside(body.trim()) : aside}
         <span className="spacer" />
         {onCancel && (
           <button className="ghost" onClick={onCancel}>
-            <IconX size={12} /> Cancel
+            Cancel
           </button>
         )}
         <button className="primary" onClick={submit} disabled={!body.trim() || busy}>

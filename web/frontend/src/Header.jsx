@@ -514,19 +514,28 @@ function ScopePicker({ scope, resolved, meta, pr, mode, onScope, onReviewPR }) {
               onChange={(e) => setCustom(e.target.value)}
               onKeyDown={(e) => e.stopPropagation()}
             />
-            <button className="primary" type="submit">
+            <button className="primary" type="submit" disabled={!custom.trim()}>
               Go
             </button>
           </form>
 
           {!code && branches.length > 0 && (
-            <div className="scope-chips">
+            <>
+              <div className="scope-sep">Since it left a branch</div>
               {branches.slice(0, 6).map((b) => (
-                <button key={b} onClick={() => pick({ kind: "custom", rev: `${b}...` })} title={`Everything since the merge base with ${b}`}>
-                  {b}
+                <button
+                  key={b}
+                  className="scope-item scope-branch"
+                  onClick={() => pick({ kind: "custom", rev: `${b}...` })}
+                  title={`Everything since the merge base with ${b}`}
+                >
+                  <span className="scope-tick">
+                    <IconBranch size={12} />
+                  </span>
+                  <span className="scope-label mono">{b}</span>
                 </button>
               ))}
-            </div>
+            </>
           )}
 
           <div className="scope-desc">

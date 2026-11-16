@@ -518,11 +518,12 @@ function NoteForm({ note, labels: startLabels, known, dirty, onSave, onCancel })
         />
         <LabelInput labels={labels} onLabels={setLabels} text={labelText} onText={setLabelText} known={known} />
       </div>
-      <textarea ref={bodyRef} className="note-body-input" value={body} placeholder="Details, in Markdown" onChange={(e) => setBody(e.target.value)} />
+      <textarea ref={bodyRef} className="note-body-input" value={body} placeholder="Add details… Markdown works" onChange={(e) => setBody(e.target.value)} />
       {error && <div className="composer-error">{error}</div>}
       <div className="note-form-foot">
-        <span className="hint">
-          {modKey}+Enter to save · Esc to {note ? "stop editing" : "close"}
+        <span className="hint keys-hint">
+          <kbd>{modKey}</kbd>
+          <kbd>Enter</kbd> to save, <kbd>Esc</kbd> to {note ? "stop editing" : "close"}
         </span>
         <span className="spacer" />
         <button className="ghost" onClick={onCancel}>

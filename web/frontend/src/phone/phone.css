@@ -1730,6 +1730,7 @@ html.phone .p-comments .pad,
 html.phone .p-pad-sheet .pad {
   margin: 4px 12px 12px;
   padding: 14px 16px;
+  border: 0;
   border-radius: 16px;
   background: var(--m-surface);
   font-size: 15px;
@@ -1760,7 +1761,6 @@ html.phone .p-comments .thread {
 }
 
 html.phone .p-comments .comment-actions button,
-html.phone .p-comments .thread-foot .link,
 html.phone .p-comments .thread-foot button {
   min-height: 36px;
   padding: 0 10px;
