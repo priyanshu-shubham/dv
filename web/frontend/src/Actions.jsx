@@ -5,8 +5,8 @@ import { cx } from "./util.js";
 import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
 import {
-  AgentIcon, IconArrowDown, IconAsk, IconBack, IconBolt, IconBranch, IconComment, IconEdit, IconEye, IconFile, IconGauge, IconNewSession,
-  IconOpenOut, IconPad, IconPlus, IconRefresh, IconSettings, IconShell, IconSplit, IconTemporary, IconX,
+  AgentIcon, IconArrowDown, IconAsk, IconBack, IconBolt, IconBranch, IconComment, IconEdit, IconEye, IconFile, IconGauge, IconKeyboard,
+  IconNewSession, IconOpenOut, IconPad, IconPlus, IconRefresh, IconSettings, IconShell, IconSplit, IconTemporary, IconX,
 } from "./icons.jsx";
 
 // An action is kept to run in a click, from ⚡ at the top or Alt+A: a prompt,
@@ -209,7 +209,7 @@ const OWN_ICONS = {
   "new-session": IconNewSession, "new-worktree": IconBranch, "new-task": IconTemporary, "close-task": IconX,
   comments: IconComment, notes: IconFile, pad: IconPad, ask: IconAsk, "new-note": IconPlus, scope: IconSplit,
   pr: IconOpenOut, "review-pr": IconEye, branch: IconBranch, settings: IconSettings, restart: IconRefresh,
-  hub: IconBack, pull: IconArrowDown, main: IconArrowDown, monitor: IconGauge,
+  hub: IconBack, pull: IconArrowDown, main: IconArrowDown, monitor: IconGauge, keys: IconKeyboard,
 };
 
 function ActionIcon({ a }) {

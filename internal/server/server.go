@@ -15,7 +15,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -523,27 +522,16 @@ func WritePage(w http.ResponseWriter, boot Boot) {
 			page = bytes.Replace(page, []byte(src), []byte(src[:len(src)-1]+"?v="+assetVersion+`"`), 1)
 		}
 	}
-	// The theme is on <html> from the first frame, before any script has run.
+	// The theme and the rest of Appearance are on <html> from the first frame,
+	// before any script has run.
 	var theme string
-	var settings struct {
-		CodeColors string `json:"codeColors"`
-	}
 	json.Unmarshal(boot.Prefs["user"]["theme"], &theme)
-	json.Unmarshal(boot.Prefs["user"]["settings"], &settings)
-	attrs := ""
-	if word.MatchString(theme) {
-		attrs += ` data-theme="` + theme + `"`
-	}
-	if word.MatchString(settings.CodeColors) {
-		attrs += ` data-code="` + settings.CodeColors + `"`
-	}
+	attrs := PageAppearance(theme, boot.Prefs["user"]["settings"])
 	page = bytes.Replace(page, []byte(`<html lang="en">`), []byte(`<html lang="en"`+attrs+`>`), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(page)
 }
-
-var word = regexp.MustCompile(`^[a-z]+$`)
 
 // Answers reports whether a dv reviewing root answers at url, as one
 // announced there may have stopped without taking its record down.

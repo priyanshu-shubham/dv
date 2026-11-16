@@ -1,16 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
-import { TAB_COLORS } from "./favicon.js";
+import { tabMark, tabName } from "./appearance.js";
+import { tabIconURL } from "./favicon.js";
 import { cx, useDismiss, useFixedMenu } from "./util.js";
 
-// HubMark is which dv this is, as Settings → Appearance names and colours it,
-// where the bar would otherwise say dv on every computer alike.
+// HubMark is which dv this is: the tab's icon, which always says dv, and the
+// name Settings → Appearance gives this computer, in the accent when the icon
+// takes it.
 export function HubMark({ settings }) {
+  const mark = tabMark(document.documentElement.dataset.theme || "dark", settings);
   return (
-    <span className="logo-name" style={{ color: TAB_COLORS[settings.tabColor] }}>
-      {settings.tabName?.trim() || "dv"}
-    </span>
+    <>
+      <img className="logo-mark" src={tabIconURL(mark)} width={18} height={18} alt="" />
+      <span className="logo-name" style={{ color: mark.style ? "var(--tab-color)" : undefined }}>
+        {tabName(settings)}
+      </span>
+    </>
   );
 }
 

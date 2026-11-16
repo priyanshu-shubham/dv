@@ -48,7 +48,8 @@ import {
 } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
-import { setTabIcon, tabDot } from "./favicon.js";
+import { tabDot } from "./favicon.js";
+import { tabName, useAppearance, useTabIcon } from "./appearance.js";
 import { closeTask, startTask } from "./tasks.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
@@ -212,12 +213,7 @@ export default function App() {
     [],
   );
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
-  useEffect(() => {
-    document.documentElement.dataset.code = settings.codeColors || "github";
-  }, [settings.codeColors]);
+  useAppearance(theme, settings);
 
   // Automatic moves to another comparison as the work does - a commit leaves
   // nothing uncommitted - and says so, or the diff changes under the reader
@@ -1453,6 +1449,7 @@ export default function App() {
     },
     meta?.git && meta.head?.sha && { id: "branch", name: "Switch branch", note: "Or make a new one · also the branch in the bar", run: () => openOverlay({ type: "branch" }) },
     { id: "settings", name: "Open settings", note: phoneApp ? "" : "Also the , key", run: () => openOverlay({ type: "settings" }) },
+    !phoneApp && { id: "keys", name: "Keyboard shortcuts", note: "Also the ? key", run: () => openOverlay({ type: "help" }) },
     {
       id: "monitor",
       name: "Server metrics and logs",
@@ -1767,14 +1764,14 @@ export default function App() {
   // checkouts that share a name.
   useEffect(() => {
     const n = requests.length;
-    const who = settings.tabName?.trim() || "dv";
+    const who = tabName(settings);
     const repo = meta ? `${who} - ${meta.repo} (${meta.place})` : who;
     const ended = dot === "done";
     const note = n > 0 ? `${agentName(requests[0].via)} is waiting` : ended && "Finished";
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
   }, [requests, dot, meta, settings.tabName]);
   const update = useUpdate(settings.updateCheck === false);
-  useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
+  useTabIcon(theme, settings, dot);
 
   // Shift+Up and Down go through the open sessions in the order the list has
   // them. The message box keeps them for selecting text, unless it is empty,
@@ -2641,7 +2638,6 @@ export default function App() {
         resolvedScope={diff?.scope}
         onScope={setScope}
         onSearch={() => openSearch()}
-        onHelp={() => openOverlay({ type: "help" })}
         onSettings={() => openOverlay({ type: "settings" })}
         waiting={requests.length}
         arrived={arrived}

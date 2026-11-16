@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { say } from "../Notices.jsx";
+import { Switch } from "../Overlays.jsx";
 import { cx, relTime } from "../util.js";
 import { current, pushable, subscribe, unsubscribe } from "./push.js";
 
@@ -94,16 +95,7 @@ export function PushSetting({ phone = false }) {
           </div>
         )}
       </div>
-      <span className="seg">
-        {[
-          [false, "Off"],
-          [true, "On"],
-        ].map(([v, name]) => (
-          <button key={name} className={cx(v === on && "on")} aria-pressed={v === on} disabled={!pushable || busy || on === null} onClick={() => pick(v)}>
-            {name}
-          </button>
-        ))}
-      </span>
+      <Switch on={!!on} label={words.label} disabled={!pushable || busy || on === null} onChange={pick} />
     </div>
   );
 }

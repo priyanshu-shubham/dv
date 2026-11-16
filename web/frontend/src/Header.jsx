@@ -5,7 +5,8 @@ import { blockedNote, branchRows, fetchNote, rowHint, rowLabel, switchDone, useB
 import { cx, modKey, useDismiss } from "./util.js";
 import { HubMark } from "./Machine.jsx";
 import {
-  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconKeyboard, IconPad, IconPin, IconSearch, IconSettings, IconUndo,
+  IconBack, IconBell, IconBolt, IconBranch, IconCheck, IconChevronDown, IconComment, IconDownload, IconPad, IconPin, IconPlus, IconSearch, IconSettings,
+  IconUndo,
 } from "./icons.jsx";
 
 const PR_MS = 60000;
@@ -69,7 +70,7 @@ export function BranchRow({ meta, pr }) {
   );
 }
 
-const SWITCH_SHOWN = 8;
+const SWITCH_SHOWN = 12;
 
 // HeadRef is the branch in the bar. It opens on pulling it, and main when on
 // another, with a remote to pull from; and on switching to another branch,
@@ -97,52 +98,99 @@ function HeadRef({ meta }) {
   };
   const rows = branchRows(can, meta.branches, branch, filter, SWITCH_SHOWN);
   const note = blockedNote(can) || fetchNote(can);
+  // Typing names a branch, so the pulls make way for the matches; Enter starts
+  // on the first of those, as before there were arrows.
+  const pulling = filter ? [] : [branch && pulls && { main: false, label: `Pull ${branch}` }, trunk && pulls && { main: true, label: `Update ${trunk}` }].filter(Boolean);
+  const items = [...pulling.map((p) => ({ pull: p })), ...rows.map((row) => ({ row }))];
+  const [sel, setSel] = useState(-1);
+  const usable = (i) => items[i] && !state?.busy && !items[i].row?.off;
+  const step = (from, by) => {
+    for (let i = from + by; i >= 0 && i < items.length; i += by) if (usable(i)) return i;
+    return -1;
+  };
+  const at = usable(sel) ? sel : step(pulling.length - 1, 1) >= 0 ? step(pulling.length - 1, 1) : step(-1, 1);
+  const choose = (it) => (it.pull ? state?.busy || pull(it.pull.main) : switchTo(it.row));
+  const onKey = (e) => {
+    e.stopPropagation();
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = step(at, e.key === "ArrowDown" ? 1 : -1);
+      if (next >= 0) setSel(next);
+    } else if (e.key === "Enter" && at >= 0) choose(items[at]);
+    else if (e.key === "Escape") setOpen(false);
+  };
+  const said = state?.busy ? state.doing : state?.done || state?.error || note;
   return (
     <span className="model-menu headref-menu" ref={ref}>
-      <button className="headref" title={subject} onClick={() => (setOpen((o) => !o), state?.busy || setState(null), setFilter(""))}>
+      <button className="headref" title={subject} aria-expanded={open} onClick={() => (setOpen((o) => !o), state?.busy || setState(null), setFilter(""), setSel(-1))}>
         <IconBranch size={13} />
         <span>{branch || sha}</span>
+        <IconChevronDown size={11} className="headref-caret" />
       </button>
       {open && (
-        <div className="model-list">
-          {pulls && branch && (
-            <button disabled={state?.busy} onClick={() => pull(false)}>
-              <span className="model-name">Pull {branch}</span>
-            </button>
-          )}
-          {pulls && trunk && (
-            <button disabled={state?.busy} onClick={() => pull(true)}>
-              <span className="model-name">Update {trunk}</span>
-            </button>
-          )}
-          <div className="scope-sep">Switch to</div>
-          <input
-            className="headref-filter"
-            value={filter}
-            placeholder="Find or name a new branch"
-            autoFocus
-            onChange={(e) => setFilter(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter" && rows.length) switchTo(rows[0]);
-            }}
-          />
-          {rows.map((r) => (
-            <button
-              key={(r.create ? "+" : "") + (r.track || r.branch)}
-              disabled={r.off || state?.busy}
-              title={rowHint(r, can)}
-              onClick={() => switchTo(r)}
-            >
-              <span className="model-name mono">{rowLabel(r)}</span>
-            </button>
-          ))}
-          {note && <div className="model-note headref-note">{note}</div>}
-          {(state || pulls) && (
-            <div className={cx("model-note", "headref-note", state?.error && "del")}>
-              {state?.busy ? state.doing : state?.done || state?.error || "Pulls only when it fast-forwards."}
-            </div>
-          )}
+        <div className="model-list branch-menu">
+          <label className="branch-find">
+            <IconSearch size={13} />
+            <input
+              value={filter}
+              placeholder="Find a branch, or name a new one"
+              autoFocus
+              spellCheck={false}
+              onChange={(e) => (setFilter(e.target.value), setSel(-1))}
+              onKeyDown={onKey}
+            />
+          </label>
+          <div className="branch-list">
+            {!filter && (
+              <div className="branch-current">
+                <IconBranch size={14} />
+                <span className="branch-text">
+                  <span className="branch-name">{branch || sha}</span>
+                  {subject && <span className="branch-sub">{subject}</span>}
+                </span>
+                <IconCheck size={13} className="branch-tick" />
+              </div>
+            )}
+            {items.map((it, i) => {
+              if (it.pull)
+                return (
+                  <button key={it.pull.label} className={cx("branch-row", i === at && "on")} disabled={state?.busy} onMouseMove={() => setSel(i)} onClick={() => choose(it)}>
+                    <IconDownload size={14} />
+                    <span className="branch-name ui">{it.pull.label}</span>
+                    <span className="branch-hint">fast-forward</span>
+                  </button>
+                );
+              const r = it.row;
+              const first = i === pulling.length;
+              return (
+                <div key={(r.create ? "+" : "") + (r.track || r.branch)} className="branch-group">
+                  {first && !r.create && <div className="branch-sep">{filter ? "Matches" : "Switch to"}</div>}
+                  <button
+                    className={cx("branch-row", i === at && "on", r.create && "create")}
+                    disabled={r.off || state?.busy}
+                    title={rowHint(r, can)}
+                    onMouseMove={() => setSel(i)}
+                    onClick={() => choose(it)}
+                  >
+                    {r.create ? <IconPlus size={14} /> : <IconBranch size={14} />}
+                    {r.create ? (
+                      <span className="branch-name ui">
+                        Create <b>{r.branch}</b>
+                      </span>
+                    ) : (
+                      <span className="branch-name">{rowLabel(r)}</span>
+                    )}
+                    {(r.create || r.track || can?.elsewhere?.includes(r.branch)) && (
+                      <span className="branch-hint">{r.create ? "from HEAD" : r.track ? "remote" : "in a worktree"}</span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+            {!rows.length && filter.trim() === branch && <div className="branch-empty">You are on {branch}.</div>}
+            {!rows.length && !filter && <div className="branch-empty">No other branches. Type a name to make one.</div>}
+          </div>
+          {said && <div className={cx("branch-note", state?.error && "del", state?.done && "done", !state && can?.blocked && "warn")}>{said}</div>}
         </div>
       )}
     </span>
@@ -158,7 +206,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // page is in is the sidebar's, at the top of the list that mode fills. A phone
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
-  meta, folder, mode, scope, resolvedScope, onScope, onSearch, onHelp, onSettings, waiting, arrived, onBell, bellOn,
+  meta, folder, mode, scope, resolvedScope, onScope, onSearch, onSettings, waiting, arrived, onBell, bellOn,
   comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onReviewPR, settings,
 }) {
   const agent = mode === "agent";
@@ -205,7 +253,7 @@ export default function Header({
         >
           {/* Keyed by arrivals, so the bell rings again for each new one. */}
           <span className="bell-glyph" key={arrived}>
-            <IconBell size={14} />
+            <IconBell size={16} />
           </span>
           <span className="bell-count">{waiting}</span>
         </button>
@@ -216,23 +264,20 @@ export default function Header({
         onClick={onComments}
         title={`Comments and notes${comments ? `: ${comments} open comment${comments === 1 ? "" : "s"}` : ""}`}
       >
-        <IconComment size={14} />
+        <IconComment size={16} />
         {comments > 0 && <span className="comments-count">{comments}</span>}
       </button>
       <button className={cx("icon", padOn && "on")} aria-pressed={padOn} onClick={onPad} title="Pad (Alt+P)">
-        <IconPad size={14} />
+        <IconPad size={16} />
       </button>
       <button className="icon" onClick={onActions} title="Actions (Alt+A)">
-        <IconBolt size={14} />
+        <IconBolt size={16} />
       </button>
       <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
-        <IconSearch size={14} />
-      </button>
-      <button className="icon" onClick={onHelp} title="Keyboard shortcuts (?)">
-        <IconKeyboard size={14} />
+        <IconSearch size={16} />
       </button>
       <button className={cx("icon", update && "has-update")} onClick={onSettings} title={update ? `Settings (,): dv v${update.latest} is out` : "Settings (,)"}>
-        <IconSettings size={14} />
+        <IconSettings size={16} />
       </button>
       </div>
     </header>

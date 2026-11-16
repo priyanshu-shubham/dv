@@ -1,6 +1,10 @@
-// The tab's icon: dv's own, or ringed in a colour so that dv on one computer is
-// told from dv on another at a glance, where the tab is too narrow for its
-// title. index.html has the plain one too, for the moment before this runs.
+// The tab's icon: dv's own, or ringed in the accent, or a tile of it, so that
+// dv on one computer is told from dv on another at a glance, where the tab is
+// too narrow for its title. index.html has the plain one too, for the moment
+// before this runs. app.go draws the same for the installed app.
+
+// The colours the tab took by name before it took the accent; settings still
+// holding one are read through them.
 export const TAB_COLORS = {
   blue: "#2f81f7",
   purple: "#8957e5",
@@ -15,16 +19,27 @@ export const TAB_COLORS = {
 // strip is the browser's rather than the page's theme.
 const DOTS = { ask: "#d29922", done: "#3fb950" };
 
-export function tabIconURL(color, dot) {
-  const c = TAB_COLORS[color];
+// The tile's greys, on a filled tile the accent darkened by these.
+const DIVIDER_SHADE = 0.2;
+const LINE_SHADE = 0.32;
+const shade = (c, k) =>
+  "#" +
+  [1, 3, 5].map((i) => Math.round(parseInt(c.slice(i, i + 2), 16) * (1 - k)).toString(16).padStart(2, "0")).join("");
+
+// mark is { style: "" | "ring" | "filled", color: "#rrggbb" }.
+export function tabIconURL(mark, dot) {
+  const { style, color: c } = mark || {};
+  const filled = style === "filled" && c;
   // Drawn after the rest, so the divider running to the edge does not cut it.
-  const ring = c ? `<rect x="1.75" y="1.75" width="28.5" height="28.5" rx="7" fill="none" stroke="${c}" stroke-width="3.5"/>` : "";
+  const ring = style === "ring" && c ? `<rect x="1.75" y="1.75" width="28.5" height="28.5" rx="7" fill="none" stroke="${c}" stroke-width="3.5"/>` : "";
   const badge = DOTS[dot] ? `<circle cx="25" cy="7" r="7.5" fill="${DOTS[dot]}" stroke="#141414" stroke-width="2.5"/>` : "";
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">` +
-    `<rect x="1" y="1" width="30" height="30" rx="7" fill="#141414" stroke="#3e3e3e" stroke-width="2"/>` +
-    `<rect x="14" y="2" width="4" height="28" fill="#2c2c2c"/>` +
-    `<g fill="#6a6a6a"><rect x="6" y="8" width="6" height="4"/><rect x="20" y="8" width="6" height="4"/>` +
+    (filled
+      ? `<rect x="1" y="1" width="30" height="30" rx="7" fill="${c}" stroke="${c}" stroke-width="2"/>`
+      : `<rect x="1" y="1" width="30" height="30" rx="7" fill="#141414" stroke="#3e3e3e" stroke-width="2"/>`) +
+    `<rect x="14" y="2" width="4" height="28" fill="${filled ? shade(c, DIVIDER_SHADE) : "#2c2c2c"}"/>` +
+    `<g fill="${filled ? shade(c, LINE_SHADE) : "#6a6a6a"}"><rect x="6" y="8" width="6" height="4"/><rect x="20" y="8" width="6" height="4"/>` +
     `<rect x="6" y="20" width="6" height="4"/><rect x="20" y="20" width="6" height="4"/></g>` +
     `<rect x="6" y="14" width="6" height="4" fill="#f85149"/><rect x="20" y="14" width="6" height="4" fill="#3fb950"/>` +
     ring +
@@ -36,9 +51,9 @@ export function tabIconURL(color, dot) {
 // tabIconJPEG is the icon as a picture for the Telegram bot, in base64: 640
 // pixels square, as Telegram likes them, on a dark ground with the icon clear
 // of the circle Telegram crops it to.
-export async function tabIconJPEG(color) {
+export async function tabIconJPEG(mark) {
   const icon = new Image();
-  icon.src = tabIconURL(color);
+  icon.src = tabIconURL(mark);
   await icon.decode();
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 640;
@@ -52,9 +67,9 @@ export async function tabIconJPEG(color) {
   return btoa(bytes);
 }
 
-export function setTabIcon(color, dot) {
+export function setTabIcon(mark, dot) {
   const link = document.querySelector('link[rel="icon"]');
-  if (link) link.href = tabIconURL(color, dot);
+  if (link) link.href = tabIconURL(mark, dot);
 }
 
 // The notices are the whole hub's, so any tab of a hub tells of them all.

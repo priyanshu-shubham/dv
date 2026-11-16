@@ -11,9 +11,12 @@ import { cx, isMac, isTyping, LRM, modKey, openFolderSession, statusLabel, useCo
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
 import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { IconBack, IconFile, IconRefresh, IconSearch, IconSymbol, IconX } from "./icons.jsx";
+import {
+  IconAsk, IconBack, IconBell, IconBolt, IconFile, IconGauge, IconPalette, IconRefresh, IconSearch, IconServer, IconShell, IconSpark, IconSplit, IconSymbol, IconX,
+} from "./icons.jsx";
 import { MachineSetting } from "./Machine.jsx";
-import { TAB_COLORS, tabIconJPEG, tabIconURL } from "./favicon.js";
+import { tabIconJPEG, tabIconURL } from "./favicon.js";
+import { accentOf, ACCENTS, cleanName, CODE_FONTS, NAME_MAX, CODE_SIZES, LOOK_KEYS, lookOn, LOOKS, tabMark, THEMES, UI_FONTS } from "./appearance.js";
 import { Picker } from "./Picker.jsx";
 import { useBack } from "./phone/back.js";
 import { PushSetting } from "./phone/PushSetting.jsx";
@@ -786,11 +789,238 @@ export const OFF_ON = [
   [true, "On"],
 ];
 
-const TAB_ICONS = ["", ...Object.keys(TAB_COLORS)].map((c) => [
-  c,
-  <img src={tabIconURL(c)} width={16} height={16} alt="" />,
-  c ? c[0].toUpperCase() + c.slice(1) : "dv's own",
-]);
+const CODE_COLORS = [["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]];
+const fontChoices = (fonts, base) => Object.entries(fonts).map(([k, [name, family]]) => [k, <span style={{ fontFamily: family || base }}>{name}</span>, name]);
+
+// AppearanceSettings is Settings' first tab. A look sets the theme and the
+// switches under it at once; the accent is this computer's colour, which the
+// tab icon, the name in the top bar and the installed app take too.
+function AppearanceSettings({ theme, onTheme, settings: s, onChange, phoneApp }) {
+  const codeColors = (
+    <Setting
+      label="Code colors"
+      note="How code is highlighted. Monokai is dark only: the light theme shows GitHub's."
+      value={s.codeColors || "github"}
+      onPick={(v) => onChange({ codeColors: v })}
+      choices={CODE_COLORS}
+    />
+  );
+  const accent = accentOf(s);
+  const mark = tabMark(theme, s);
+  // Settings from before the accent hold the tab's colour by name; the first
+  // pick here moves them over.
+  const setMark = (patch) => onChange({ accent: accent || undefined, tabIcon: mark.style || undefined, tabColor: undefined, ...patch });
+  const accentRow = (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>Accent</div>
+        <div className="settings-note">
+          {phoneApp
+            ? "This computer's colour, in Material's tones here: what is picked, and the name in the top bar on a computer."
+            : "This computer's colour: links, focus and selection, and the tab icon and name below. Every dv on this computer uses it."}
+        </div>
+      </div>
+      <span className="seg accent-picks">
+        <button className={cx(!accent && "on")} aria-pressed={!accent} title="Each theme's own" onClick={() => setMark({ accent: undefined })}>
+          Theme's
+        </button>
+        {ACCENTS.map((c) => (
+          <button key={c} className={cx(accent === c && "on")} aria-pressed={accent === c} aria-label={c} title={c} onClick={() => setMark({ accent: c })}>
+            <span className="swatch" style={{ background: c }} />
+          </button>
+        ))}
+        <label className={cx("any-colour", accent && !ACCENTS.includes(accent) && "on")} title="Any colour">
+          <span className="swatch" style={accent && !ACCENTS.includes(accent) ? { background: accent } : undefined} />
+          <input type="color" value={accent || THEMES[theme]?.accent || THEMES.dark.accent} onChange={(e) => setMark({ accent: e.target.value })} />
+        </label>
+      </span>
+    </div>
+  );
+  // The phone app keeps Material's dark look, in the accent, and has no
+  // sidebar or tab to name.
+  if (phoneApp)
+    return (
+      <>
+        {accentRow}
+        {codeColors}
+      </>
+    );
+  const look = Object.keys(LOOKS).find((k) => lookOn(LOOKS[k], theme, s)) || "";
+  const pickLook = (k) => {
+    const l = LOOKS[k];
+    onTheme(l.theme);
+    onChange(Object.fromEntries(LOOK_KEYS.map((key) => [key, l[key]])));
+  };
+  const off = (v, none) => (v === none ? undefined : v);
+  const accentFor = (t) => accent || THEMES[t].accent;
+  return (
+    <>
+      <div className="settings-heading">Colour</div>
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Look</div>
+          <div className="settings-note">Sets the theme and the switches below it at once. The accent, the tab and the code size stay as they are.</div>
+        </div>
+        <div className="look-tiles" role="group" aria-label="Look">
+          {Object.entries(LOOKS).map(([k, l]) => (
+            <button key={k} className={cx("look-tile", k === look && "on")} aria-pressed={k === look} onClick={() => pickLook(k)}>
+              <LookPicture theme={l.theme} accent={accentFor(l.theme)} glass={l.glass} />
+              <span>{l.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <Setting
+        label="Theme"
+        value={theme}
+        onPick={onTheme}
+        choices={Object.entries(THEMES).map(([k, t]) => [
+          k,
+          <>
+            <span className="theme-swatch" style={{ "--sw": t.bg, "--dot": accentFor(k) }} />
+            {t.name}
+          </>,
+          t.name,
+        ])}
+      />
+      {accentRow}
+      {codeColors}
+      <Setting
+        label="Glow"
+        note="A wash of the accent from the corners of the window."
+        value={s.glow || "off"}
+        onPick={(v) => onChange({ glow: off(v, "off") })}
+        choices={[["off", "Off"], ["soft", "Soft"], ["strong", "Strong"]]}
+      />
+      <Setting
+        label="Glass"
+        note="Menus, palettes and dialogs frosted over the page behind them."
+        value={!!s.glass}
+        onPick={(v) => onChange({ glass: v || undefined })}
+        choices={OFF_ON}
+      />
+      {s.glass && (
+        <>
+          <RangeSetting label="Blur" value={s.glassBlur ?? 16} min={0} max={40} step={2} unit="px" onChange={(v) => onChange({ glassBlur: off(v, 16) })} />
+          <RangeSetting label="Opacity" value={s.glassOpacity ?? 60} min={25} max={90} step={5} unit="%" onChange={(v) => onChange({ glassOpacity: off(v, 60) })} />
+        </>
+      )}
+
+      <div className="settings-heading">Space</div>
+      <Setting
+        label="Density"
+        note="Room around the text, not the text's size: rows, bars, padding and the spacing of prose."
+        value={s.density || "default"}
+        onPick={(v) => onChange({ density: off(v, "default") })}
+        choices={[["compact", "Compact"], ["default", "Default"], ["roomy", "Roomy"]]}
+      />
+      <Setting
+        label="Corners"
+        value={s.corners || "default"}
+        onPick={(v) => onChange({ corners: off(v, "default") })}
+        choices={[["sharp", "Sharp"], ["default", "Default"], ["round", "Round"]]}
+      />
+      <Setting
+        label="Changed lines"
+        note="How the diff marks an added or deleted line: its whole row shaded, lightly, or only a bar by its number."
+        value={s.changes || "shaded"}
+        onPick={(v) => onChange({ changes: off(v, "shaded") })}
+        choices={[["shaded", "Shaded"], ["light", "Light"], ["gutter", "Gutter only"]]}
+      />
+      <Setting
+        label="Sidebar"
+        note="On the right, the comments open over it."
+        value={s.sidebar || "left"}
+        onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
+        choices={[["left", "Left"], ["right", "Right"]]}
+      />
+      <Setting
+        label="Reduce motion"
+        note="Stops things sliding and fading as they change."
+        value={s.motion === false}
+        onPick={(v) => onChange({ motion: v ? false : undefined })}
+        choices={OFF_ON}
+      />
+
+      <div className="settings-heading">Type</div>
+      <Setting label="Interface font" value={s.uiFont || "system"} onPick={(v) => onChange({ uiFont: off(v, "system") })} choices={fontChoices(UI_FONTS, "")} />
+      <Setting label="Code font" value={s.codeFont || "jetbrains"} onPick={(v) => onChange({ codeFont: off(v, "jetbrains") })} choices={fontChoices(CODE_FONTS, '"JetBrains Mono Variable"')} />
+      <Setting label="Code size" value={s.codeSize || 12} onPick={(v) => onChange({ codeSize: off(v, 12) })} choices={CODE_SIZES.map((px) => [px, String(px)])} />
+
+      <div className="settings-heading">This computer</div>
+      <label className="settings-row">
+        <div className="settings-text">
+          <div>Name in the tab</div>
+          <div className="settings-note">
+            Beside dv's icon in the top bar, and in place of dv in the tab and as the installed app's name, to tell this computer's dv from another's: a word or two, as
+            home or work-pc. Letters, digits, spaces, dots, dashes and underscores, up to {NAME_MAX}. Every dv on this computer uses it.
+          </div>
+        </div>
+        <input
+          value={s.tabName || ""}
+          placeholder="dv"
+          maxLength={NAME_MAX}
+          spellCheck={false}
+          onChange={(e) => onChange({ tabName: cleanName(e.target.value) || undefined })}
+          onBlur={() => s.tabName && onChange({ tabName: cleanName(s.tabName).trim() || undefined })}
+        />
+      </label>
+      <Setting
+        label="Tab icon"
+        note="Ringed or filled, it takes the accent, as does the name in the top bar, and the app's icon when installed after picking it."
+        value={mark.style}
+        onPick={(v) => setMark({ tabIcon: v || undefined })}
+        choices={[
+          ["", "dv's own"],
+          ["ring", "Ringed"],
+          ["filled", "Filled"],
+        ].map(([v, name]) => [
+          v,
+          <>
+            <img src={tabIconURL({ style: v, color: mark.color })} width={16} height={16} alt="" />
+            {name}
+          </>,
+          name,
+        ])}
+      />
+    </>
+  );
+}
+
+function RangeSetting({ label, value, min, max, step, unit, onChange }) {
+  return (
+    <label className="settings-row">
+      <div className="settings-text">
+        <div>{label}</div>
+      </div>
+      <span className="range-setting">
+        <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+        <span className="range-value">
+          {value}
+          {unit}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+// LookPicture is a look's window in small: its bar, sidebar card and a file
+// card with a line picked out in its accent.
+function LookPicture({ theme, accent, glass }) {
+  const t = THEMES[theme];
+  return (
+    <span className={cx("look-picture", glass && "glass")} style={{ "--l-bg": t.bg, "--l-panel": t.panel, "--l-bar": t.bar, "--l-fg": t.fg, "--l-accent": accent }}>
+      <i className="l-bar" />
+      <i className="l-side" />
+      <i className="l-main">
+        <b />
+        <b />
+        <b className="l-pick" />
+        <b />
+      </i>
+    </span>
+  );
+}
 
 // SettingsOverlay is dv's preferences, kept in this browser: the page's own,
 // as the header also sets them, and `settings`, which only this sets through
@@ -814,32 +1044,23 @@ export function SettingsOverlay({
     tabsRef.current.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [tab]);
   const tabs = [
-    ["appearance", "Appearance"],
-    ["diff", "Diff"],
-    ["notifications", "Notifications"],
-    ["agent", "Agent"],
-    ...(terminal ? [["terminal", "Terminal"]] : []),
-    ...(ask ? [["ask", "Ask"]] : []),
-    ...(actions ? [["actions", "Actions"]] : []),
-    ["server", "Server"],
-    ["monitor", "Monitor"],
+    ["appearance", "Appearance", IconPalette],
+    ["diff", "Diff", IconSplit],
+    ["notifications", "Notifications", IconBell],
+    ["agent", "Agent", IconSpark],
+    ...(terminal ? [["terminal", "Terminal", IconShell]] : []),
+    ...(ask ? [["ask", "Ask", IconAsk]] : []),
+    ...(actions ? [["actions", "Actions", IconBolt]] : []),
+    ["server", "Server", IconServer],
+    ["monitor", "Monitor", IconGauge],
   ];
   return (
     <Modal onClose={onClose} centred className="settings">
-      {phoneApp ? (
-        <SessionBar title="Settings" onBack={onClose} menu={[]} />
-      ) : (
-        <div className="viewer-head">
-          <span className="path">Settings</span>
-          <span className="spacer" />
-          <button className="ghost" onClick={onClose}>
-            <IconX size={13} />
-          </button>
-        </div>
-      )}
-      <div className="settings-tabs">
+      {phoneApp && <SessionBar title="Settings" onBack={onClose} menu={[]} />}
+      <nav className="settings-tabs">
+        {!phoneApp && <div className="settings-title">Settings</div>}
         <span className="seg" role="tablist" ref={tabsRef}>
-          {tabs.map(([id, name]) => {
+          {tabs.map(([id, name, Icon]) => {
             // The Settings button's dot, on the tab the update is in.
             const dot = id === "server" && update;
             return (
@@ -851,57 +1072,20 @@ export function SettingsOverlay({
                 title={dot ? `dv v${update.latest} is out` : undefined}
                 onClick={() => setTab(id)}
               >
+                <Icon size={14} />
                 {name}
               </button>
             );
           })}
         </span>
-      </div>
+      </nav>
+      {!phoneApp && (
+        <button className="ghost settings-close" onClick={onClose} title="Close (Esc)">
+          <IconX size={14} />
+        </button>
+      )}
       <div className="settings-body">
-        {tab === "appearance" && (
-          <>
-            {/* The phone app is dark, and has no sidebar or tab to name. */}
-            {!phoneApp && <Setting label="Theme" value={theme} onPick={onTheme} choices={[["dark", "Dark"], ["light", "Light"]]} />}
-            <Setting
-              label="Code colors"
-              note="How code is highlighted. Monokai is dark only: the light theme shows GitHub's."
-              value={settings.codeColors || "github"}
-              onPick={(v) => onChange({ codeColors: v })}
-              choices={[["github", "GitHub"], ["one", "One"], ["solarized", "Solarized"], ["tomorrow", "Tomorrow"], ["monokai", "Monokai"]]}
-            />
-            {!phoneApp && (
-              <>
-                <Setting
-                  label="Sidebar"
-                  note="On the right, the comments open over it."
-                  value={settings.sidebar || "left"}
-                  onPick={(v) => onChange({ sidebar: v === "left" ? undefined : v })}
-                  choices={[["left", "Left"], ["right", "Right"]]}
-                />
-                <label className="settings-row">
-                  <div className="settings-text">
-                    <div>Name in the tab</div>
-                    <div className="settings-note">Shown in place of dv in the tab and the top bar, to tell this computer's dv from another's, and the name it installs under as an app. Every dv on this computer uses it.</div>
-                  </div>
-                  <input
-                    value={settings.tabName || ""}
-                    placeholder="dv"
-                    maxLength={40}
-                    spellCheck={false}
-                    onChange={(e) => onChange({ tabName: e.target.value || undefined })}
-                  />
-                </label>
-                <Setting
-                  label="Tab icon"
-                  note="Its colour is the name's in the top bar too, and the ring on the app's icon when installed after picking it."
-                  value={settings.tabColor || ""}
-                  onPick={(v) => onChange({ tabColor: v || undefined })}
-                  choices={TAB_ICONS}
-                />
-              </>
-            )}
-          </>
-        )}
+        {tab === "appearance" && <AppearanceSettings theme={theme} onTheme={onTheme} settings={settings} onChange={onChange} phoneApp={phoneApp} />}
         {tab === "diff" && (
           <>
             {!phone && <Setting label="Layout" note={keys ? "u toggles it" : ""} value={view} onPick={onView} choices={[["split", "Split"], ["unified", "Unified"]]} />}
@@ -1163,7 +1347,7 @@ export function WorktreeSession({ repo, from, onClose }) {
     : `A branch a remote has is checked out, tracking it; a new one starts from ${from}. In ${b ? `${repo}-${b.replaceAll("/", "-")}` : "a folder named for it"} beside ${repo}. What is not committed here stays behind.`;
   return (
     <Modal onClose={onClose} centred className="hub-form">
-      <div className="viewer-head">
+      <div className="viewer-head dialog-head">
         <span className="path">New session in a worktree</span>
         <span className="spacer" />
         <button className="ghost" onClick={onClose}>
@@ -1353,7 +1537,7 @@ function Telegram({ settings, onReady }) {
             title="Makes the bot's picture this computer's tab icon, to tell its bot from another's"
             onClick={act(
               "picture",
-              async () => api.telegramPicture(await tabIconJPEG(settings.tabColor)),
+              async () => api.telegramPicture(await tabIconJPEG(tabMark(document.documentElement.dataset.theme, settings))),
               "Its picture is now the tab icon. Telegram can take a minute to show it.",
             )}
           >
@@ -1609,13 +1793,7 @@ function UpdateCheck({ settings, onChange }) {
         <button className="btn" disabled={state === "checking"} onClick={check}>
           Check now
         </button>
-        <span className="seg">
-          {OFF_ON.map(([v, name]) => (
-            <button key={name} className={cx(v === (settings.updateCheck !== false) && "on")} aria-pressed={v === (settings.updateCheck !== false)} onClick={() => onChange({ updateCheck: v ? undefined : false })}>
-              {name}
-            </button>
-          ))}
-        </span>
+        <Switch on={settings.updateCheck !== false} label="Check for updates" onChange={(v) => onChange({ updateCheck: v ? undefined : false })} />
       </span>
     </div>
   );
@@ -1707,79 +1885,131 @@ export function Setting({ label, note, value, onPick, choices }) {
         <div>{label}</div>
         {note && <div className="settings-note">{note}</div>}
       </div>
-      <span className="seg">
-        {choices.map(([v, name, title]) => (
-          <button key={String(v)} className={cx(v === value && "on")} aria-pressed={v === value} aria-label={title} title={title} onClick={() => onPick(v)}>
-            {name}
-          </button>
-        ))}
-      </span>
+      {choices === OFF_ON ? (
+        <Switch on={!!value} label={label} onChange={onPick} />
+      ) : (
+        <span className="seg">
+          {choices.map(([v, name, title]) => (
+            <button key={String(v)} className={cx(v === value && "on")} aria-pressed={v === value} aria-label={title} title={title} onClick={() => onPick(v)}>
+              {name}
+            </button>
+          ))}
+        </span>
+      )}
     </div>
   );
 }
 
+export function Switch({ on, label, disabled, onChange }) {
+  return <button className={cx("switch", on && "on")} role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => onChange(!on)} />;
+}
+
+// Keys reads a shortcut as keycaps: " / " between alternatives, + within a
+// chord, and a spoken gesture, as "select code" is, as plain words.
+function Keys({ k }) {
+  if (/^[a-z]+ [a-z ]+$/.test(k)) return <span className="help-gesture">{k}</span>;
+  return (
+    <span className="help-keys">
+      {k.split(" / ").map((alt, i) => (
+        <span key={i} className="help-alt">
+          {i > 0 && <span className="help-or">/</span>}
+          {alt.split(/(?<=.)\+(?=.)| /).map((cap, j) => (
+            <kbd key={j}>{cap}</kbd>
+          ))}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function HelpOverlay({ onClose }) {
-  const keys = [
-    ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent, Terminal (with text selected, they extend it; in a terminal, unless what runs there is full screen or uses the mouse)"],
-    ["Ctrl+`", "The Terminal view, from anywhere; from it, back to where you were"],
-    [`${modKey}+P`, "Go to file"],
-    [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
-    ["Alt+A", `Run an action (also ${modKey}+Shift+P, where the browser allows it)`],
-    ["Alt+P", "Your pad, from the message box too; from the pad, back to where you were"],
-    [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
-    ["/", "Filter the file list"],
-    ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
-    ["n / p", "Next / previous change"],
-    ["f", "View the whole file at the focused line"],
-    ["c", "Comment on the focused line"],
-    ["a", "Ask about the focused line, or the file, in the Ask panel"],
-    ["Shift+A", "Add the focused line, or the file, to your next message to Claude or Codex"],
-    ["v", "Mark the current file viewed, in Diff"],
-    ["u", "Toggle split / unified"],
-    ["w", "Toggle line wrapping"],
-    ["r", "Reload the diff"],
-    [",", "Settings"],
-    ...(boot.base
-      ? [
-          ["Alt+H", "Back to the hub (from the message box too)"],
-          [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone). A tap of ↑ searches every folder, open or not"],
-        ]
-      : []),
-    [`${modKey}+click`, "Jump to a symbol's definition, or search its uses (double tap on a phone)"],
-    ["Alt+Left", "Back to the previous definition, or file in Files"],
-    ["Alt+Right", "Forward again, in Files"],
-    ["select code", "Comment on the selected lines"],
-    ["drag line numbers", "Comment on a range of lines"],
-    ["click a gap bar", "Expand 20 more lines of context"],
-    ["↑ ↓ Enter, 1-9", "Answer what Claude or Codex is asking; Tab adds a note, Esc leaves it under the bell"],
-    ["Esc Esc", "In the Agent view, rewind the session to before one of your messages"],
-    ["Esc", "In the Agent view, take back a queued message, or one sent a moment ago; otherwise stop the agent"],
-    ["[ / ]", "In the Agent view, your previous / next message"],
-    [`${modKey}+↓`, "In the Agent view, the end of the conversation (from the message box too)"],
-    ["↑ / ↓", "In the Agent view's empty message box, bring back a queued message, or step through what you said"],
-    ["Shift+Tab", "In the Agent view's message box, change the permission mode"],
-    ["Shift+↑ / Shift+↓", "In the Agent view, the previous / next open session (in the message box, when it is empty; with text selected, they extend it)"],
-    ["Shift+↑ / Shift+↓", "In the Terminal view, the previous / next terminal (in a terminal, unless what runs there is full screen, like vim or less, or uses the mouse, like fzf)"],
-    ["Alt+N", "In the Agent view, a new session (from the message box too); in the Terminal view, a new terminal"],
-    [isMac ? "Cmd+C / Cmd+V" : "Ctrl+C / Ctrl+V", `In a terminal, copy what is selected${isMac ? "" : " (Ctrl+C with nothing selected interrupts; Ctrl+Shift+C always copies)"} / paste`],
-    ["Esc", "Back a step, or close what is open"],
-    ["Shift+Esc", "Close whatever is open"],
+  const sections = [
+    [
+      "Anywhere",
+      [
+        ["Shift+← / Shift+→", "Previous / next mode: Diff, Files, Agent, Terminal (with text selected, they extend it; in a terminal, unless what runs there is full screen or uses the mouse)"],
+        ["Ctrl+`", "The Terminal view; from it, back to where you were"],
+        [`${modKey}+P`, "Go to file"],
+        [`${modKey}+K`, `Search definitions and text (also ${modKey}+Shift+F)`],
+        ["Alt+A", `Run an action (also ${modKey}+Shift+P, where the browser allows it)`],
+        ["Alt+P", "Your pad, from the message box too; from the pad, back to where you were"],
+        [`${modKey}+F`, "Find in the page; Enter and Shift+Enter (or F3) step through matches"],
+        [",", "Settings"],
+        ...(boot.base
+          ? [
+              ["Alt+H", "Back to the hub (from the message box too)"],
+              [`${modKey}+Shift+↑ / ↓`, "Switch between the hub's open folders, last used first: hold, step, let go (in Diff and Files, Shift alone). A tap of ↑ searches every folder, open or not"],
+            ]
+          : []),
+        ["Esc", "Back a step, or close what is open"],
+        ["Shift+Esc", "Close whatever is open"],
+      ],
+    ],
+    [
+      "Diff and Files",
+      [
+        ["/", "Filter the file list"],
+        ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
+        ["n / p", "Next / previous change"],
+        ["f", "View the whole file at the focused line"],
+        ["c", "Comment on the focused line"],
+        ["a", "Ask about the focused line, or the file, in the Ask panel"],
+        ["Shift+A", "Add the focused line, or the file, to your next message to Claude or Codex"],
+        ["v", "Mark the current file viewed, in Diff"],
+        ["u", "Toggle split / unified"],
+        ["w", "Toggle line wrapping"],
+        ["r", "Reload the diff"],
+        [`${modKey}+click`, "Jump to a symbol's definition, or search its uses (double tap on a phone)"],
+        ["Alt+Left", "Back to the previous definition, or file in Files"],
+        ["Alt+Right", "Forward again, in Files"],
+        ["select code", "Comment on the selected lines"],
+        ["drag line numbers", "Comment on a range of lines"],
+        ["click a gap bar", "Expand 20 more lines of context"],
+      ],
+    ],
+    [
+      "Agent",
+      [
+        ["↑ ↓ Enter 1-9", "Answer what Claude or Codex is asking; Tab adds a note, Esc leaves it under the bell"],
+        ["Esc Esc", "Rewind the session to before one of your messages"],
+        ["Esc", "Take back a queued message, or one sent a moment ago; otherwise stop the agent"],
+        ["[ / ]", "Your previous / next message"],
+        [`${modKey}+↓`, "The end of the conversation (from the message box too)"],
+        ["↑ / ↓", "In the empty message box, bring back a queued message, or step through what you said"],
+        ["Shift+Tab", "In the message box, change the permission mode"],
+        ["Shift+↑ / Shift+↓", "The previous / next open session (in the message box, when it is empty; with text selected, they extend it)"],
+        ["Alt+N", "A new session (from the message box too)"],
+      ],
+    ],
+    [
+      "Terminal",
+      [
+        ["Shift+↑ / Shift+↓", "The previous / next terminal (in a terminal, unless what runs there is full screen, like vim or less, or uses the mouse, like fzf)"],
+        ["Alt+N", "A new terminal"],
+        [isMac ? "Cmd+C / Cmd+V" : "Ctrl+C / Ctrl+V", `Copy what is selected${isMac ? "" : " (Ctrl+C with nothing selected interrupts; Ctrl+Shift+C always copies)"} / paste`],
+      ],
+    ],
   ];
   return (
     <Modal onClose={onClose} centred className="help">
-      <div className="viewer-head">
-        <span className="path">Keyboard</span>
+      <div className="help-head">
+        <span className="help-title">Keyboard shortcuts</span>
         <span className="spacer" />
-        <button className="ghost" onClick={onClose}>
-          <IconX size={13} />
+        <button className="ghost" onClick={onClose} title="Close (Esc)">
+          <IconX size={14} />
         </button>
       </div>
       <div className="help-body">
-        {keys.map(([k, d]) => (
-          <div className="help-row" key={k}>
-            <kbd>{k}</kbd>
-            <span>{d}</span>
-          </div>
+        {sections.map(([title, keys]) => (
+          <section className="help-section" key={title}>
+            <div className="settings-heading">{title}</div>
+            {keys.map(([k, d], i) => (
+              <div className="help-row" key={i}>
+                <span>{d}</span>
+                <Keys k={k} />
+              </div>
+            ))}
+          </section>
         ))}
       </div>
     </Modal>

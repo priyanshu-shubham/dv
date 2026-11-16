@@ -11,6 +11,7 @@ import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
 import { api } from "./api.js";
 import { asMedia, MarkdownDocument, MediaCompare, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import { IconCheck, IconChevron, IconChevronDown, IconComment, IconFile, IconSplit, IconUndo, IconX } from "./icons.jsx";
+import { codeRowHeight } from "./appearance.js";
 
 // One file's worth of diff. The parent mounts these lazily: `fd` arrives only
 // once the section has been scrolled near, so a 500-file diff still opens
@@ -110,6 +111,7 @@ function FileDiff({
           <span className="stat">
             <span className="add">+{entry.additions}</span>
             <span className="del">-{entry.deletions}</span>
+            <ChangeBlocks add={entry.additions} del={entry.deletions} />
           </span>
         )}
         {previewable &&<PreviewToggle kind={kind} on={preview} onChange={setPreview} />}
@@ -281,9 +283,24 @@ function Found({ text, offset = 0, ranges, at = -1 }) {
 
 export const cssId = (p) => p.replace(/[^A-Za-z0-9_-]/g, "_");
 
-// Must match the diff's line-height in styles.css; it is only a first guess at
-// a skipped block's height, which the browser replaces once it has rendered it.
-const ROW_HEIGHT = 20;
+// The file's share of added to deleted lines at a glance, in five blocks; a
+// change of fewer lines than that colours only as many.
+function ChangeBlocks({ add, del }) {
+  const total = add + del;
+  if (!total) return null;
+  const lit = Math.min(5, total);
+  const green = Math.round((add / total) * lit);
+  return (
+    <span className="change-blocks" aria-hidden="true">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <i key={i} className={i < green ? "add" : i < lit ? "del" : undefined} />
+      ))}
+    </span>
+  );
+}
+
+// The diff's line-height is only a first guess at a skipped block's height,
+// which the browser replaces once it has rendered it.
 
 // The code cell's +/- slot and its padding-right, from styles.css.
 const SIGN_PX = 12;
@@ -834,7 +851,8 @@ function Block({ lines, view, wrap, ctx, onMeasure, force }) {
     () => (view === "split" ? pairRows(lines).length : view === "code" ? lines.length : unifiedRows(lines).length),
     [lines, view],
   );
-  const height = useRef(rows * ROW_HEIGHT);
+  const height = useRef(0);
+  if (!height.current) height.current = rows * codeRowHeight();
   // Marks a block with changes in it even while it is only a spacer, so
   // stepping to the next change can find one that is not rendered.
   const changes = useMemo(() => lines.some((l) => l.t !== "e" || l.mark), [lines]);

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { cx } from "./util.js";
 import { Modal, usePaletteNav } from "./Overlays.jsx";
-import { IconBranch } from "./icons.jsx";
+import { IconBranch, IconPlus } from "./icons.jsx";
 
 // useBranchChoices asks, each time open turns true or HEAD moves, which
 // branches there are and what stops switching to or making one; then again
@@ -112,12 +112,20 @@ export function BranchPalette({ meta, onDone, onClose }) {
         {rows.map((r, i) => (
           <button
             key={(r.create ? "+" : "") + (r.track || r.branch)}
-            className={cx("palette-row", "action-row", i === sel && "on", r.off && "unready")}
+            className={cx("palette-row", "branch-pick", i === sel && "on", r.off && "unready", r.create && "create")}
+            title={rowHint(r, can)}
             onMouseMove={() => setSel(i)}
             onClick={() => pick(r)}
           >
-            <span className="sym mono">{rowLabel(r)}</span>
-            <span className="dim">{rowHint(r, can)}</span>
+            {r.create ? <IconPlus size={14} /> : <IconBranch size={14} />}
+            {r.create ? (
+              <span className="branch-name ui">
+                Create <b>{r.branch}</b>
+              </span>
+            ) : (
+              <span className="branch-name">{rowLabel(r)}</span>
+            )}
+            {(r.create || r.track || can?.elsewhere?.includes(r.branch)) && <span className="branch-hint">{r.create ? "from HEAD" : r.track ? "remote" : "in a worktree"}</span>}
           </button>
         ))}
         {rows.length === 0 && <div className="empty">{q.trim() ? "That branch is checked out." : "No other branches yet. Type a name to make one."}</div>}

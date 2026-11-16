@@ -45,6 +45,12 @@ export const IconCollapse = svg(<path d="M5 3.5l3 3 3-3M5 12.5l3-3 3 3" />, { st
 export const IconFilter = svg(<path d="M2.5 3h11L9.2 8.3V13l-2.4-1.2V8.3z" />, { stroke: true });
 export const IconSplit =svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" /></>, { stroke: true });
 export const IconUnified = svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M2 8h12" /></>, { stroke: true });
+export const IconPalette = svg(
+  <><path d="M8 1.5a6.5 6.5 0 1 0 0 13c1 0 1.5-.6 1.5-1.4 0-1.1-1-1.4-1-2.3 0-.8.6-1.3 1.4-1.3h1.6a3 3 0 0 0 3-3C14.5 3.9 11.6 1.5 8 1.5z" /><circle cx="4.8" cy="7.5" r=".6" /><circle cx="6.8" cy="4.6" r=".6" /><circle cx="10.2" cy="4.8" r=".6" /></>,
+  { stroke: true },
+);
+export const IconServer = svg(<><rect x="2" y="2.5" width="12" height="4.5" rx="1.2" /><rect x="2" y="9" width="12" height="4.5" rx="1.2" /><path d="M4.5 4.75h.01M4.5 11.25h.01" /></>, { stroke: true });
+export const IconDownload = svg(<path d="M8 2v8.5M4.5 7L8 10.5 11.5 7M2.5 13.5h11" />, { stroke: true });
 export const IconBranch = svg(<><circle cx="4" cy="3.5" r="1.8" /><circle cx="4" cy="12.5" r="1.8" /><circle cx="12" cy="6" r="1.8" /><path d="M4 5.3v5.4M12 7.8c0 2-1.5 2.9-4 3.2" /></>, { stroke: true });
 export const IconDots = svg(<><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></>);
 export const IconMoon = svg(<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z" />, { stroke: true });
@@ -59,7 +65,8 @@ export const IconArrowUp = svg(<path d="M8 13V3.5M3.5 8L8 3.5 12.5 8" />, { stro
 export const IconArrowDown = svg(<path d="M8 3v9.5M3.5 8L8 12.5 12.5 8" />, { stroke: true });
 export const IconStop = svg(<rect x="4" y="4" width="8" height="8" rx="1.5" />);
 export const IconUndo = svg(<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2v3.5H6" />, { stroke: true });
-export const IconPad = svg(<><rect x="3" y="2" width="10" height="12.5" rx="1.5" /><path d="M5.5 5.5h5M5.5 8.25h5M5.5 11h3" /></>, { stroke: true });
+// A spiral-bound notepad: a page of one's own, not a file's.
+export const IconPad = svg(<><rect x="3" y="3.5" width="10" height="11" rx="1.5" /><path d="M5.5 1.75v3.5M8 1.75v3.5M10.5 1.75v3.5M5.5 8.5h5M5.5 11.25h3.5" /></>, { stroke: true });
 export const IconEdit = svg(<path d="M10.5 3l2.5 2.5L6 12.5H3.5V10zM9 4.5L11.5 7" />, { stroke: true });
 export const IconShell = svg(<><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M4.5 6l2 2-2 2M8 10.5h3.5" /></>, { stroke: true });
 export const IconBell = svg(<path d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1.2 1.2H2.8zM6.5 14.2a1.6 1.6 0 0 0 3 0" />, { stroke: true });

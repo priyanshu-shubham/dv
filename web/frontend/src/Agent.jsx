@@ -4410,7 +4410,7 @@ function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewi
 
   return (
     <Modal onClose={onClose} onBack={prompt && !start ? () => setPrompt(null) : undefined} className="palette rewind">
-      <div className="viewer-head">
+      <div className="viewer-head dialog-head">
         <IconUndo size={13} className="spark" />
         <span className="rewind-title">{prompt ? "Rewind to before this message" : "Rewind to before which message?"}</span>
         <span className="spacer" />

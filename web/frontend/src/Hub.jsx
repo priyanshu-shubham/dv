@@ -8,7 +8,8 @@ import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP
 import { enableBack } from "./phone/back.js";
 import { usePush } from "./phone/push.js";
 import { IconBranch, IconCheck, IconChevron, IconDots, IconPlus, IconSearch, IconSettings, IconTemporary, IconX } from "./icons.jsx";
-import { setTabIcon, tabDot } from "./favicon.js";
+import { tabDot } from "./favicon.js";
+import { tabName, useAppearance, useTabIcon } from "./appearance.js";
 import { PRChip } from "./Header.jsx";
 import { startTask } from "./tasks.js";
 import { HubMark, MachineMeter } from "./Machine.jsx";
@@ -36,12 +37,9 @@ export default function Hub() {
   const [wrapWide, setWrapWide] = usePersisted("wrap", false);
   const [wrapPhone, setWrapPhone] = usePersisted("wrapPhone", true);
   const [notices, setNotices] = usePersisted("desktopNotices", false);
+  useAppearance(theme, settings);
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.code = settings.codeColors || "github";
-  }, [theme, settings.codeColors]);
-  useEffect(() => {
-    document.title = `${settings.tabName?.trim() || "dv"} hub`;
+    document.title = `${tabName(settings)} hub`;
   }, [settings.tabName]);
   // The installed app opens here: a subscription renewed or permission taken
   // back is caught without a folder opened.
@@ -99,7 +97,7 @@ export default function Hub() {
   useAppBadge(waitingIn(elsewhere));
   const dot = tabDot(useNotices({ desktop: notices, go: openFolderSession, sound: !phoneApp && settings.noticeSound !== false }));
   const update = useUpdate(settings.updateCheck === false);
-  useEffect(() => setTabIcon(settings.tabColor, dot), [settings.tabColor, dot]);
+  useTabIcon(theme, settings, dot);
 
   const pickNotices = async (on) => {
     if (!on || typeof Notification === "undefined") return setNotices(false);
@@ -266,7 +264,7 @@ export default function Hub() {
             onClick={() => setDialog("settings")}
             title={update ? `Settings, for every folder (,): dv v${update.latest} is out` : "Settings, for every folder (,)"}
           >
-            <IconSettings size={14} />
+            <IconSettings size={16} />
           </button>
         </div>
       </header>
@@ -887,7 +885,7 @@ function AddFolder({ onClose, onAdded }) {
 
 function DialogHead({ title, onClose }) {
   return (
-    <div className="viewer-head">
+    <div className="viewer-head dialog-head">
       <span className="path">{title}</span>
       <span className="spacer" />
       <button className="ghost" onClick={onClose}>

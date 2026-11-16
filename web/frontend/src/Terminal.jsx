@@ -8,6 +8,7 @@ import { copyText, cx, duration, isMac, relTime, useLasting } from "./util.js";
 import { Icon } from "./phone/icons.jsx";
 import { Picked, touchTerm } from "./phone/TermTouch.jsx";
 import { typeAhead } from "./typeahead.js";
+import { THEMES } from "./appearance.js";
 
 // The Terminal view: shells dv runs in the folder. The sidebar lists them with
 // what each is running; the one picked fills the rest. The shells are dv's, so
@@ -177,6 +178,13 @@ const PALETTES = {
   },
 };
 
+// The other dark themes' terminals are the dark one on their own ground.
+const paletteOf = (theme) => {
+  if (PALETTES[theme]) return PALETTES[theme];
+  const bg = THEMES[theme]?.bg || PALETTES.dark.background;
+  return { ...PALETTES.dark, background: bg, cursorAccent: bg };
+};
+
 // dv's own keys, which reach dv from a terminal too and must not reach the
 // shell as well: the window takes them first, but xterm would still type them.
 const dvKey = (e) =>
@@ -277,7 +285,7 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, typeAh
       lineHeight: 1.3,
       scrollback: 10000,
       cursorBlink: true,
-      theme: PALETTES[theme] || PALETTES.dark,
+      theme: paletteOf(theme),
     });
     const fit = new xterm.FitAddon();
     term.loadAddon(fit);
@@ -386,7 +394,7 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, typeAh
   }, [id, xterm]);
 
   useEffect(() => {
-    live.current.term.options.theme = PALETTES[theme] || PALETTES.dark;
+    live.current.term.options.theme = paletteOf(theme);
   }, [theme]);
 
   const fontSize = phone?.fontSize;

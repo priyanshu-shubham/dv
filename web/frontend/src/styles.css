@@ -6,6 +6,13 @@
    and needs no network. */
 @import "@fontsource-variable/jetbrains-mono/wght.css";
 @import "@fontsource-variable/jetbrains-mono/wght-italic.css";
+/* The fonts Settings → Appearance offers. A face is only fetched once a page
+   uses it. */
+@import "@fontsource-variable/inter/wght.css";
+@import "@fontsource-variable/geist/wght.css";
+@import "@fontsource-variable/ibm-plex-sans/wght.css";
+@import "@fontsource-variable/geist-mono/wght.css";
+@import "@fontsource-variable/fira-code/wght.css";
 /* The phone app's look, all of it under html.phone. */
 @import "./phone/phone.css";
 @import "@xterm/xterm/css/xterm.css";
@@ -139,6 +146,295 @@
   --hl-list: #3b2300;
 }
 
+/* The other dark themes are the dark one with its grounds, greys and accent
+   changed; the code keeps Settings' Code colors. appearance.js has each one's
+   --bg and --accent too. */
+:root[data-theme="graphite"] {
+  --bg: #121212;
+  --bg-panel: #191919;
+  --bg-bar: #1f1f1f;
+  --bg-shell: #1f1f1f;
+  --bg-raised: #232323;
+  --border: #2e2e2e;
+  --border-soft: #252525;
+  --border-strong: #444444;
+  --fg: #e6e6e6;
+  --fg-2: #a8a8a8;
+  --fg-3: #8e8e8e;
+  --fg-4: #555555;
+  --accent: #a78bfa;
+  --accent-fill: #6d4fd1;
+  --accent-soft: rgba(167, 139, 250, 0.14);
+  --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-modal: 0 28px 72px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --scroll: #393939;
+  --scroll-hover: #525252;
+}
+
+:root[data-theme="obsidian"] {
+  --bg: #050505;
+  --bg-panel: #0e0e0e;
+  --bg-bar: #151515;
+  --bg-shell: #171717;
+  --bg-raised: #171717;
+  --border: #262626;
+  --border-soft: #1b1b1b;
+  --border-strong: #3a3a3a;
+  --fg: #e4e4e4;
+  --fg-2: #a3a3a3;
+  --fg-3: #878787;
+  --fg-4: #4a4a4a;
+  --accent: #2dd4bf;
+  --accent-fill: #0f766e;
+  --accent-soft: rgba(45, 212, 191, 0.13);
+  --scroll: #2c2c2c;
+  --scroll-hover: #444444;
+}
+
+/* Warm greys, in the amber of the dv mark. */
+:root[data-theme="ember"] {
+  --bg: #0c0a08;
+  --bg-panel: #15120f;
+  --bg-bar: #1c1814;
+  --bg-shell: #1c1814;
+  --bg-raised: #1f1a16;
+  --bg-hover: rgba(255, 235, 210, 0.05);
+  --bg-active: rgba(255, 235, 210, 0.09);
+  --bg-input: rgba(255, 235, 210, 0.06);
+  --border: #2e2822;
+  --border-soft: #231e19;
+  --border-strong: #463c33;
+  --fg: #ebe3d9;
+  --fg-2: #b0a597;
+  --fg-3: #968b7e;
+  --fg-4: #554b41;
+  --accent: #f2a65a;
+  --accent-fill: #b45309;
+  --accent-soft: rgba(242, 166, 90, 0.13);
+  --add: #8cc265;
+  --del: #ef6f5e;
+  --mod: #e2b340;
+  --add-bg: rgba(140, 194, 101, 0.11);
+  --del-bg: rgba(239, 111, 94, 0.11);
+  --add-word: rgba(140, 194, 101, 0.3);
+  --del-word: rgba(239, 111, 94, 0.28);
+  --add-soft: rgba(140, 194, 101, 0.14);
+  --scroll: #3a322a;
+  --scroll-hover: #53483d;
+}
+
+/* Settings → Appearance's switches, as attributes appearance.js sets on
+   <html> (and the server, for the first frame). The phone app keeps its own
+   measures, so none reaches html.phone.
+
+   Density is air, not type: the text keeps its size and what grows is the
+   room round it - rows, bars, --space for padding and gaps, and the line
+   height of code and prose. --prose scales the em spacing of rendered
+   Markdown; --code-ratio is a code line's height to its size (20px at 12). */
+:root:not(.phone)[data-density="compact"] {
+  --space: 0.8;
+  --prose: 0.75;
+  --prose-lh: 1.5;
+  --code-ratio: 1.5;
+  --ctl-h: 22px;
+  --ctl-h-sm: 20px;
+  --row-h: 21px;
+  --bar-h: 32px;
+  --file-head-h: 28px;
+  --foot-h: 22px;
+}
+
+:root:not(.phone)[data-density="roomy"] {
+  --space: 1.35;
+  --prose: 1.35;
+  --prose-lh: 1.78;
+  --code-ratio: 1.85;
+  --ctl-h: 28px;
+  --ctl-h-sm: 25px;
+  --row-h: 30px;
+  --bar-h: 44px;
+  --file-head-h: 40px;
+  --foot-h: 28px;
+}
+
+/* A picked accent is --pick; the theme's grounds decide how it is drawn. On
+   a dark one it is lifted until it reads as text, on light one darkened, and
+   what sits on it as a fill is white or black, whichever it holds 4.5:1 with. */
+:root:not(.phone)[data-accent] {
+  --accent: oklch(from var(--pick) max(l, 0.7) c h);
+  --accent-fill: var(--pick);
+  --accent-fg: oklch(from var(--pick) clamp(0, (0.6 - l) * 1000, 1) 0 0);
+  --accent-soft: rgb(from var(--pick) r g b / 0.13);
+}
+
+:root:not(.phone)[data-accent][data-theme="light"] {
+  --accent: oklch(from var(--pick) min(l, 0.52) c h);
+  --accent-soft: rgb(from var(--pick) r g b / 0.1);
+}
+
+/* The tab's colour, which the name in the top bar takes: --mark, the accent
+   or the theme's own, readable on the ground as the accent is. */
+:root {
+  --tab-color: oklch(from var(--mark, #888888) max(l, 0.7) c h);
+}
+
+:root:not(.phone)[data-theme="light"] {
+  --tab-color: oklch(from var(--mark, #888888) min(l, 0.52) c h);
+}
+
+:root:not(.phone)[data-ui-font="inter"] {
+  --font-ui: "Inter Variable", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root:not(.phone)[data-ui-font="geist"] {
+  --font-ui: "Geist Variable", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root:not(.phone)[data-ui-font="plex"] {
+  --font-ui: "IBM Plex Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root:not(.phone)[data-code-font="geist"] {
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root:not(.phone)[data-code-font="fira"] {
+  --font-mono: "Fira Code Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root:not(.phone)[data-code-font="system"] {
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root:not(.phone)[data-code-size="11"] {
+  --code-fs: 11px;
+}
+
+:root:not(.phone)[data-code-size="13"] {
+  --code-fs: 13px;
+}
+
+:root:not(.phone)[data-code-size="14"] {
+  --code-fs: 14px;
+}
+
+:root:not(.phone)[data-code-size="15"] {
+  --code-fs: 15px;
+}
+
+:root:not(.phone)[data-corners="sharp"] {
+  --r-sm: 2px;
+  --r-md: 2px;
+  --r-lg: 3px;
+  --r-xl: 4px;
+}
+
+:root:not(.phone)[data-corners="round"] {
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+}
+
+/* transparent rather than none: a shifted line's gutter paints its tint in a
+   gradient, which none would void. */
+:root:not(.phone)[data-changes="light"] :is(.cell.add, .cell.del):not(.sel, .hit) {
+  --tint: color-mix(in srgb, var(--row-tint) 50%, transparent);
+}
+
+:root:not(.phone)[data-changes="light"] .cell.add {
+  --row-tint: var(--add-bg);
+}
+
+:root:not(.phone)[data-changes="light"] .cell.del {
+  --row-tint: var(--del-bg);
+}
+
+:root:not(.phone)[data-changes="gutter"] :is(.cell.add, .cell.del):not(.sel, .hit) {
+  --tint: transparent;
+}
+
+:root:not(.phone)[data-changes="gutter"] .cell.add:not(.hit) .gutter {
+  box-shadow: inset 3px 0 0 var(--add);
+}
+
+:root:not(.phone)[data-changes="gutter"] .cell.del:not(.hit) .gutter {
+  box-shadow: inset 3px 0 0 var(--del);
+}
+
+:root:not(.phone)[data-changes="gutter"] .cell.add .ln {
+  color: var(--add);
+}
+
+:root:not(.phone)[data-changes="gutter"] .cell.del .ln {
+  color: var(--del);
+}
+
+/* Glow is a layer over the whole window rather than a ground under it: the
+   panes paint their grounds solid, the code's gutter most of all, which keeps
+   lines shifted sideways from showing through. */
+:root:not(.phone)[data-glow] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 640px at 88% -12%, color-mix(in srgb, var(--accent) var(--glow-a), transparent), transparent 65%),
+    radial-gradient(900px 620px at -8% 112%, color-mix(in srgb, var(--accent) calc(var(--glow-a) * 0.7), transparent), transparent 62%);
+}
+
+:root[data-glow="soft"] {
+  --glow-a: 9%;
+}
+
+:root[data-glow="strong"] {
+  --glow-a: 17%;
+}
+
+:root[data-theme="light"][data-glow="soft"] {
+  --glow-a: 6%;
+}
+
+:root[data-theme="light"][data-glow="strong"] {
+  --glow-a: 11%;
+}
+
+/* Glass: the floating grounds see-through by --glass-a, over a blur of what is
+   under them. Each is taken from the theme's own, a shade apart as they are
+   when solid; the dimmed page behind a dialog is lighter, so there is
+   something to see through it. The file viewer stays solid, to read in. */
+:root:not(.phone)[data-glass] {
+  --backdrop: rgba(0, 0, 0, 0.38);
+  --glass-bg: rgb(from var(--bg) r g b / calc(var(--glass-a) - 0.1));
+  --glass-panel: rgb(from var(--bg-panel) r g b / var(--glass-a));
+  --glass-bar: rgb(from var(--bg-bar) r g b / var(--glass-a));
+  --glass-shell: rgb(from var(--bg-shell) r g b / var(--glass-a));
+  --glass-raised: rgb(from var(--bg-raised) r g b / calc(var(--glass-a) + 0.15));
+}
+
+:root:not(.phone)[data-glass]
+  :is(.modal:not(.viewer), .scope-menu, .find-bar, .model-list, .model-efforts, .selection-ask, .agent-jump > button, .notice) {
+  --bg: var(--glass-bg);
+  --bg-panel: var(--glass-panel);
+  --bg-bar: var(--glass-bar);
+  --bg-shell: var(--glass-shell);
+  --bg-raised: var(--glass-raised);
+  backdrop-filter: blur(var(--blur)) saturate(1.4);
+}
+
+:root:not(.phone)[data-glass][data-theme="light"] {
+  --backdrop: rgba(35, 35, 35, 0.18);
+}
+
+:root[data-motion="off"] *,
+:root[data-motion="off"] ::before,
+:root[data-motion="off"] ::after {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+
 /* Theme-independent scales. Every control is one of two heights, every bar,
    strip and row one of three, and every size and gap sits on these steps. */
 :root {
@@ -168,6 +464,19 @@
   --bar-h: 36px;
   --file-head-h: 32px;
   --foot-h: 24px;
+
+  /* Density's, at Default; see the switches above. */
+  --space: 1;
+  --prose: 1;
+  --prose-lh: 1.62;
+  --code-ratio: 1.667;
+  --code-fs: 12px;
+  --code-lh: round(var(--code-fs) * var(--code-ratio), 1px);
+  /* Output and listings: a little tighter than the diff (18px at 12). */
+  --code-lh-tight: round(var(--code-fs) * var(--code-ratio) * 0.9, 1px);
+
+  --blur: 16px;
+  --glass-a: 0.6;
 }
 
 * {
@@ -525,16 +834,27 @@ a.link:hover {
   flex: none;
 }
 
+/* dv's icon, then this computer's name for it as a wordmark. */
 .logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   padding: 0 4px;
   color: var(--fg);
-  font: 700 var(--fs-md) / 1 var(--font-ui);
-  letter-spacing: 0.02em;
+  font: 650 var(--fs-lg) / 1 var(--font-ui);
+  letter-spacing: -0.01em;
+}
+
+.logo-mark {
+  flex: none;
+  display: block;
 }
 
 .logo-name {
   overflow: hidden;
   max-width: 220px;
+  padding-block: 2px; /* room for descenders under the ellipsis' clip */
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -752,9 +1072,9 @@ a.link:hover {
 a.logo.to-hub {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: var(--ctl-h);
-  padding: 0 7px 0 4px;
+  gap: 7px;
+  height: calc(var(--ctl-h) + 4px);
+  padding: 0 8px 0 5px;
   border-radius: var(--r-md);
   text-decoration: none;
 }
@@ -779,6 +1099,24 @@ a.logo.to-hub:hover > svg {
   /* Sized by what it holds, so a long branch would crowd the tools out. */
   max-width: 44vw;
   font-size: var(--fs-sm);
+}
+
+/* The folder and its branch as one pill, a rule between them. */
+:root:not(.phone) .topbar-title {
+  height: calc(var(--ctl-h) + 4px);
+  padding: 0 4px 0 12px;
+  border-radius: var(--r-pill);
+  background: var(--bg-input);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+:root:not(.phone) .topbar-title > .repo:not(:last-child) {
+  padding-right: 10px;
+  border-right: 1px solid var(--border-strong);
+}
+
+:root:not(.phone) .topbar-title > .repo:last-child {
+  padding-right: 8px;
 }
 
 /* The branch gives way first; the name only when it is half the title. */
@@ -838,36 +1176,206 @@ button.headref:hover {
   transform: translateX(-50%);
 }
 
-.headref-note {
-  padding: 5px 8px 3px;
-  font-size: var(--fs-xs);
-  white-space: pre-line; /* git's refusals list files a line each */
+.headref-caret {
+  color: var(--fg-3);
 }
 
-.headref-note.del {
-  color: var(--del);
-}
-
-.headref-menu .model-name.mono {
+/* The branch menu: a field to find or name one, where HEAD is, then the
+   branches to switch to, and a line at the foot for what is going on. */
+.model-list.branch-menu {
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  padding: 0;
   overflow: hidden;
-  font-weight: 500;
+  white-space: normal;
+}
+
+.branch-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: calc(var(--row-h) + 14px);
+  color: var(--fg-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.branch-find input {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-md);
+}
+
+.branch-find input:focus {
+  box-shadow: none;
+}
+
+.branch-list {
+  max-height: min(420px, 60vh);
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.branch-current,
+.model-list .branch-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: calc(var(--row-h) + 6px);
+  padding: 4px 8px;
+  border-radius: var(--r-md);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+
+.branch-current > svg,
+.branch-row > svg {
+  flex: none;
+  color: var(--fg-3);
+}
+
+.branch-current {
+  margin-bottom: 2px;
+}
+
+.branch-current > svg:first-child {
+  color: var(--accent);
+}
+
+.branch-tick {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.branch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 var(--fs-sm) / 1.3 var(--font-mono);
+}
+
+.branch-name.ui {
+  font-family: var(--font-ui);
+}
+
+.branch-name b {
+  font: 600 var(--fs-sm) var(--font-mono);
+}
+
+.branch-sub {
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.headref-menu .model-list button:disabled {
+.branch-hint {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+  color: var(--fg-3);
+  font-size: var(--fs-tag);
+}
+
+.model-list .branch-row.on:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.model-list .branch-row.on:not(:disabled) > svg {
+  color: var(--fg);
+}
+
+.model-list .branch-row.create > svg {
+  color: var(--accent);
+}
+
+.model-list .branch-row:disabled {
   color: var(--fg-3);
   cursor: default;
 }
 
-.headref-menu .model-list button:disabled:hover {
+.model-list .branch-row:disabled,
+.model-list .branch-row:disabled:hover {
   background: none;
 }
 
-.headref-filter {
-  width: calc(100% - 8px);
-  margin: 0 4px 4px;
-  font: var(--fs-xs) var(--font-mono);
+.branch-sep {
+  padding: 10px 8px 4px;
+  color: var(--fg-3);
+  font: 600 var(--fs-tag) / 1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.branch-empty {
+  padding: 10px 8px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+/* The same rows in the Switch branch palette. */
+.palette-row.branch-pick {
+  gap: 10px;
+  min-height: calc(var(--row-h) + 6px);
+}
+
+.branch-pick > svg {
+  flex: none;
+  color: var(--fg-3);
+}
+
+.branch-pick.create > svg {
+  color: var(--accent);
+}
+
+.palette-row.branch-pick.unready {
+  color: var(--fg-3);
+  cursor: default;
+}
+
+.palette-row.branch-pick.unready:is(.on, :hover) {
+  background: none;
+}
+
+.branch-note {
+  padding: 9px 12px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: pre-line; /* git's refusals list files a line each */
+}
+
+.branch-note.warn {
+  color: var(--mod);
+}
+
+.branch-note.done {
+  color: var(--add);
+}
+
+.branch-note.del {
+  color: var(--del);
 }
 
 /* Coloured as GitHub colours a pull request's state. */
@@ -963,7 +1471,7 @@ button.headref:hover {
    four modes need all the room there is. */
 .sidebar-modes .seg > button {
   flex: 1;
-  height: 26px;
+  height: calc(var(--ctl-h) + 2px);
   padding: 0 4px;
   border-radius: calc(var(--r-lg) - 2px);
   color: var(--fg-2);
@@ -1008,8 +1516,8 @@ button.headref:hover {
   right: 0;
   z-index: 40;
   width: 360px;
-  padding: 4px;
-  border-radius: var(--r-lg);
+  padding: 6px;
+  border-radius: var(--r-xl);
   background: var(--bg-raised);
   box-shadow: var(--shadow-pop);
 }
@@ -1113,8 +1621,12 @@ button.headref:hover {
 }
 
 .scope-chips > button {
+  display: block;
+  max-width: 100%;
   height: var(--ctl-h-sm);
-  font: 500 var(--fs-xs) / 1 var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 500 var(--fs-xs) / var(--ctl-h-sm) var(--font-mono);
 }
 
 .scope-desc {
@@ -1197,6 +1709,44 @@ button.headref:hover {
   min-height: 0;
   background: var(--bg-panel);
   border-right: 1px solid var(--border-soft);
+}
+
+/* A card on the page's ground, as the files beside it are, held off its edges
+   by their inset so the two tops line up. Not clipped, as the resize handle
+   reaches past its edge: the foot rounds its own corners. */
+:root:not(.phone) .main > .sidebar {
+  margin: 12px 0 12px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
+}
+
+:root:not(.phone) .main.side-right > .sidebar {
+  margin: 12px 12px 12px 0;
+  border-left: 1px solid var(--border-soft);
+}
+
+/* The comments' panel is the same card on the other edge. */
+:root:not(.phone) .main > .comments-panel {
+  margin: 12px 12px 12px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl);
+}
+
+:root:not(.phone) .main > .comments-panel > .comments-resize {
+  left: -9px;
+}
+
+:root:not(.phone) .main > :is(.sidebar, .comments-panel) > .sidebar-foot {
+  border-radius: 0 0 calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px);
+}
+
+:root:not(.phone) .main > .sidebar > .side-resize {
+  right: -9px;
+}
+
+:root:not(.phone) .main.side-right > .sidebar > .side-resize {
+  right: auto;
+  left: -9px;
 }
 
 /* Each file is a card on the page's ground, as edits are in the Agent view,
@@ -1503,7 +2053,7 @@ textarea.pad:focus {
   height: 14px;
   margin: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: var(--bg-input);
   cursor: pointer;
 }
@@ -1580,6 +2130,28 @@ textarea.pad:focus {
 
 .dir-row.holds-active {
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* On a computer the rows sit inset in the list, rounded, and the open one is
+   ringed as a session is; a folder holding it says so by its chevron. */
+:root:not(.phone) .file-list:not(.session-list) {
+  padding: 4px 6px;
+}
+
+:root:not(.phone) .file-row {
+  border-radius: var(--r-md);
+}
+
+:root:not(.phone) .file-row.on {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+:root:not(.phone) .dir-row.holds-active {
+  box-shadow: none;
+}
+
+:root:not(.phone) .dir-row.holds-active .twisty {
+  color: var(--accent);
 }
 
 /* A full line box, not the row's line-height of 1, which clips underscores. */
@@ -1900,6 +2472,43 @@ textarea.pad:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.file-head .stat:has(.change-blocks) {
+  align-items: center;
+  min-width: 124px;
+}
+
+.change-blocks {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 3px;
+}
+
+.change-blocks > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 1.5px;
+  background: var(--bg-active);
+}
+
+.change-blocks > i.add {
+  background: var(--add);
+}
+
+.change-blocks > i.del {
+  background: var(--del);
+}
+
+/* The file's head is one line: at its narrowest the counts say it alone. */
+@container file (max-width: 560px) {
+  .change-blocks {
+    display: none;
+  }
+
+  .file-head .stat:has(.change-blocks) {
+    min-width: 84px;
+  }
+}
+
 .file-head .viewed.on {
   color: var(--add);
   background: var(--add-soft);
@@ -1949,9 +2558,11 @@ textarea.pad:focus {
 /* The diff never grows past the width of the view. A long line is revealed by
    shifting the code inside its cell instead, one offset per side, so the two
    columns stay an even half each however wide their contents are. */
+/* --code-fs and --code-lh are Settings' code size and density; appearance.js
+   works out the same height for rows not yet drawn. */
 .diff {
   width: 100%;
-  font: 12px/20px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh) var(--font-mono);
   position: relative;
 }
 
@@ -2266,7 +2877,7 @@ textarea.pad:focus {
 
 .gap-code {
   color: var(--fg);
-  font: 12px/20px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh) var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre;
@@ -3014,8 +3625,10 @@ button.note-label:hover {
   margin-top: 6px;
 }
 
+/* Rendered Markdown's spacing is in em times --prose, so Density opens it up
+   or closes it without touching the text's size. */
 .markdown p {
-  margin: 0 0 6px;
+  margin: 0 0 calc(0.5em * var(--prose));
 }
 
 .markdown p:last-child {
@@ -3032,7 +3645,7 @@ button.note-label:hover {
 .markdown pre {
   background: var(--bg);
   border-radius: var(--r-md);
-  padding: 8px;
+  padding: calc(8px * var(--space));
   overflow-x: auto;
 }
 
@@ -3044,7 +3657,7 @@ button.note-label:hover {
 
 .markdown ul,
 .markdown ol {
-  margin: 4px 0;
+  margin: calc(0.35em * var(--prose)) 0;
   padding-left: 20px;
 }
 
@@ -3065,7 +3678,7 @@ a.path-link:hover {
 }
 
 .markdown blockquote {
-  margin: 4px 0;
+  margin: calc(0.35em * var(--prose)) 0;
   padding-left: 10px;
   border-left: 2px solid var(--border-strong);
   color: var(--fg-2);
@@ -3074,10 +3687,11 @@ a.path-link:hover {
 /* A Markdown file rendered in its card: a document's measure and type, drawn
    with the page's own grounds and code styles. */
 .md-preview {
+  --md-pad: calc(28px * var(--space));
   max-width: 900px;
-  padding: 16px 28px 28px;
+  padding: calc(16px * var(--space)) var(--md-pad) var(--md-pad);
   color: var(--fg);
-  font: var(--fs-lg) / 1.65 var(--font-ui);
+  font: var(--fs-lg) / calc(var(--prose-lh) + 0.03) var(--font-ui);
   overflow-wrap: break-word;
 }
 
@@ -3087,16 +3701,16 @@ a.path-link:hover {
 
 /* A comment left on a rendered block sits under it, out of the document's font. */
 .md-preview .md-threads {
-  margin: 12px -28px;
+  margin: 12px calc(-1 * var(--md-pad));
   font: var(--fs-md) / 1.5 var(--font-ui);
 }
 
 .md-preview .md-threads .thread-slot {
-  padding: 0 28px;
+  padding: 0 var(--md-pad);
 }
 
 .md-preview :is(h1, h2, h3, h4, h5, h6) {
-  margin: 1.4em 0 0.5em;
+  margin: calc(1.4em * var(--prose)) 0 calc(0.5em * var(--prose));
   line-height: 1.3;
   font-weight: 600;
   /* Clear of the card's pinned head when a link scrolls to one. */
@@ -3126,7 +3740,7 @@ a.path-link:hover {
 }
 
 .md-preview :is(p, ul, ol, dl, blockquote, pre, table, details, figure) {
-  margin: 0 0 1em;
+  margin: 0 0 calc(1em * var(--prose));
 }
 
 .md-preview :is(ul, ol) {
@@ -3138,7 +3752,7 @@ a.path-link:hover {
 }
 
 .md-preview li + li {
-  margin-top: 0.25em;
+  margin-top: calc(0.25em * var(--prose));
 }
 
 .md-preview li.md-task {
@@ -3171,7 +3785,7 @@ a.path-link:hover {
 }
 
 .md-preview pre {
-  padding: 12px 14px;
+  padding: calc(12px * var(--space)) calc(14px * var(--space));
   border-radius: var(--r-lg);
   background: var(--bg-panel);
   overflow-x: auto;
@@ -3192,7 +3806,7 @@ a.path-link:hover {
 
 .md-preview hr {
   height: 1px;
-  margin: 1.5em 0;
+  margin: calc(1.5em * var(--prose)) 0;
   border: 0;
   background: var(--border);
 }
@@ -3206,7 +3820,7 @@ a.path-link:hover {
 }
 
 .md-preview :is(th, td) {
-  padding: 5px 12px;
+  padding: calc(5px * var(--space)) calc(12px * var(--space));
   border: 1px solid var(--border);
 }
 
@@ -3786,7 +4400,7 @@ a.path-link:hover {
   gap: 8px;
   width: 100%;
   min-height: var(--row-h);
-  padding: 2px 10px;
+  padding: 2px calc(10px * var(--space));
   text-align: left;
 }
 
@@ -3797,6 +4411,18 @@ a.path-link:hover {
 .palette-row.on {
   background: var(--bg-active);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+:root:not(.phone) .palette-list {
+  padding: 6px;
+}
+
+:root:not(.phone) .palette-row {
+  border-radius: var(--r-md);
+}
+
+:root:not(.phone) .palette-row.on {
+  box-shadow: none;
 }
 
 /* On the active fill the third tier falls short of 4.5:1; step it up. */
@@ -3903,7 +4529,7 @@ a.path-link:hover {
   width: 100%;
   padding: 2px 10px;
   text-align: left;
-  font: 12px/20px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh) var(--font-mono);
 }
 
 .search-hit:hover {
@@ -4037,6 +4663,13 @@ mark {
   white-space: nowrap;
 }
 
+/* A dialog's head names what it does in words, not a file by its path. */
+:root:not(.phone) .viewer-head.dialog-head {
+  min-height: calc(var(--bar-h) + 8px);
+  padding-left: 16px;
+  font: 600 var(--fs-lg) / 1.2 var(--font-ui);
+}
+
 /* Which revision the viewer is showing, when not the working tree. */
 .viewer-head .at {
   flex: none;
@@ -4082,7 +4715,7 @@ mark {
   overflow: auto;
   background: var(--bg);
   color: var(--fg-2);
-  font: 12px/18px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh-tight) var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -4120,22 +4753,88 @@ mark {
   color: var(--del);
 }
 
-.help-body {
-  display: grid;
-  grid-template-columns: 150px 1fr;
+/* The keys in sections, two columns of them where there is room: what each
+   does, and its keys at the line's end. */
+.modal.help {
+  width: min(980px, 100%);
+  max-height: 86vh;
+}
+
+.help-head {
+  display: flex;
   align-items: center;
-  gap: 4px 12px;
-  padding: 12px 14px 16px;
+  min-height: calc(var(--bar-h) + 12px);
+  padding: 0 10px 0 20px;
+}
+
+.help-title {
+  color: var(--fg);
+  font: 600 var(--fs-xl) / 1.2 var(--font-ui);
+}
+
+.help-body {
+  columns: 2 380px;
+  column-gap: 32px;
+  padding: 4px 20px 20px;
+  background: var(--bg-shell);
+}
+
+.help-section {
+  break-inside: avoid-column;
+  margin-bottom: 8px;
+}
+
+.help-section > .settings-heading {
+  padding-top: 14px;
 }
 
 .help-row {
-  display: contents;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: calc(6px * var(--space)) 0;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.help-row:last-child {
+  border-bottom: 0;
+}
+
+.help-keys {
+  display: inline-flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 45%;
+}
+
+.help-alt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.help-or {
+  margin-right: 1px;
+  color: var(--fg-4);
+}
+
+.help-gesture {
+  flex: none;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  font-style: italic;
 }
 
 .settings-body {
   display: grid;
-  gap: 8px;
-  padding: 8px 14px 16px;
+  gap: calc(8px * var(--space) * var(--space));
+  padding: calc(8px * var(--space)) calc(14px * var(--space)) calc(16px * var(--space));
   overflow-y: auto;
   background: var(--bg);
 }
@@ -4182,6 +4881,73 @@ mark {
   margin-left: auto;
 }
 
+/* Appearance's accent: swatches in the seg, and a last one that opens the
+   browser's colour picker, as a seg button would look. */
+.accent-picks .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
+}
+
+.accent-picks > .any-colour {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ctl-h);
+  min-width: var(--ctl-h);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+
+.accent-picks > .any-colour:hover,
+.accent-picks > .any-colour.on {
+  background: var(--bg-active);
+}
+
+.any-colour .swatch {
+  background: conic-gradient(#f87171, #fbbf24, #4ade80, #2dd4bf, #5b9dff, #a78bfa, #f472b6, #f87171);
+}
+
+.any-colour input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.range-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.range-setting input {
+  width: 180px;
+  height: auto;
+  padding: 0;
+  background: none;
+  accent-color: var(--accent);
+}
+
+.range-setting input:focus {
+  box-shadow: none;
+}
+
+.range-value {
+  min-width: 40px;
+  color: var(--fg-2);
+  font: var(--fs-xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4213,6 +4979,333 @@ mark {
   flex: 1 0 auto;
 }
 
+.settings-tabs > .seg > button > svg,
+.settings-title,
+.settings-close {
+  display: none;
+}
+
+/* On a computer, its sections run down the side and the open one's settings
+   fill the rest, each run of rows a card with lines between them. */
+:root:not(.phone) .modal.settings {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(940px, 100%);
+  height: min(720px, 86vh);
+  max-height: none;
+  background: var(--bg);
+}
+
+:root:not(.phone) .settings-tabs {
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 16px 10px;
+  overflow-y: auto;
+  background: var(--bg-shell);
+  box-shadow: inset -1px 0 0 var(--border-soft);
+}
+
+:root:not(.phone) .settings-title {
+  display: block;
+  padding: 2px 10px 14px;
+  color: var(--fg);
+  font: 600 var(--fs-xl) / 1.2 var(--font-ui);
+}
+
+:root:not(.phone) .settings-tabs > .seg {
+  flex-direction: column;
+  gap: 2px;
+  overflow: visible;
+}
+
+:root:not(.phone) .settings-tabs > .seg > button {
+  flex: none;
+  justify-content: flex-start;
+  gap: 10px;
+  height: calc(var(--row-h) + 6px);
+  padding: 0 10px;
+  font-size: var(--fs-md);
+}
+
+:root:not(.phone) .settings-tabs > .seg > button > svg {
+  display: block;
+  color: var(--fg-3);
+}
+
+:root:not(.phone) .settings-tabs > .seg > button.on > svg {
+  color: var(--accent);
+}
+
+:root:not(.phone) .settings-close {
+  display: inline-flex;
+  grid-column: 2;
+  justify-self: end;
+  margin: 10px 10px 0 0;
+}
+
+:root:not(.phone) .modal.settings > .settings-body {
+  grid-column: 2;
+  gap: 0;
+  padding: 0 calc(28px * var(--space)) calc(28px * var(--space));
+}
+
+:root:not(.phone) .modal.settings .settings-row {
+  padding: calc(12px * var(--space)) calc(16px * var(--space));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+}
+
+:root:not(.phone) .modal.settings .settings-row + .settings-row {
+  border-top: 0;
+}
+
+:root:not(.phone) .modal.settings :is(.settings-row:first-child, :not(.settings-row) + .settings-row) {
+  border-top-left-radius: var(--r-xl);
+  border-top-right-radius: var(--r-xl);
+}
+
+:root:not(.phone) .modal.settings .settings-row:not(:has(+ .settings-row)) {
+  border-bottom-left-radius: var(--r-xl);
+  border-bottom-right-radius: var(--r-xl);
+}
+
+:root:not(.phone) .modal.settings .settings-body > :not(.settings-row, .settings-heading) + .settings-row,
+:root:not(.phone) .modal.settings .settings-body > .settings-row + :not(.settings-row, .settings-heading) {
+  margin-top: 14px;
+}
+
+:root:not(.phone) .modal.settings .settings-text {
+  flex-basis: 180px;
+}
+
+:root:not(.phone) .modal.settings .settings-text > div:first-child {
+  color: var(--fg);
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+
+:root:not(.phone) .modal.settings .settings-note {
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+.settings-heading {
+  padding: 22px 2px 8px;
+  color: var(--fg-3);
+  font: 600 var(--fs-tag) / 1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-heading:first-child {
+  padding-top: 6px;
+}
+
+/* Choices in a sunken track, the one picked raised out of it, as the modes. */
+:root:not(.phone) .modal.settings .settings-row .seg {
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+:root:not(.phone) .modal.settings .settings-row .seg > button {
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: calc(var(--r-lg) - 2px);
+}
+
+:root:not(.phone) .modal.settings .settings-row .seg > button.on {
+  background: var(--bg-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin-left: auto;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition: background-color 0.15s;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s, background-color 0.15s;
+}
+
+.switch:hover::after {
+  background: var(--fg);
+}
+
+.switch.on {
+  background: var(--accent-fill);
+  box-shadow: none;
+}
+
+.switch.on::after {
+  background: #fff;
+  transform: translateX(14px);
+}
+
+.settings-actions > .switch {
+  align-self: center;
+  margin-left: 4px;
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+:root:not(.phone) .modal.settings .settings-row .btn {
+  background: var(--bg-active);
+  color: var(--fg);
+  padding: 0 10px;
+}
+
+:root:not(.phone) .modal.settings .settings-row .btn:hover:not(:disabled) {
+  background: var(--border);
+}
+
+/* The logs' caption sits over their card rather than being one. */
+:root:not(.phone) .modal.settings .settings-logs > .settings-row {
+  padding: 0 2px;
+  background: none;
+  border: 0;
+}
+
+:root:not(.phone) .modal.settings .settings-body > * + .settings-logs {
+  margin-top: 18px;
+}
+
+/* A theme's ground with its accent in the corner. */
+.theme-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--sw) 55%, var(--dot) 55%);
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.4);
+}
+
+/* Looks are pictures of the window in them, a row of their own under the words. */
+.look-tiles {
+  display: grid;
+  flex: 1 1 100%;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.look-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--fg-2);
+  font: 500 var(--fs-sm) / 1.2 var(--font-ui);
+  text-align: left;
+}
+
+.look-tile:hover,
+.look-tile.on {
+  color: var(--fg);
+}
+
+.look-picture {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--l-bg);
+  box-shadow: 0 0 0 1px var(--border);
+  transition: box-shadow 0.15s;
+}
+
+.look-picture.glass {
+  background: radial-gradient(circle at 0 0, color-mix(in srgb, var(--l-accent) 35%, transparent), transparent 65%), var(--l-bg);
+}
+
+.look-tile:hover .look-picture {
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.look-tile.on .look-picture {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.look-picture > i {
+  position: absolute;
+  display: block;
+}
+
+.l-bar {
+  inset: 0 0 auto;
+  height: 13%;
+  background: var(--l-bar);
+}
+
+.l-side,
+.l-main {
+  top: 22%;
+  bottom: 9%;
+  border-radius: 3px;
+  background: var(--l-panel);
+}
+
+.l-side {
+  left: 6%;
+  width: 24%;
+}
+
+.look-picture > .l-main {
+  left: 35%;
+  right: 6%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8% 9%;
+}
+
+.look-picture.glass :is(.l-side, .l-main) {
+  background: color-mix(in srgb, var(--l-panel) 65%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--l-fg) 12%, transparent);
+}
+
+.l-main > b {
+  display: block;
+  width: 80%;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--l-fg) 28%, transparent);
+}
+
+.l-main > b:nth-child(2) {
+  width: 58%;
+}
+
+.l-main > b.l-pick {
+  width: 44%;
+  background: var(--l-accent);
+}
+
 .action-form-foot {
   display: flex;
   justify-content: flex-end;
@@ -4242,7 +5335,7 @@ mark {
   flex-direction: row;
   align-items: center;
   gap: 10px;
-  min-height: 30px;
+  min-height: calc(var(--row-h) + 6px);
   padding: 3px 12px;
 }
 
@@ -4328,7 +5421,7 @@ mark {
 
 .palette-row.folder-hit {
   gap: 10px;
-  min-height: 30px;
+  min-height: calc(var(--row-h) + 6px);
   padding: 3px 12px;
 }
 
@@ -4370,7 +5463,15 @@ kbd {
 }
 
 .help-row kbd {
-  justify-self: start;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  box-shadow: inset 0 -1px 0 var(--border), 0 0 0 1px var(--border-soft);
+  color: var(--fg);
+  line-height: 20px;
+  text-align: center;
 }
 
 /* ---------- syntax highlighting ---------- */
@@ -4612,7 +5713,7 @@ body.resizing * {
   z-index: 40;
   width: 220px;
   background: var(--bg-raised);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   box-shadow: var(--shadow-pop);
   padding: 4px;
 }
@@ -4939,7 +6040,7 @@ body.resizing * {
   right: 16px;
   z-index: 2;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-lg);
   background: var(--bg-raised);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--fg-2);
@@ -5067,7 +6168,7 @@ body.resizing * {
 
 .ask-prompts > button {
   max-width: 100%;
-  height: 24px;
+  height: var(--ctl-h);
   padding: 0 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5139,7 +6240,7 @@ body.resizing * {
 .session-rename {
   flex: 1;
   min-width: 0;
-  height: 22px;
+  height: var(--ctl-h-sm);
   margin: -2px 0 -2px -4px;
   padding: 0 4px;
   font-size: var(--fs-md);
@@ -5294,7 +6395,7 @@ button.ghost.agent-context {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
+  height: calc(var(--ctl-h) + 2px);
   padding: 0 12px 0 9px;
   border-radius: var(--r-pill);
   background: var(--bg-raised);
@@ -5339,10 +6440,11 @@ button.ghost.agent-context {
    taken off the right padding the gaps either side match, and off the
    widest it goes too, what is inside sits as it would with no scrollbar. */
 .agent-log {
-  --log-pad: 20px;
+  --log-pad: calc(20px * var(--space));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  /* Squared, so Roomy parts what was said more than it pads each part. */
+  gap: calc(4px * var(--space) * var(--space));
   max-width: calc(1100px - (100cqw - 100%));
   margin: 0 auto;
   padding: 8px calc(var(--log-pad) - (100cqw - 100%)) 32px var(--log-pad);
@@ -5398,7 +6500,7 @@ button.ghost.agent-context {
 }
 
 .agent-suggestions > button {
-  height: 30px;
+  height: calc(var(--ctl-h) + 6px);
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
@@ -5419,7 +6521,7 @@ button.ghost.agent-context {
 
 .agent-followups > button {
   max-width: 100%;
-  height: 26px;
+  height: calc(var(--ctl-h) + 2px);
   padding: 0 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5440,9 +6542,9 @@ button.ghost.agent-context {
   position: relative;
   align-self: flex-end;
   max-width: min(78%, 760px);
-  margin-top: 14px;
-  padding: 8px 12px;
-  border-radius: 12px;
+  margin-top: calc(14px * var(--space));
+  padding: calc(8px * var(--space)) calc(12px * var(--space));
+  border-radius: calc(var(--r-xl) + 4px);
   background: var(--bg-active);
   font-size: var(--fs-md);
   line-height: 1.5;
@@ -5661,24 +6763,24 @@ button.ghost.agent-context {
   max-width: 820px;
   min-width: 0;
   font-size: var(--fs-md);
-  line-height: 1.62;
+  line-height: var(--prose-lh);
   overflow-wrap: anywhere;
 }
 
 .agent-text p {
-  margin: 0 0 8px;
+  margin: 0 0 calc(0.65em * var(--prose));
 }
 
 .agent-text h1,
 .agent-text h2,
 .agent-text h3 {
-  margin: 12px 0 4px;
+  margin: calc(1em * var(--prose)) 0 calc(0.35em * var(--prose));
   color: var(--fg);
   font-size: var(--fs-md);
 }
 
 .agent-text li {
-  margin-bottom: 3px;
+  margin-bottom: calc(0.25em * var(--prose));
 }
 
 .agent-text pre,
@@ -5692,7 +6794,7 @@ button.ghost.agent-context {
 /* The margin is the wrapper's, so first- and last-child rules still reach it. */
 .code-block {
   position: relative;
-  margin: 1em 0;
+  margin: calc(1em * var(--prose)) 0;
 }
 
 .code-block > pre {
@@ -5819,7 +6921,7 @@ button.ghost.agent-context {
 
 .agent-text th,
 .agent-text td {
-  padding: 3px 7px;
+  padding: calc(3px * var(--space)) calc(7px * var(--space));
   border: 1px solid var(--border-soft);
   text-align: left;
 }
@@ -6093,7 +7195,7 @@ button.ghost.agent-context {
   overflow: auto;
   border-top: 1px solid var(--border-soft);
   color: var(--fg-2);
-  font: 12px/18px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh-tight) var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -6121,7 +7223,7 @@ button.ghost.agent-context {
   border-radius: var(--r-lg);
   background: var(--bg-panel);
   color: var(--fg-2);
-  font: 12px/18px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh-tight) var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -6287,7 +7389,7 @@ button.ghost.agent-context {
   max-height: 420px;
   padding: 6px 0;
   overflow: auto;
-  font: 12px/18px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh-tight) var(--font-mono);
 }
 
 .agent-code-line {
@@ -6318,7 +7420,7 @@ button.ghost.agent-context {
   max-height: 420px;
   padding: 4px 0;
   overflow: auto;
-  font: 12px/18px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh-tight) var(--font-mono);
 }
 
 .agent-found-path,
@@ -6682,7 +7784,7 @@ button.ghost.agent-context {
   margin-inline: auto;
   padding: 10px 10px 8px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: calc(var(--r-xl) + 6px);
   background: var(--bg-panel);
 }
 
@@ -7397,7 +8499,7 @@ button.ghost.composer-add {
 }
 
 .notice-actions > button {
-  height: 24px;
+  height: var(--ctl-h);
   padding: 0 10px;
   font-size: var(--fs-xs);
 }
@@ -7545,7 +8647,7 @@ button.ghost.composer-add {
   flex-direction: column;
   margin: 0;
   padding: 10px 14px;
-  font: 12px/20px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh) var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -7568,7 +8670,7 @@ button.ghost.composer-add {
 
 .prompt-fields dd {
   margin: 0;
-  font: 12px/20px var(--font-mono);
+  font: var(--code-fs) / var(--code-lh) var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -7906,7 +9008,7 @@ button.ghost.back {
 
 .hub-search > input {
   flex: 1;
-  height: 28px;
+  height: calc(var(--ctl-h) + 4px);
   padding-left: 27px;
 }
 
@@ -8330,7 +9432,7 @@ button.hub-remote-link:hover {
 }
 
 .hub-found-list .palette-row {
-  min-height: 30px;
+  min-height: calc(var(--row-h) + 6px);
   padding: 2px 12px;
 }
 
@@ -8448,7 +9550,7 @@ button.hub-remote-link:hover {
 }
 
 .palette-input.hub-as {
-  min-height: 30px;
+  min-height: calc(var(--row-h) + 6px);
 }
 
 .hub-as-label {
