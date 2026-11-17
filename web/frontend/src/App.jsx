@@ -52,7 +52,7 @@ import {
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
 import { tabDot } from "./favicon.js";
-import { tabName, useAppearance, useTabIcon } from "./appearance.js";
+import { tabName, useAppearance, useLook, useTabIcon } from "./appearance.js";
 import { closeTask, startTask } from "./tasks.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
@@ -61,7 +61,6 @@ const NO_FILES = [];
 const RECENT_FILES = 10;
 const NO_ATTACHED = [];
 const NO_ATTACHED_BY = {};
-const NO_SETTINGS = {};
 const MODES = ["diff", "code", "agent", "terminal"];
 const FOLDER_MODES = ["code", "agent", "terminal"];
 const NO_FILTER = { include: "", exclude: "" };
@@ -92,7 +91,7 @@ export default function App() {
   // The phone app lists its files apart already, so it keeps to the one scroll.
   const [oneFilePicked, setOneFile] = usePersisted("oneFile", false);
   const oneFile = oneFilePicked && !phoneApp;
-  const [theme, setTheme] = usePref("user", "theme", "dark");
+  const [theme, setTheme, settings, setSettings] = useLook();
   const [hideGenerated, setHideGenerated] = usePref("repo", "hideGenerated", false);
   const [pathFilter, setPathFilter] = usePref("repo", "pathFilter", NO_FILTER);
   // Show all pauses the filters rather than clearing them, so they come back
@@ -141,7 +140,6 @@ export default function App() {
     }),
     [agent],
   );
-  const [settings, setSettings] = usePref("user", "settings", NO_SETTINGS);
   const sideRight = settings.sidebar === "right";
   const [agentReveal, setAgentReveal] = useState(null);
   // Counts what was put in the Agent view's message box from elsewhere, each

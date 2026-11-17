@@ -48,6 +48,9 @@ func Manifest(user *store.Prefs) http.HandlerFunc {
 			all := user.All()
 			json.Unmarshal(all["settings"], &s)
 			json.Unmarshal(all["theme"], &theme)
+			if unpicked(theme, all["settings"]) {
+				theme = "obsidian"
+			}
 		}
 		name, _ := json.Marshal(cmp.Or(appName(s.TabName), "dv"))
 		style, c := tabMark(theme, s.Accent, s.TabColor, s.TabIcon)
@@ -121,6 +124,9 @@ func PageAppearance(theme string, settings json.RawMessage) string {
 		GlassOpacity *float64 `json:"glassOpacity"`
 	}
 	json.Unmarshal(settings, &s)
+	if unpicked(theme, settings) {
+		theme, s.Corners, s.Glass, s.Glow, s.Changes, s.UIFont = "obsidian", "round", true, "soft", "gutter", "inter"
+	}
 	var b strings.Builder
 	attr := func(name, v string) {
 		if attrWord.MatchString(v) {
@@ -165,6 +171,19 @@ func PageAppearance(theme string, settings json.RawMessage) string {
 }
 
 var attrWord = regexp.MustCompile(`^[a-z0-9]+$`)
+
+// unpicked is appearance.js's useLook finding no look picked, which wears
+// Glass: LOOKS.glass there.
+func unpicked(theme string, settings json.RawMessage) bool {
+	var s map[string]json.RawMessage
+	json.Unmarshal(settings, &s)
+	for _, k := range []string{"density", "corners", "glass", "glow", "changes", "uiFont", "codeFont"} {
+		if _, ok := s[k]; ok {
+			return false
+		}
+	}
+	return theme == ""
+}
 
 // themeAccents are appearance.js's THEMES' accents: the tab's colour when it
 // is marked but no accent is picked.

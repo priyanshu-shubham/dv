@@ -2,8 +2,9 @@
 // styles.css keys its rules to and a few values beside them. The server puts
 // the same on the page it sends (pageAppearance in server.go), so the first
 // frame is already drawn in them.
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { setTabIcon, TAB_COLORS } from "./favicon.js";
+import { usePref } from "./prefs.js";
 
 // Each theme's shades and accent, as styles.css has them: the ground a
 // terminal takes, the accent the tab takes when none is picked, and the rest
@@ -38,9 +39,9 @@ export const CODE_SIZES = [11, 12, 13, 14, 15];
 // accent, the tab or the code size, which are the computer's and the reader's.
 export const LOOK_KEYS = ["density", "corners", "glass", "glow", "changes", "uiFont", "codeFont"];
 export const LOOKS = {
-  default: { name: "Default", theme: "dark" },
-  graphite: { name: "Graphite", theme: "graphite", density: "roomy", corners: "round", uiFont: "geist", codeFont: "geist" },
   glass: { name: "Glass", theme: "obsidian", corners: "round", glass: true, glow: "soft", changes: "gutter", uiFont: "inter" },
+  dark: { name: "Near-black", theme: "dark" },
+  graphite: { name: "Graphite", theme: "graphite", density: "roomy", corners: "round", uiFont: "geist", codeFont: "geist" },
   ember: { name: "Ember", theme: "ember", density: "compact", corners: "sharp", uiFont: "plex" },
   light: { name: "Light", theme: "light" },
   frost: { name: "Frost", theme: "light", corners: "round", glass: true, glow: "soft", changes: "light", uiFont: "geist", codeFont: "geist" },
@@ -53,6 +54,29 @@ export const cleanName = (v) => [...(v || "").replace(/[^\p{L}\p{N} ._-]/gu, "")
 export const tabName = (s) => cleanName(s.tabName).trim() || "dv";
 
 export const lookOn =(look, theme, s) => look.theme === theme && LOOK_KEYS.every((k) => (look[k] ?? undefined) === (s[k] ?? undefined));
+
+const NO_SETTINGS = {};
+const GLASS = Object.fromEntries(LOOK_KEYS.map((k) => [k, LOOKS.glass[k]]));
+
+// useLook is the "theme" and "settings" prefs as worn. Until a look is picked -
+// no theme kept, none of a look's switches - that is Glass; the first change
+// keeps it, so turning one of its switches off does not bring it back. Before
+// Glass was, Near-black's theme was kept as no theme, so its switches tell.
+// app.go's PageAppearance does the same.
+export function useLook() {
+  const [picked, setPicked] = usePref("user", "theme", "");
+  const [kept, setKept] = usePref("user", "settings", NO_SETTINGS);
+  const unpicked = !picked && LOOK_KEYS.every((k) => kept[k] === undefined);
+  const settings = useMemo(() => (unpicked ? { ...kept, ...GLASS } : kept), [kept, unpicked]);
+  const keep = () => {
+    if (!unpicked) return;
+    setPicked(LOOKS.glass.theme);
+    setKept((s) => ({ ...GLASS, ...s }));
+  };
+  const setTheme = (t) => (keep(), setPicked(t));
+  const setSettings = (v) => (keep(), setKept(v));
+  return [unpicked ? LOOKS.glass.theme : picked || "dark", setTheme, settings, setSettings];
+}
 
 // Before the accent there was only the tab's colour, from TAB_COLORS by name:
 // it stands for both until an accent or tab icon is picked.

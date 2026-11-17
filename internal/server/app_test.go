@@ -168,6 +168,20 @@ func TestPageStartsInItsAppearance(t *testing.T) {
 	}
 }
 
+// Until a look is picked the page wears Glass; a theme, or a look's switch,
+// picked before Glass was the default keeps what it was.
+func TestPageAppearanceUnpickedIsGlass(t *testing.T) {
+	for _, c := range []struct{ theme, settings, want string }{
+		{"", `{"accent":"#f472b6"}`, ` data-theme="obsidian" data-code="github" data-corners="round" data-changes="gutter" data-glow="soft" data-glass="on" data-ui-font="inter" data-accent="on" style="--tab-mark:#f472b6;--pick:#f472b6;--blur:16px;--glass-a:0.6"`},
+		{"", `{"density":"compact"}`, ` data-code="github" data-density="compact" style="--tab-mark:#5b9dff"`},
+		{"dark", `{}`, ` data-theme="dark" data-code="github" style="--tab-mark:#5b9dff"`},
+	} {
+		if got := PageAppearance(c.theme, json.RawMessage(c.settings)); got != c.want {
+			t.Errorf("%q %s:\n got %s\nwant %s", c.theme, c.settings, got, c.want)
+		}
+	}
+}
+
 // A picked accent is --pick, and the tab's colour is it too; settings from
 // before the accent give the tab's colour by name for both.
 func TestPageAppearanceAccent(t *testing.T) {

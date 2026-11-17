@@ -10,7 +10,7 @@ import { usePush } from "./phone/push.js";
 import { IconBolt, IconBranch, IconCheck, IconChevron, IconDots, IconPlus, IconSearch, IconSettings, IconTemporary, IconX } from "./icons.jsx";
 import { ActionsPalette } from "./Actions.jsx";
 import { tabDot } from "./favicon.js";
-import { tabName, useAppearance, useTabIcon } from "./appearance.js";
+import { tabName, useAppearance, useLook, useTabIcon } from "./appearance.js";
 import { PRChip } from "./Header.jsx";
 import { startTask } from "./tasks.js";
 import { HubMark, MachineMeter } from "./Machine.jsx";
@@ -22,7 +22,6 @@ const BUSY_POLL_MS = 700;
 const DETAILS_MS = 10000;
 // Pull requests are asked of GitHub, and so more seldom still.
 const PRS_MS = 60000;
-const NO_SETTINGS = {};
 
 // Hub is the page of a hub: the folders it serves, each opened at /<slug>/,
 // with the worktrees made of them under them, and the ways to add one, from
@@ -31,8 +30,7 @@ export default function Hub() {
   // The settings of every folder's page. The ones kept by the browser are
   // shared by all the folders here, which are pages of this one address.
   const phone = useMedia(PHONE);
-  const [theme, setTheme] = usePref("user", "theme", "dark");
-  const [settings, setSettings] = usePref("user", "settings", NO_SETTINGS);
+  const [theme, setTheme, settings, setSettings] = useLook();
   const [contextLines, setContextLines] = usePref("user", "context", 3);
   const [view, setView] = usePersisted("view", "split");
   const [wrapWide, setWrapWide] = usePersisted("wrap", false);
