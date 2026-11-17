@@ -57,9 +57,13 @@ type Context struct {
 type Usage struct {
 	Session *Limit `json:"session,omitempty"` // the five-hour window
 	Week    *Limit `json:"week,omitempty"`    // or whatever longer one the plan has
+	// Models are weekly limits on one model, which run out apart from Week:
+	// Fable's, on a Max plan.
+	Models []*Limit `json:"models,omitempty"`
 }
 
 type Limit struct {
+	Model    string  `json:"model,omitempty"`
 	Percent  float64 `json:"percent"`
 	ResetsAt string  `json:"resetsAt,omitempty"`
 	// Window is how long the limit's window is, in minutes, where the agent
@@ -379,6 +383,10 @@ func usageFrom(raw json.RawMessage) *Usage {
 		Limits    struct {
 			Session *window `json:"five_hour"`
 			Week    *window `json:"seven_day"`
+			Models  []struct {
+				Name string `json:"display_name"`
+				window
+			} `json:"model_scoped"`
 		} `json:"rate_limits"`
 	}
 	if json.Unmarshal(raw, &u) != nil || !u.Available {
@@ -390,7 +398,14 @@ func usageFrom(raw json.RawMessage) *Usage {
 		}
 		return &Limit{Percent: *w.Utilization, ResetsAt: w.ResetsAt}
 	}
-	return &Usage{limit(u.Limits.Session), limit(u.Limits.Week)}
+	out := &Usage{Session: limit(u.Limits.Session), Week: limit(u.Limits.Week)}
+	for _, m := range u.Limits.Models {
+		if l := limit(&m.window); l != nil && m.Name != "" {
+			l.Model = m.Name
+			out.Models = append(out.Models, l)
+		}
+	}
+	return out
 }
 
 // settingsAt is when Claude Code's settings last changed: the user's, and the

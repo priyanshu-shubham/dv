@@ -66,8 +66,8 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
           {plans.map((u) => (
             <span key={u.agent} className="p-limits-row">
               <AgentIcon agent={u.agent} size={14} />
-              {SLOTS.map(([k, m]) => (
-                <Limit key={k} limit={u.limits[k]} minutes={m} />
+              {slots(u.limits).map(([k, l, m]) => (
+                <Limit key={k} limit={l} minutes={m} />
               ))}
             </span>
           ))}
@@ -76,18 +76,15 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
       {limits && (
         <Sheet title="Plan usage" onClose={() => setLimits(false)}>
           {plans.map((u) =>
-            SLOTS.map(
-              ([k, m]) =>
-                u.limits[k] && (
-                  <Row
-                    key={u.agent + k}
-                    lead={<AgentIcon agent={u.agent} size={20} />}
-                    title={`${agentName(u.agent)} · ${limitWindow(u.limits[k], m)[1]}`}
-                    sub={u.limits[k].resetsAt && "Resets " + resetsWhen(u.limits[k].resetsAt)}
-                    trail={<Limit limit={u.limits[k]} />}
-                  />
-                ),
-            ),
+            slots(u.limits).map(([k, l, m]) => (
+              <Row
+                key={u.agent + k}
+                lead={<AgentIcon agent={u.agent} size={20} />}
+                title={`${l.model || agentName(u.agent)} · ${limitWindow(l, m)[1]}`}
+                sub={l.resetsAt && "Resets " + resetsWhen(l.resetsAt)}
+                trail={<Limit limit={l} />}
+              />
+            ))
           )}
         </Sheet>
       )}
@@ -208,6 +205,15 @@ const SLOTS = [
   ["week", 7 * 24 * 60],
 ];
 
+// slots are a plan's limits as [key, limit, minutes], a model's own after the
+// plan's.
+function slots(limits) {
+  return [
+    ...SLOTS.filter(([k]) => limits[k]).map(([k, m]) => [k, limits[k], m]),
+    ...(limits.models || []).map((l) => ["model:" + l.model, l, 7 * 24 * 60]),
+  ];
+}
+
 // Limit is how much of one of the plan's usage limits is spent, labelled with
 // its window when given its place's.
 function Limit({ limit, minutes }) {
@@ -215,7 +221,7 @@ function Limit({ limit, minutes }) {
   const pct = Math.min(100, Math.round(limit.percent));
   return (
     <span className={cx("p-limit", pct >= 90 ? "high" : pct >= 75 && "warn")}>
-      {minutes && <span className="p-limit-label">{limitWindow(limit, minutes)[0]}</span>}
+      {minutes && <span className="p-limit-label">{limit.model || limitWindow(limit, minutes)[0]}</span>}
       <span className="p-meter">
         <span style={{ width: `${pct}%` }} />
       </span>

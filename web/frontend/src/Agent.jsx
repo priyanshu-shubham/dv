@@ -4683,6 +4683,9 @@ export function SessionList({
         <span className="spacer" />
         {usage && <PlanLimit limit={usage.session} minutes={5 * 60} />}
         {usage && <PlanLimit limit={usage.week} minutes={7 * 24 * 60} />}
+        {usage?.models?.map((l) => (
+          <PlanLimit key={l.model} limit={l} minutes={7 * 24 * 60} />
+        ))}
       </div>
     </>
   );
@@ -4691,11 +4694,13 @@ export function SessionList({
 // PlanLimit is how much of one of a plan's usage limits is spent.
 function PlanLimit({ limit, minutes }) {
   if (!limit) return null;
-  const [label, of] = limitWindow(limit, minutes);
+  let [label, of] = limitWindow(limit, minutes);
+  if (limit.model) [label, of] = [limit.model, `${limit.model}, ${of.toLowerCase()}`];
   const pct = Math.min(100, limit.percent);
   const when = limit.resetsAt && resetsWhen(limit.resetsAt);
+  const whose = limit.model ? `its own limit, apart from the plan's` : "the plan's usage";
   return (
-    <span className={cx("plan-limit", pct >= 90 ? "high" : pct >= 75 && "warn")} title={`${of}: ${Math.round(limit.percent)}% of the plan's usage${when ? `, resets ${when}` : ""}`}>
+    <span className={cx("plan-limit", pct >= 90 ? "high" : pct >= 75 && "warn")} title={`${of}: ${Math.round(limit.percent)}% of ${whose}${when ? `, resets ${when}` : ""}`}>
       {/* Elements, not bare text: with the bar hidden, text would run together. */}
       <span>{label}</span>
       <Bar pct={pct} />

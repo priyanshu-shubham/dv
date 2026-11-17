@@ -961,6 +961,10 @@ func TestUsageIsThePlansWindows(t *testing.T) {
 	if u == nil || u.Session.Percent != 4 || u.Week.Percent != 6.5 || u.Week.ResetsAt != "2026-09-23T11:00:00Z" {
 		t.Fatalf("usage %+v", u)
 	}
+	u = usageFrom(json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"five_hour":null,"seven_day":{"utilization":14},"model_scoped":[{"display_name":"Fable","utilization":16,"resets_at":"2026-11-18T11:00:00Z"}]}}`))
+	if u == nil || u.Session != nil || len(u.Models) != 1 || *u.Models[0] != (Limit{Model: "Fable", Percent: 16, ResetsAt: "2026-11-18T11:00:00Z"}) {
+		t.Fatalf("a model's own limit: %+v", u)
+	}
 	if usageFrom(json.RawMessage(`{"rate_limits_available":false,"rate_limits":null}`)) != nil {
 		t.Fatal("an account without plan limits has usage")
 	}
