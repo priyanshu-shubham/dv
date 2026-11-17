@@ -41,9 +41,11 @@ const wordStart = (s, i) => i === 0 || /[\s_\-./:]/.test(s[i - 1]) || (/[a-z]/.t
 
 // fuzzy finds q's letters in order in text as Go to file does: a prefix over a
 // run, a run over scattered letters, which count for more at a word's start.
+// "-" and "_" are one, and one the text lacks is skipped.
 // [score, positions], or null; q is in lower case.
 function fuzzy(q, text) {
-  const t = text.toLowerCase();
+  q = q.replaceAll("-", "_");
+  const t = text.toLowerCase().replaceAll("-", "_");
   const at = t.indexOf(q);
   if (at >= 0) {
     const score = (at === 0 ? 5000 : 3000 - at * 4 + (wordStart(text, at) ? 800 : 0)) - text.length;
@@ -53,13 +55,14 @@ function fuzzy(q, text) {
   let score = 1000 - text.length;
   for (let k = 0, from = 0; k < q.length; k++) {
     const j = t.indexOf(q[k], from);
+    if (j < 0 && q[k] === "_") continue;
     if (j < 0) return null;
     const prev = hits.at(-1) ?? -2;
     score += (j === prev + 1 ? 25 : (prev - j) * 2) + (wordStart(text, j) ? 60 : 0);
     hits.push(j);
     from = j + 1;
   }
-  return [score, hits];
+  return hits.length ? [score, hits] : null;
 }
 
 // A name is what people type, so a term found in it outranks one that needed the place.

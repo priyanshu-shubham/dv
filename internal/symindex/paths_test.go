@@ -36,6 +36,10 @@ func TestRankPaths(t *testing.T) {
 		{"gitx diff", []string{"internal/gitx/diff.go", "internal/gitx/diff_test.go"}},
 		// A slash is about folders, so the name gets no head start.
 		{"server/", []string{"internal/server/server.go", "internal/server/handlers.go"}},
+		// - and _ are the same; one the name lacks is skipped.
+		{"diff-test", []string{"internal/gitx/diff_test.go"}},
+		{"file-diff", []string{"web/frontend/src/FileDiff.jsx"}},
+		{"-", []string{"internal/gitx/diff_test.go"}},
 		{"", nil},
 		{"zzz", nil},
 	} {

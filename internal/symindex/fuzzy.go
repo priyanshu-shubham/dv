@@ -10,12 +10,10 @@ func fuzzyScore(pattern, target string) (int, []int, bool) {
 	if pattern == "" {
 		return 0, nil, false
 	}
-	if len(pattern) > len(target) {
-		return 0, nil, false
-	}
-
-	lowerT := strings.ToLower(target)
-	lowerP := strings.ToLower(pattern)
+	// "-" and "_" are one character to whoever types them, so foo-bar finds
+	// foo_bar. The swap keeps lengths, so match indices still fit target.
+	lowerT := sepFold.Replace(strings.ToLower(target))
+	lowerP := sepFold.Replace(strings.ToLower(pattern))
 
 	// Exact and prefix matches are common enough to be worth short-circuiting,
 	// both because they are fast and because they must outrank everything else.
@@ -50,12 +48,17 @@ func fuzzyScore(pattern, target string) (int, []int, bool) {
 	prev := -2
 	for pi := 0; pi < len(lowerP); pi++ {
 		c := lowerP[pi]
-		found := -1
+		found, from := -1, ti
 		for ; ti < len(lowerT); ti++ {
 			if lowerT[ti] == c {
 				found = ti
 				break
 			}
+		}
+		if found < 0 && c == '_' {
+			// A separator the name doesn't have, as in foo-bar for fooBar.
+			ti = from
+			continue
 		}
 		if found < 0 {
 			return 0, nil, false
@@ -75,7 +78,7 @@ func fuzzyScore(pattern, target string) (int, []int, bool) {
 		prev = found
 		ti++
 	}
-	return score, matches, true
+	return score, matches, len(matches) > 0
 }
 
 // isBoundary reports whether i starts a word: the first character, one after a
@@ -90,6 +93,8 @@ func isBoundary(s string, i int) bool {
 	}
 	return p >= 'a' && p <= 'z' && c >= 'A' && c <= 'Z'
 }
+
+var sepFold = strings.NewReplacer("-", "_")
 
 func seq(n int) []int {
 	out := make([]int, n)
