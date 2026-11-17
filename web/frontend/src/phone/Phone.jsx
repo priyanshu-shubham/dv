@@ -242,6 +242,7 @@ export default function Phone({ app }) {
             sessions={app.agent.sessions}
             requests={app.requests}
             elsewhere={app.elsewhere}
+            repoRoot={meta?.repoRoot}
             available={app.agent.available || !!app.agent.codex?.available}
             usage={[
               { agent: "", limits: app.agent.usage },
@@ -317,6 +318,11 @@ export default function Phone({ app }) {
           New session
         </button>
       )}
+      {tab === "agent" && app.newWorktree && (
+        <button className="p-fab-mini" onClick={app.newWorktree} aria-label="New session in a worktree" title="In a worktree">
+          <Icon name="branch" size={22} />
+        </button>
+      )}
       {tab === "terminal" && (
         <button className="p-fab" onClick={() => terminal.onNew().then((t) => t && openTerm(t.id))}>
           <Icon name="plus" />
@@ -389,7 +395,7 @@ export default function Phone({ app }) {
         )}
       </div>
 
-      {sheet === "folders" && <Folders elsewhere={app.elsewhere} here={app.requests.length} onClose={() => setSheet(null)} />}
+      {sheet === "folders" && <Folders elsewhere={app.elsewhere} here={app.requests.length} onNewWorktree={app.newWorktree} onClose={() => setSheet(null)} />}
       {sheet === "scope" && (
         <ScopeSheet
           scope={app.scope}
@@ -420,16 +426,42 @@ export default function Phone({ app }) {
 }
 
 // Folders is the hub's folders, each saying whether something there waits on
-// you. The hub's page, with adding, cloning and tasks, is a tap further.
-function Folders({ elsewhere, here, onClose }) {
+// you. This repository's checkouts come first, named by branch, as that is
+// what tells them apart. The hub's page, with adding and cloning, is a tap further.
+function Folders({ elsewhere, here, onNewWorktree, onClose }) {
   const [list, setList] = useState(null);
   useEffect(() => {
     api.hubFolders().then((r) => setList(r.folders || r), () => setList([]));
   }, []);
   const asks = useMemo(() => new Map((elsewhere || []).map((f) => [f.slug, f.requests?.length || 0])), [elsewhere]);
+  const repoOf = (f) => f.worktreeOf || f.path;
+  const home = list?.find((f) => f.slug === slug);
+  const ours = home ? list.filter((f) => repoOf(f) === repoOf(home)).sort((a, b) => !!a.worktreeOf - !!b.worktreeOf) : [];
+  const grouped = !!list && (ours.length > 1 || !!onNewWorktree);
+  const rest = (list || []).filter((f) => !ours.includes(f) || !grouped);
+
+  const row = (f, title) => {
+    const n = f.slug === slug ? here : asks.get(f.slug) || 0;
+    return (
+      <Row
+        key={f.slug}
+        icon={grouped && ours.includes(f) ? "branch" : "folder"}
+        on={f.slug === slug}
+        title={title}
+        sub={
+          <>
+            <span className="mono">{f.path}</span>
+            {n > 0 && <span className="p-warn"> · {n === 1 ? "needs you" : `${n} need you`}</span>}
+          </>
+        }
+        onClick={() => (f.slug === slug ? onClose() : (location.href = `/${f.slug}/`))}
+      />
+    );
+  };
   return (
     <Sheet
       title="Folders"
+      className="p-folders"
       onClose={onClose}
       foot={
         <button className="p-btn text" onClick={() => (location.href = "/?folders")}>
@@ -444,24 +476,18 @@ function Folders({ elsewhere, here, onClose }) {
         onClick={() => startTask().catch((e) => say("Could not start a task", e.message))}
       />
       {list === null && <div className="p-empty">Loading…</div>}
-      {list?.map((f) => {
-        const n = f.slug === slug ? here : asks.get(f.slug) || 0;
-        return (
-          <Row
-            key={f.slug}
-            icon="folder"
-            on={f.slug === slug}
-            title={f.name || f.slug}
-            sub={
-              <>
-                <span className="mono">{f.path}</span>
-                {n > 0 && <span className="p-warn"> · {n === 1 ? "needs you" : `${n} need you`}</span>}
-              </>
-            }
-            onClick={() => (f.slug === slug ? onClose() : (location.href = `/${f.slug}/`))}
-          />
-        );
-      })}
+      {grouped && <div className="p-sec">This repository</div>}
+      {grouped && ours.map((f) => row(f, f.branch || f.name || f.slug))}
+      {grouped && onNewWorktree && (
+        <Row
+          icon="plus"
+          title="New worktree"
+          sub="A session on a branch of its own, in a folder beside this one"
+          onClick={() => (onClose(), onNewWorktree())}
+        />
+      )}
+      {grouped && rest.length > 0 && <div className="p-sec">Other folders</div>}
+      {rest.map((f) => row(f, f.name || f.slug))}
     </Sheet>
   );
 }

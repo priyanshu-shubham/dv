@@ -1,6 +1,6 @@
 // The Agent tab's list: what waits on you first - in any of the hub's folders -
-// then what is at work here, then the rest open here, then what is open in the
-// other folders, then the rest. A row opens its session; held, it offers what
+// then what is at work here, then the rest open here, then what is open in
+// this repository's worktrees, then in other folders, then the rest. A row opens its session; held, it offers what
 // else can be done to it; swiped aside, it closes.
 import { useState } from "react";
 import { AgentIcon } from "../icons.jsx";
@@ -12,7 +12,7 @@ import { say, useOpenIn } from "../Notices.jsx";
 
 const isOpen = (s) => s.open || s.running === "dv";
 
-export default function Sessions({ sessions, requests, elsewhere, available, usage, onOpen, onClose, onRename }) {
+export default function Sessions({ sessions, requests, elsewhere, repoRoot, available, usage, onOpen, onClose, onRename }) {
   const [held, setHeld] = useState(null); // the session long-pressed
   const [renaming, setRenaming] = useState(null);
   const [limits, setLimits] = useState(false);
@@ -25,12 +25,14 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
   const open = here.filter((s) => isOpen(s) && !s.busy).sort(byLastSent);
   const recent = here.filter((s) => !isOpen(s));
 
+  // A worktree of this repository is told from the others by its branch.
+  const sibling = (f) => !!repoRoot && f.repoRoot === repoRoot;
   const row = (s, { req, f } = {}) => (
     <SessionRow
       key={(f ? f.slug + "/" : "") + s.id}
       s={s}
       req={req}
-      folder={f?.name}
+      folder={f && (sibling(f) && f.branch ? f.branch : f.name)}
       onOpen={() => (f ? openFolderSession(f.slug, s.id) : onOpen(s.id))}
       onHold={f ? null : () => setHeld(s)}
       onSwipe={f ? () => closeAway(f, s) : isOpen(s) ? () => onClose(s.id) : null}
@@ -54,6 +56,8 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
     ...away.filter((a) => a.req).map((a) => row(a.s, a)),
   ];
   const openAway = away.filter((a) => !a.req);
+  const worktrees = openAway.filter((a) => sibling(a.f));
+  const others = openAway.filter((a) => !sibling(a.f));
   const plans = usage.filter((u) => u.limits?.session || u.limits?.week);
   return (
     <div className="p-scroll p-sessions">
@@ -99,8 +103,10 @@ export default function Sessions({ sessions, requests, elsewhere, available, usa
       {working.map((s) => row(s))}
       {open.length > 0 && <div className="p-sec">Open</div>}
       {open.map((s) => row(s))}
-      {openAway.length > 0 && <div className="p-sec">Other folders</div>}
-      {openAway.map((a) => row(a.s, a))}
+      {worktrees.length > 0 && <div className="p-sec">Worktrees</div>}
+      {worktrees.map((a) => row(a.s, a))}
+      {others.length > 0 && <div className="p-sec">Other folders</div>}
+      {others.map((a) => row(a.s, a))}
       {recent.length > 0 && <div className="p-sec">Recent</div>}
       {recent.map((s) => row(s))}
       {!sessions.length && !away.length && <div className="p-empty">No sessions here yet. Start one with New session.</div>}

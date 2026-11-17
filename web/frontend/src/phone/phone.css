@@ -366,8 +366,32 @@ html.phone ::-webkit-scrollbar {
   background-image: linear-gradient(rgba(211, 227, 253, 0.12), rgba(211, 227, 253, 0.12));
 }
 
+/* The worktree's small one, over New session: the rarer start, a reach further. */
+.p-fab-mini {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--m-nav-h) + env(safe-area-inset-bottom) + 88px);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--m-high);
+  color: var(--fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+}
+
+.p-fab-mini:active {
+  background-image: linear-gradient(rgba(211, 227, 253, 0.12), rgba(211, 227, 253, 0.12));
+}
+
 .p-fab-room {
   height: 88px;
+}
+
+.p-app:has(.p-fab-mini) .p-sessions .p-fab-room {
+  height: 152px;
 }
 
 /* A screen over the tabs: a file, a session. Kept laid out while away, so
@@ -2478,7 +2502,8 @@ html.phone .notice .notice-actions button {
   font: 16px var(--font-ui);
 }
 
-.p-actions .p-sec {
+.p-actions .p-sec,
+.p-folders .p-sec {
   padding-inline: 24px;
 }
 
