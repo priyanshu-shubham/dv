@@ -686,10 +686,10 @@ export function FileViewer({
   const fd = useMemo(() => (marked ? changes : data?.lines && plainDiff({ ...data, path: file }, at)), [marked, changes, data, file, at]);
   const shown = useMemo(() => commentsOn(threads, at, changes), [threads, at, changes]);
   const startComment = useCallback(
-    (s, start, end, selected) => {
+    (s, start, end, selected, excerpt) => {
       if (draft) return setSelection(null);
       const src = s === "old" ? fd?.oldLines : fd?.newLines;
-      setComposing({ path: file, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setComposing({ path: file, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected, excerpt });
       setSelection(null);
     },
     [fd, file, draft],

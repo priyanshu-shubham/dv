@@ -4061,6 +4061,25 @@ a.path-link:hover {
   padding: 0 var(--md-pad);
 }
 
+/* Under a table row or list item, the card is placed against the preview
+   rather than the table, so neither its width nor its scroll moves it. */
+.md-preview:has(.md-thread-hold) {
+  position: relative;
+}
+
+.md-preview .md-thread-hold > td {
+  padding: 0;
+  border: 0;
+  vertical-align: top;
+}
+
+.md-preview .md-thread-hold .md-threads {
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin: 0;
+}
+
 .md-preview :is(h1, h2, h3, h4, h5, h6) {
   margin: calc(1.4em * var(--prose)) 0 calc(0.5em * var(--prose));
   line-height: 1.3;

@@ -219,7 +219,8 @@ The comments file is meant to be handed to an agent along with "address these":
 ```
 
 `quote` holds the lines the thread was attached to, so a comment can still be
-found after the code under it moves.
+found after the code under it moves. When the text selected to write it was
+less than those lines, `excerpt` holds that text.
 
 ## Rules the page applies
 

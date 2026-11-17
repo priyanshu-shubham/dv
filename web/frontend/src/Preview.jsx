@@ -8,7 +8,7 @@ import { ensureLanguage } from "./highlight.js";
 import { blockAt, isMarkdown, renderMarkdown } from "./markdown.js";
 import { usePathsVersion } from "./links.js";
 import { AttachButton, Composer, ThreadList } from "./Threads.jsx";
-import { cx, searchSeed } from "./util.js";
+import { cx, excerptOf, searchSeed } from "./util.js";
 import { IconEye } from "./icons.jsx";
 import { PdfView } from "./Pdf.jsx";
 
@@ -60,7 +60,8 @@ export function MarkdownDocument({
   lines, path, side = "new", scope, onOpenFile, threads, composing, setComposing, onStartComment, onComment, onThreadAction, onAttach, onSearch, toAgent = false,
 }) {
   const ref = useRef(null);
-  const slots = useRef(new Map()); // key -> the element it is drawn in
+  // key -> { el: what it is drawn in, hold: the room kept for it inside a table or list }
+  const slots = useRef(new Map());
   // A comment on the file itself is not on any block: its card shows it.
   const mine = (threads || []).filter((t) => t.startLine > 0 && (!t.side || t.side === side));
   const shown = [...mine.map((t) => ["t:" + t.id, t.endLine]), ...(composing?.side === side ? [["c", composing.end]] : [])];
@@ -68,28 +69,74 @@ export function MarkdownDocument({
     if (!slots.current.has(key)) {
       const el = document.createElement("div");
       el.className = "row-threads md-threads";
-      slots.current.set(key, el);
+      const ro = new ResizeObserver(() => fitHold(el));
+      ro.observe(el);
+      slots.current.set(key, { el, hold: null, ro });
     }
-    return slots.current.get(key);
+    return slots.current.get(key).el;
   };
-  // Each goes under the block it is about, in the document's own flow.
-  useEffect(() => {
+  // Each goes under the block it is about. A layout effect, so it is in the
+  // page before the composer's focus, which then scrolls it into view.
+  useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
     const want = new Set(shown.map(([key]) => key));
-    for (const [key, el] of slots.current) {
+    for (const [key, s] of slots.current) {
       if (want.has(key)) continue;
-      el.remove();
+      s.ro.disconnect();
+      s.hold?.remove();
+      s.el.remove();
       slots.current.delete(key);
     }
+    // Those under one block are laid in the order shown, the composer last.
+    // Only what is out of place moves: moving the composer takes its focus.
+    const groups = new Map(); // block -> { parent, ref: what follows them, nodes }
     for (const [key, line] of shown) {
-      const el = slots.current.get(key);
-      // After the whole list or quote a block belongs to, not inside it.
-      let at = blockAt(root, line) || root.querySelector(".md-preview")?.lastElementChild;
-      while (at?.parentElement && !at.parentElement.classList.contains("md-preview")) at = at.parentElement;
-      if (at && at.nextSibling !== el) at.after(el);
+      const s = slots.current.get(key);
+      const block = blockAt(root, line) || root.querySelector(".md-preview")?.lastElementChild;
+      if (!block) continue;
+      // Under the row or item itself: below the whole table or list could be screens away.
+      let at = block.closest(".md-preview tr, .md-preview li");
+      let parent, ref;
+      if (at) {
+        const tag = at.localName === "tr" ? "tr" : "div";
+        if (s.hold?.localName !== tag) {
+          s.hold?.remove();
+          s.hold = document.createElement(tag);
+          s.hold.className = "md-thread-hold";
+          (tag === "tr" ? s.hold.appendChild(document.createElement("td")) : s.hold).append(s.el);
+        }
+        if (tag === "tr") {
+          s.hold.firstChild.colSpan = [...at.cells].reduce((n, c) => n + c.colSpan, 0);
+          [parent, ref] = [at.parentElement, nextOwn(at)];
+        } else {
+          // Before the item's own sublist, which has lines of its own.
+          [parent, ref] = [at, [...at.children].find((c) => c.localName === "ul" || c.localName === "ol") || null];
+        }
+      } else {
+        if (s.hold) {
+          s.hold.remove();
+          s.hold = null;
+        }
+        // After the whole quote a block belongs to, not inside it.
+        at = block;
+        while (at.parentElement && !at.parentElement.classList.contains("md-preview")) at = at.parentElement;
+        [parent, ref] = [at.parentElement, nextOwn(at)];
+      }
+      if (!groups.has(at)) groups.set(at, { parent, ref, nodes: [] });
+      groups.get(at).nodes.push(s.hold || s.el);
     }
+    for (const { parent, ref, nodes } of groups.values()) {
+      // From the end, so those already in order stay put.
+      let next = ref;
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        if (nodes[i].nextSibling !== next || nodes[i].parentNode !== parent) parent.insertBefore(nodes[i], next);
+        next = nodes[i];
+      }
+    }
+    for (const s of slots.current.values()) fitHold(s.el);
   });
+  useEffect(() => () => slots.current.forEach((s) => s.ro.disconnect()), []);
 
   useEffect(() => {
     const root = ref.current;
@@ -102,7 +149,7 @@ export function MarkdownDocument({
       const to = blockOf(root, sel.focusNode);
       if (!from || !to) return;
       const [a, b] = [Number(from.dataset.src), Number(to.dataset.src)];
-      onStartComment(side, Math.min(a, b), blockEnd(root, b < a ? from : to, lines.length), searchSeed(sel.toString()));
+      onStartComment(side, Math.min(a, b), blockEnd(root, b < a ? from : to, lines.length), searchSeed(sel.toString()), sel.toString());
     };
     root.addEventListener("mouseup", onMouseUp);
     return () => root.removeEventListener("mouseup", onMouseUp);
@@ -130,7 +177,7 @@ export function MarkdownDocument({
                       onClick={(to) => {
                         // Words written go as a note, kept nowhere: Comment is
                         // what leaves one in the review.
-                        const lines = { file: path, side, start: at.start, end: at.end, quote: at.quote };
+                        const lines = { file: path, side, start: at.start, end: at.end, quote: at.quote, excerpt: excerptOf(at.excerpt, at.quote) };
                         onAttach(body ? { kind: "note", ...lines, body } : { kind: "lines", ...lines }, to);
                         setComposing(null);
                       }}
@@ -145,7 +192,7 @@ export function MarkdownDocument({
                 }
                 onCancel={() => setComposing(null)}
                 onSubmit={async (body) => {
-                  await onComment({ file: path, side, startLine: at.start, endLine: at.end, quote: at.quote, body });
+                  await onComment({ file: path, side, startLine: at.start, endLine: at.end, quote: at.quote, excerpt: excerptOf(at.excerpt, at.quote), body });
                   setComposing(null);
                 }}
               />
@@ -163,6 +210,20 @@ export function MarkdownDocument({
       )}
     </div>
   );
+}
+
+// fitHold keeps a card's room in a table or list as tall as the card, which is
+// laid over the page's full width rather than squeezed into a cell or indent.
+function fitHold(el) {
+  const box = el.parentElement;
+  if (box?.closest(".md-thread-hold")) box.style.height = el.offsetHeight + "px";
+}
+
+// nextOwn is what follows a block in the document itself, past any cards under it.
+function nextOwn(el) {
+  let n = el.nextSibling;
+  while (n?.classList?.contains("md-threads") || n?.classList?.contains("md-thread-hold")) n = n.nextSibling;
+  return n;
 }
 
 // blockOf is the rendered block a node sits in: the innermost naming a line.

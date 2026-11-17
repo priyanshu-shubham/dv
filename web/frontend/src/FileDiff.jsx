@@ -4,7 +4,7 @@ import { buildBlocks, codeHunks, codeLines, grow, pairRows, revealFor, stripOpen
 import { diffWords, spansToRanges } from "./worddiff.js";
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
 import {
-  charWidth, cx, isMac, isTyping, LRM, PHONE_APP, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength,
+  charWidth, cx, excerptOf, isMac, isTyping, LRM, PHONE_APP, searchSeed, splitPath, statusLabel, statusLetter, useCopy, useElementWidth, useMedia, visualLength,
 } from "./util.js";
 import { hunkOf, PickBar, usePick } from "./phone/Pick.jsx";
 import { AttachButton, ThreadList, Composer } from "./Threads.jsx";
@@ -56,10 +56,10 @@ function FileDiff({
   }, []);
 
   const startComment = useCallback(
-    (side, start, end, selected) => {
+    (side, start, end, selected, excerpt) => {
       const src = side === "old" ? fd?.oldLines : fd?.newLines;
       const quote = src ? src.slice(start - 1, end) : [];
-      setComposing({ path: entry.path, side, start, end, quote, selected });
+      setComposing({ path: entry.path, side, start, end, quote, selected, excerpt });
       setSelection(null);
     },
     [fd, entry.path, setComposing],
@@ -491,7 +491,7 @@ export function DiffBody({
 
       const a = Number(from.dataset.line);
       const b = Number(to.dataset.line);
-      onStartComment(from.dataset.side, Math.min(a, b), Math.max(a, b), searchSeed(sel.toString()));
+      onStartComment(from.dataset.side, Math.min(a, b), Math.max(a, b), searchSeed(sel.toString()), sel.toString());
     };
     const onMouseUp = (e) => {
       if (drag.current) return; // the gutter drag has already claimed this
@@ -1186,7 +1186,7 @@ function anchorNodes(anchor, ctx, key) {
               // one in the review.
               <AttachButton
                 onClick={(to) => {
-                  const lines = { file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote };
+                  const lines = { file: ctx.path, side: c.side, start: c.start, end: c.end, quote: c.quote, excerpt: excerptOf(c.excerpt, c.quote) };
                   ctx.onAttach(body ? { kind: "note", ...lines, body } : { kind: "lines", ...lines }, to);
                   ctx.setComposing(null);
                 }}
@@ -1210,6 +1210,7 @@ function anchorNodes(anchor, ctx, key) {
               startLine: c.start,
               endLine: c.end,
               quote: c.quote,
+              excerpt: excerptOf(c.excerpt, c.quote),
               body,
             });
             ctx.setComposing(null);

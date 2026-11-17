@@ -292,6 +292,20 @@ export function searchSeed(text) {
   return t.includes("\n") ? "" : t;
 }
 
+// excerptOf is the text selected for a comment, or "" when it is all of the
+// lines quoted, which say it already. Only letters and digits are compared, so
+// indents and a rendered Markdown block's markup do not make it narrower.
+export function excerptOf(text, quote) {
+  const t = (text || "").trim();
+  const bare = (s) => s.replace(/[^\p{L}\p{N}]/gu, "");
+  return t && bare(t) !== bare((quote || []).join("\n")) ? t : "";
+}
+
+export const attr = (s) => String(s ?? "").replace(/[&"<>]/g, (c) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c]);
+
+// selectedAttr is an excerpt as the attribute an agent reads it in.
+export const selectedAttr = (excerpt) => (excerpt ? ` selected="${attr(excerpt)}"` : "");
+
 // isTyping guards the single-key shortcuts so they do not fire while a comment
 // is being written. A checkbox is not text entry: leaving focus on one must not
 // disable every shortcut on the page.

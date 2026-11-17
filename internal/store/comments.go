@@ -42,6 +42,7 @@ type Thread struct {
 	StartLine int      `json:"startLine"` // 1-based; 0 for a file-level thread
 	EndLine   int      `json:"endLine"`
 	Quote     []string `json:"quote,omitempty"`
+	Excerpt   string   `json:"excerpt,omitempty"` // what was selected within Quote, when less than all of it
 	Scope     string   `json:"scope,omitempty"`   // scope label when it was written
 	BaseSHA   string   `json:"baseSha,omitempty"` // HEAD at the time, for provenance
 	Resolved  bool     `json:"resolved"`

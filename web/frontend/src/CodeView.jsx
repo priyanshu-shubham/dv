@@ -42,9 +42,9 @@ export default function CodeView({
   useEffect(() => setSelection(null), [path]);
 
   const startComment = useCallback(
-    (s, start, end, selected) => {
+    (s, start, end, selected, excerpt) => {
       const src = s === "old" ? fd?.oldLines : fd?.newLines;
-      setComposing({ path, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setComposing({ path, side: s, start, end, quote: src ? src.slice(start - 1, end) : [], selected, excerpt });
       setSelection(null);
     },
     [fd, path, setComposing],

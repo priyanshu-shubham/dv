@@ -18,6 +18,7 @@ import { Picker, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
 import {
   agentName,
+  attr,
   byLastSent,
   cx,
   duration,
@@ -38,6 +39,7 @@ import {
   useDismiss,
   useLasting,
   useMedia,
+  selectedAttr,
 } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
@@ -187,7 +189,6 @@ function anchorOf(scroller) {
 // the page reads back into chips: code as it was seen, whole files by name,
 // and review comments with the lines they were left on.
 const CONTEXT = /\n*<dv-context>\n?([\s\S]*?)\n?<\/dv-context>\s*$/;
-const attr = (s) => String(s ?? "").replace(/[&"<>]/g, (c) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c]);
 const unattr = (s) => s.replace(/&(amp|quot|lt|gt);/g, (_, e) => ({ amp: "&", quot: '"', lt: "<", gt: ">" })[e]);
 const span = (a, b) => (a === b ? `${a}` : `${a}-${b}`);
 
@@ -252,7 +253,7 @@ function composeMessage(text, attached, threads) {
     } else if (a.kind === "note") {
       // Written by the line and sent, rather than left in the review.
       const quote = (a.quote || []).map((l) => `> ${l}`).join("\n");
-      parts.push(`<note path="${attr(a.file)}" lines="${span(a.start, a.end)}" side="${a.side}">\n${quote ? quote + "\n" : ""}${a.body}\n</note>`);
+      parts.push(`<note path="${attr(a.file)}" lines="${span(a.start, a.end)}" side="${a.side}"${selectedAttr(a.excerpt)}>\n${quote ? quote + "\n" : ""}${a.body}\n</note>`);
     } else if (a.kind === "thread") {
       const t = threads.find((x) => x.id === a.threadId);
       if (!t) continue;
@@ -261,7 +262,7 @@ function composeMessage(text, attached, threads) {
       const on = t.origin ? ` on="your edit"` : "";
       // A comment on the file itself names no lines: it is about all of it.
       const lines = t.startLine ? ` lines="${span(t.startLine, t.endLine)}"` : "";
-      parts.push(`<comment path="${attr(t.file)}"${lines} side="${t.side}"${on}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
+      parts.push(`<comment path="${attr(t.file)}"${lines} side="${t.side}"${on}${selectedAttr(t.excerpt)}>\n${quote ? quote + "\n" : ""}${said}\n</comment>`);
     }
   }
   const body = text.trim();
@@ -374,7 +375,7 @@ async function readBack(message, session, threads) {
     else if (kind === "code") attached.push({ kind: "lines", file: a.path, side: "new", start, end, at: a.from, quote: codeLines(body) });
     else if (kind === "note") {
       const { quote, words } = unquote(body);
-      attached.push({ kind, file: a.path, side: a.side || "new", start, end, quote, body: words });
+      attached.push({ kind, file: a.path, side: a.side || "new", start, end, quote, excerpt: a.selected, body: words });
     } else {
       const t = threads.find((t) => t.file === a.path && t.side === a.side && t.startLine === start && t.endLine === end);
       if (t) attached.push({ kind: "thread", threadId: t.id });
@@ -4138,9 +4139,9 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
   }, []);
 
   const startComment = useCallback(
-    (side, start, end, selected) => {
+    (side, start, end, selected, excerpt) => {
       const src = side === "old" ? fd?.oldLines : fd?.newLines;
-      setComposing({ path: e.path, side, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setComposing({ path: e.path, side, start, end, quote: src ? src.slice(start - 1, end) : [], selected, excerpt });
       setSelection(null);
     },
     [fd, e.path],
@@ -4150,8 +4151,8 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
   // Written on an edit of its own, it is for the agent: it goes to the session
   // as a note, leaving nothing in the review, which is for what you keep.
   const comment = useCallback(
-    ({ file, side, startLine, endLine, quote, body }) => {
-      attach?.({ kind: "note", file, side, start: startLine, end: endLine, quote, body }, session);
+    ({ file, side, startLine, endLine, quote, excerpt, body }) => {
+      attach?.({ kind: "note", file, side, start: startLine, end: endLine, quote, excerpt, body }, session);
       return null;
     },
     [attach, session],

@@ -656,6 +656,7 @@ type threadReq struct {
 	StartLine int           `json:"startLine"`
 	EndLine   int           `json:"endLine"`
 	Quote     []string      `json:"quote"`
+	Excerpt   string        `json:"excerpt"`
 	Scope     string        `json:"scope"`
 	Body      string        `json:"body"`
 	Author    string        `json:"author"`
@@ -684,6 +685,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		StartLine: req.StartLine,
 		EndLine:   req.EndLine,
 		Quote:     req.Quote,
+		Excerpt:   req.Excerpt,
 		Scope:     req.Scope,
 		BaseSHA:   s.repo.Head().SHA,
 		Origin:    req.Origin,

@@ -6,7 +6,7 @@ import { grow } from "./hunks.js";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { useLayer } from "./Overlays.jsx";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { agentName, cx, isTyping, LRM, splitPath, useCopy, usePersisted } from "./util.js";
+import { agentName, cx, isTyping, LRM, selectedAttr, splitPath, useCopy, usePersisted } from "./util.js";
 import { readPref, usePref } from "./prefs.js";
 import { AgentIcon, IconFile, IconX } from "./icons.jsx";
 import { Answers } from "./phone/Session.jsx";
@@ -758,9 +758,9 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
   const symbol = useCallback((name, from) => onSymbol(name, from, 0, draft), [onSymbol, draft]);
 
   const startComment = useCallback(
-    (side, start, end, selected) => {
+    (side, start, end, selected, excerpt) => {
       const src = side === "old" ? fd?.oldLines : fd?.newLines;
-      setComposing({ side, start, end, quote: src ? src.slice(start - 1, end) : [], selected });
+      setComposing({ side, start, end, quote: src ? src.slice(start - 1, end) : [], selected, excerpt });
       setSelection(null);
     },
     [fd],
@@ -789,9 +789,9 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
     [comments, p?.path],
   );
   const comment = useCallback(
-    async ({ side, startLine, endLine, quote, body }) => {
+    async ({ side, startLine, endLine, quote, excerpt, body }) => {
       const id = "draft-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      onComments([...comments, { id, path: p.path, side, startLine, endLine, quote, body, createdAt: new Date().toISOString() }]);
+      onComments([...comments, { id, path: p.path, side, startLine, endLine, quote, excerpt, body, createdAt: new Date().toISOString() }]);
     },
     [comments, onComments, p?.path],
   );
@@ -1078,7 +1078,7 @@ function withComments(note, comments, req) {
   const parts = comments.map((c) => {
     const lines = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
     const quote = c.quote.map((l) => `> ${l}\n`).join("");
-    return `<comment path="${c.path}" lines="${lines}" side="${c.side}" on="${on}">\n${quote}${c.body}\n</comment>`;
+    return `<comment path="${c.path}" lines="${lines}" side="${c.side}" on="${on}"${selectedAttr(c.excerpt)}>\n${quote}${c.body}\n</comment>`;
   });
   const context = parts.length && `<dv-context>\n${parts.join("\n")}\n</dv-context>`;
   return [note.trim(), context].filter(Boolean).join("\n\n");
