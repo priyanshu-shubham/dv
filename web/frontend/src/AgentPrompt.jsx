@@ -784,6 +784,7 @@ function RequestCard({ req, preview: p, what, comments, onComments, view, contex
           startLine: c.startLine,
           endLine: c.endLine,
           quote: c.quote,
+          excerpt: c.excerpt,
           comments: [{ id: c.id, author: "you", body: c.body, createdAt: c.createdAt }],
         })),
     [comments, p?.path],

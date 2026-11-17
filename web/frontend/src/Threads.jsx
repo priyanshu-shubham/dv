@@ -31,18 +31,51 @@ export function ThreadList({ threads, onAction, onAttach, compact, ticked, onTic
   );
 }
 
+// Quote is the lines a thread was left on, the part selected marked in them,
+// or written under them when it cannot be found there.
+function Quote({ lines, excerpt }) {
+  const text = lines.slice(0, 6).join("\n") + (lines.length > 6 ? "\n..." : "");
+  const at = excerpt ? findLoose(text, excerpt) : null;
+  return (
+    <>
+      <pre className="quote">
+        {at ? (
+          <>
+            {text.slice(0, at[0])}
+            <mark className="quote-pick">{text.slice(at[0], at[1])}</mark>
+            {text.slice(at[1])}
+          </>
+        ) : (
+          text
+        )}
+      </pre>
+      {excerpt && !at && (
+        <div className="quote-picked">
+          <span className="dim">Selected</span> {excerpt}
+        </div>
+      )}
+    </>
+  );
+}
+
+// findLoose is where an excerpt is in the text: as it is, else with any run of
+// spaces and markup between its words, as a rendered selection reads its source.
+function findLoose(text, excerpt) {
+  const i = text.indexOf(excerpt);
+  if (i >= 0) return [i, i + excerpt.length];
+  const words = excerpt.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (!words.length) return null;
+  const m = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\p{L}\\p{N}]+"), "u").exec(text);
+  return m ? [m.index, m.index + m[0].length] : null;
+}
+
 function Thread({ thread, onAction, onAttach, compact, ticked, onTick }) {
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(null);
 
   return (
     <article className={cx("thread", thread.resolved && "resolved")}>
-      {!compact && thread.quote?.length > 0 && (
-        <pre className="quote">
-          {thread.quote.slice(0, 6).join("\n")}
-          {thread.quote.length > 6 ? "\n..." : ""}
-        </pre>
-      )}
+      {!compact && thread.quote?.length > 0 && <Quote lines={thread.quote} excerpt={thread.excerpt} />}
       {compact && (
         <div className="thread-head">
           {onTick && (

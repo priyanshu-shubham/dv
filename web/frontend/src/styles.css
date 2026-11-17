@@ -3389,6 +3389,22 @@ textarea.pad:focus {
 /* Resolved fades its words, not the whole card, so the location and the way
    to reopen it stay readable. */
 .thread.resolved .markdown,
+/* Not --mark, which is a find match's. */
+.quote-pick {
+  border-radius: 3px;
+  background: rgb(from var(--accent) r g b / 0.28);
+  color: var(--fg);
+}
+
+.quote-picked {
+  margin: 6px 8px 0;
+  padding: 0 10px;
+  color: var(--fg);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .thread.resolved .quote {
   color: var(--fg-3);
 }
