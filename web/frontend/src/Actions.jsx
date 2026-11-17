@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
+import { boot } from "./boot.js";
 import { usePref } from "./prefs.js";
 import { cx } from "./util.js";
 import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
@@ -44,9 +45,10 @@ export function useActions() {
 // for its models by the first listing, so they can come a moment after it.
 // The last answer is kept, so the list opens on it rather than redrawing.
 let choices = null;
-export function useAgentChoices() {
+export function useAgentChoices(off = false) {
   const [info, setInfo] = useState(choices);
   useEffect(() => {
+    if (off) return;
     let live = true;
     let timer;
     const load = (tries) =>
@@ -61,7 +63,7 @@ export function useAgentChoices() {
       live = false;
       clearTimeout(timer);
     };
-  }, []);
+  }, [off]);
   return info;
 }
 
@@ -103,7 +105,7 @@ export function runAction(a, session) {
 // useRunning follows the command actions under way, by id, while the list is
 // open, with the time it was when they were last looked at, and those whose
 // output dv keeps.
-export function useRunning() {
+export function useRunning(off = false) {
   const [state, setState] = useState({ running: {}, ran: new Set(), at: Date.now() });
   const look = useCallback(
     () =>
@@ -114,11 +116,31 @@ export function useRunning() {
     [],
   );
   useEffect(() => {
+    if (off) return;
     look();
     const t = setInterval(look, 1000);
     return () => clearInterval(t);
-  }, [look]);
+  }, [look, off]);
   return { ...state, look };
+}
+
+// The last few run from the list head it until something is typed, so Enter
+// alone runs the last one again. Each folder keeps its own, and the hub too.
+const RECENT_ACTIONS = 3;
+const RECENT_PREF = boot.page === "hub" ? ["user", "hubRecentActions"] : ["repo", "recentActions"];
+export const actionKey = (a) => `${a.scope || "dv"}:${a.id}`;
+
+export function useRecentActions() {
+  const [keys, setKeys] = usePref(...RECENT_PREF, NONE);
+  const used = (a) => setKeys((k) => [actionKey(a), ...k.filter((x) => x !== actionKey(a))].slice(0, RECENT_ACTIONS));
+  return [keys, used];
+}
+
+// pickRecent is list's recent ones, latest first, that can run now; one that
+// can't stays in its own group, where it says why.
+export function pickRecent(list, keys, ok) {
+  const by = new Map(list.map((a) => [actionKey(a), a]));
+  return keys.map((k) => by.get(k)).filter((a) => a && ok(a));
 }
 
 export function elapsed(from, at) {
@@ -132,23 +154,30 @@ export const ready = (a, session) => a.kind === "command" || a.builtin || a.run 
 // ActionsPalette is Alt+A: the actions, found by name, run with Enter. One for
 // the current session waits for there to be one; Enter on a command running
 // stops it. A command that has run offers its output. A phone has ActionsSheet.
-export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onOutput, onClose }) {
-  const { all } = useActions();
-  const info = useAgentChoices();
-  const { running, ran, at, look } = useRunning();
+// The hub has only its own, extra, having no folder to run the rest in.
+export function ActionsPalette({ meta, session, extra = NONE, hub = false, onRun, onEdit, onOutput, onClose }) {
+  const { all: kept } = useActions();
+  const all = hub ? NONE : kept;
+  const info = useAgentChoices(hub);
+  const { running, ran, at, look } = useRunning(hub);
+  const [recentKeys, used] = useRecentActions();
   const [q, setQ] = useState("");
-  const shown = [...all, ...builtIns(meta), ...extra].filter((a) => a.name.toLowerCase().includes(q.trim().toLowerCase()));
-  const rows = [...shown, EDIT];
+  const term = q.trim().toLowerCase();
+  const found = [...all, ...(hub ? NONE : builtIns(meta)), ...extra].filter((a) => a.name.toLowerCase().includes(term));
   const canRun = (a) => ready(a, session);
+  const recent = term ? NONE : pickRecent(found, recentKeys, canRun);
+  const shown = [...recent, ...found.filter((a) => !recent.includes(a))];
+  const rows = hub ? shown : [...shown, EDIT];
   const stop = (a) => api.stopAction(a.id).then(look, () => {});
-  const pick = (row) => (row === EDIT ? onEdit() : running[row.id] ? stop(row) : canRun(row) && onRun(row));
+  const pick = (row) => (row === EDIT ? onEdit() : running[row.id] ? stop(row) : canRun(row) && (used(row), onRun(row)));
   const { sel, setSel, onKey, listRef } = usePaletteNav(rows.length, (i) => pick(rows[i]));
   const note = (a) => {
     if (running[a.id]) return `Running for ${elapsed(running[a.id].started, at)} · Enter stops it`;
     return canRun(a) ? describe(a, info) : "Open a session in the Agent view first";
   };
   // Headed by where each comes from, once there is more than one place.
-  const groups = new Set(shown.map(groupOf));
+  const groupAt = (i) => (i < recent.length ? "recent" : groupOf(shown[i]));
+  const headed = new Set(shown.map((_, i) => groupAt(i))).size > 1;
   return (
     <Modal onClose={onClose} className="palette actions">
       <div className="palette-input">
@@ -167,7 +196,7 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
       <div className="palette-list" ref={listRef}>
         {shown.map((a, i) => (
           <Fragment key={(a.scope || "") + a.id}>
-            {groups.size > 1 && groupOf(a) !== groupOf(shown[i - 1] || {}) && <div className="menu-label action-group">{GROUPS[groupOf(a)]}</div>}
+            {headed && (i === 0 || groupAt(i) !== groupAt(i - 1)) && <div className="menu-label action-group">{GROUPS[groupAt(i)]}</div>}
           <div className="action-line">
             <button
               className={cx("palette-row", "action-row", i === sel && "on", !canRun(a) && "unready", running[a.id] && "running")}
@@ -189,11 +218,13 @@ export function ActionsPalette({ meta, session, extra = NONE, onRun, onEdit, onO
           </div>
           </Fragment>
         ))}
-        {shown.length === 0 && <div className="empty">{all.length ? "No actions match." : "No actions yet: a prompt or a command you keep here, to run in a click."}</div>}
-        <button className={cx("palette-row", "action-row", "action-edit", sel === shown.length && "on")} onMouseMove={() => setSel(shown.length)} onClick={onEdit}>
-          <span className="action-kind">{all.length ? <IconEdit size={13} /> : <IconPlus size={13} />}</span>
-          <span className="dim">{all.length ? "Edit actions…" : "Add an action…"}</span>
-        </button>
+        {shown.length === 0 && <div className="empty">{all.length || hub ? "No actions match." : "No actions yet: a prompt or a command you keep here, to run in a click."}</div>}
+        {!hub && (
+          <button className={cx("palette-row", "action-row", "action-edit", sel === shown.length && "on")} onMouseMove={() => setSel(shown.length)} onClick={onEdit}>
+            <span className="action-kind">{all.length ? <IconEdit size={13} /> : <IconPlus size={13} />}</span>
+            <span className="dim">{all.length ? "Edit actions…" : "Add an action…"}</span>
+          </button>
+        )}
       </div>
       <div className="palette-foot">
         <span>
@@ -209,7 +240,7 @@ const OWN_ICONS = {
   "new-session": IconNewSession, "new-worktree": IconBranch, "finish-worktree": IconCheck, commits: IconBranch, "new-task": IconTemporary, "close-task": IconX,
   comments: IconComment, notes: IconFile, pad: IconPad, ask: IconAsk, "new-note": IconPlus, scope: IconSplit,
   pr: IconOpenOut, "review-pr": IconEye, branch: IconBranch, settings: IconSettings, restart: IconRefresh,
-  hub: IconBack, pull: IconArrowDown, main: IconArrowDown, monitor: IconGauge, keys: IconKeyboard,
+  hub: IconBack, "add-folder": IconPlus, clone: IconBranch, pull: IconArrowDown, main: IconArrowDown, monitor: IconGauge, keys: IconKeyboard,
 };
 
 function ActionIcon({ a }) {
@@ -220,7 +251,7 @@ function ActionIcon({ a }) {
 }
 
 const groupOf = (a) => (a.scope === "repo" || a.scope === "user" ? a.scope : "dv");
-const GROUPS = { repo: "This repository", user: "Every repository", dv: "Built in" };
+const GROUPS = { recent: "Recent", repo: "This repository", user: "Every repository", dv: "Built in" };
 
 // shownOutput is output as a terminal would leave it: colours dropped, and a
 // line written over with \r, as progress is, only as it ended.

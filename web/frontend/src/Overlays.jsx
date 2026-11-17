@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
@@ -158,12 +158,21 @@ export function markMatches(name, matches) {
 }
 
 // FilePalette is Cmd+P: any file in the repository, by a fuzzy match on its
-// path. Until something is typed it offers the files in this diff.
-export function FilePalette({ initialQuery = "", changed, onOpen, onClose, onBack, backTo }) {
+// path. Until something is typed it offers the files read lately, the last 5,
+// then the rest of this diff's; once it is, those read lately that match lead.
+const RECENT_SHOWN = 5;
+export function FilePalette({ initialQuery = "", changed, recent = [], onOpen, onClose, onBack, backTo }) {
   const [q, setQ] = useState(initialQuery);
   const [res, setRes] = useState(null);
   const debounced = useDebounced(q.trim(), 60);
-  const hits = debounced ? res?.hits || [] : changed;
+  const lately = useMemo(() => recent.slice(0, RECENT_SHOWN), [recent]);
+  const hits = useMemo(() => {
+    if (!debounced) return [...lately.map((path) => ({ path })), ...changed.filter((f) => !lately.includes(f.path))];
+    const found = res?.hits || [];
+    const read = (h) => recent.includes(h.path);
+    return [...found.filter(read), ...found.filter((h) => !read(h))];
+  }, [debounced, res, changed, recent, lately]);
+  const headed = !debounced && lately.length > 0;
   const { sel, setSel, onKey, listRef } = usePaletteNav(hits.length, (i) => onOpen(hits[i].path, q));
   const status = useMemo(() => new Map(changed.map((f) => [f.path, f.status])), [changed]);
 
@@ -202,9 +211,11 @@ export function FilePalette({ initialQuery = "", changed, onOpen, onClose, onBac
           // eslint-disable-next-line no-control-regex
           const m = /[^\x00-\x7F]/.test(h.path) ? [] : h.matches || [];
           const st = status.get(h.path);
+          const label = headed && (i === 0 ? "Recent" : i === lately.length && "Changed");
           return (
+            <Fragment key={h.path}>
+            {label && <div className="menu-label action-group">{label}</div>}
             <button
-              key={h.path}
               className={cx("palette-row", "file-hit", i === sel && "on")}
               onMouseMove={() => setSel(i)}
               onClick={() => onOpen(h.path, q)}
@@ -221,6 +232,7 @@ export function FilePalette({ initialQuery = "", changed, onOpen, onClose, onBac
                 dangerouslySetInnerHTML={{ __html: LRM + markMatches(h.path.slice(0, Math.max(0, base - 1)), m) }}
               />
             </button>
+            </Fragment>
           );
         })}
         {hits.length === 0 && (

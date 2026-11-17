@@ -4,7 +4,7 @@
 // desktop's.
 import { useState } from "react";
 import { api } from "../api.js";
-import { builtIns, describe, elapsed, ready, useActions, useAgentChoices, useRunning } from "../Actions.jsx";
+import { actionKey, builtIns, describe, elapsed, pickRecent, ready, useActions, useAgentChoices, useRecentActions, useRunning } from "../Actions.jsx";
 import { say } from "../Notices.jsx";
 import { cx } from "../util.js";
 import { Icon } from "./icons.jsx";
@@ -27,19 +27,49 @@ export default function ActionsSheet({ meta, session, extra, onRun, onEdit, onOu
   const { all } = useActions();
   const info = useAgentChoices();
   const { running, ran, at, look } = useRunning();
+  const [recentKeys, used] = useRecentActions();
   const [q, setQ] = useState("");
   const match = (...names) => names.some((n) => n.toLowerCase().includes(q.trim().toLowerCase()));
-  const mine = all.filter((a) => match(a.name));
+  const own = [...builtIns(meta), ...extra.filter((a) => !TILES[a.id])];
+  // The tiles keep their places, so only rows are lifted into Recent.
+  const recent = q.trim() ? [] : pickRecent([...all, ...own], recentKeys, (a) => ready(a, session));
+  const lifted = new Set(recent.map(actionKey));
+  const mine = all.filter((a) => match(a.name) && !lifted.has(actionKey(a)));
   const tiles = extra.filter((a) => TILES[a.id] && match(a.name, TILES[a.id][0]));
-  const rest = [...builtIns(meta), ...extra.filter((a) => !TILES[a.id])].filter((a) => match(a.name));
+  const rest = own.filter((a) => match(a.name) && !lifted.has(actionKey(a)));
 
   // A command keeps the sheet open, to be watched or stopped; the rest go somewhere.
   const run = (a) => {
     if (running[a.id]) return;
     if (!ready(a, session)) return say("Open a session first", "This action goes to the session open in the Agent tab.");
+    used(a);
     onRun(a, a.kind === "command");
     if (a.kind === "command") setTimeout(look, 300);
   };
+  const mineRow = (a) => (
+    <Mine
+      key={a.scope + a.id}
+      a={a}
+      sub={describe(a, info)}
+      running={running[a.id] && elapsed(running[a.id].started, at)}
+      ran={a.kind === "command" && ran.has(a.id)}
+      unready={!ready(a, session)}
+      onRun={() => run(a)}
+      onStop={() => api.stopAction(a.id).then(look, () => {})}
+      onOutput={() => onOutput(a.id)}
+    />
+  );
+  const ownRow = (a) => (
+    <button key={a.id} className="p-row" onClick={() => (used(a), onRun(a))}>
+      <span className="p-lead">
+        <Icon name={iconOf(a)} size={20} />
+      </span>
+      <span className="p-row-body">
+        <span className="p-row-title">{a.name}</span>
+        {describe(a, info) && <span className="p-row-sub p-one-line">{describe(a, info)}</span>}
+      </span>
+    </button>
+  );
 
   return (
     <Sheet
@@ -64,47 +94,27 @@ export default function ActionsSheet({ meta, session, extra, onRun, onEdit, onOu
         </button>
       }
     >
+      {recent.length > 0 && <div className="p-sec">Recent</div>}
+      {recent.map((a) => (a.scope ? mineRow(a) : ownRow(a)))}
       {mine.length > 0 && (
         <div className="p-sec">
           Yours<span className="p-sec-aside">{mine.length} · tap to run</span>
         </div>
       )}
-      {mine.map((a) => (
-        <Mine
-          key={a.scope + a.id}
-          a={a}
-          sub={describe(a, info)}
-          running={running[a.id] && elapsed(running[a.id].started, at)}
-          ran={a.kind === "command" && ran.has(a.id)}
-          unready={!ready(a, session)}
-          onRun={() => run(a)}
-          onStop={() => api.stopAction(a.id).then(look, () => {})}
-          onOutput={() => onOutput(a.id)}
-        />
-      ))}
+      {mine.map(mineRow)}
       {tiles.length > 0 && <div className="p-sec">dv</div>}
       {tiles.length > 0 && (
         <div className="p-tiles">
           {tiles.map((a) => (
             // Open, a panel's tile closes it, as its name says.
-            <button key={a.id} className={cx("p-tile", a.name.startsWith("Close") && "on")} onClick={() => onRun(a)}>
+            <button key={a.id} className={cx("p-tile", a.name.startsWith("Close") && "on")} onClick={() => (used(a), onRun(a))}>
               <Icon name={TILES[a.id][1]} size={22} />
               {TILES[a.id][0]}
             </button>
           ))}
         </div>
       )}
-      {rest.map((a) => (
-        <button key={a.id} className="p-row" onClick={() => onRun(a)}>
-          <span className="p-lead">
-            <Icon name={iconOf(a)} size={20} />
-          </span>
-          <span className="p-row-body">
-            <span className="p-row-title">{a.name}</span>
-            {describe(a, info) && <span className="p-row-sub p-one-line">{describe(a, info)}</span>}
-          </span>
-        </button>
-      ))}
+      {rest.map(ownRow)}
       {!mine.length && !tiles.length && !rest.length && <div className="p-empty">No actions match.</div>}
     </Sheet>
   );

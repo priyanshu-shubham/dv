@@ -57,6 +57,8 @@ import { closeTask, startTask } from "./tasks.js";
 
 // Shared empty lists so files without comments keep a stable `threads` prop.
 const NO_THREADS = [];
+const NO_FILES = [];
+const RECENT_FILES = 10;
 const NO_ATTACHED = [];
 const NO_ATTACHED_BY = {};
 const NO_SETTINGS = {};
@@ -1284,6 +1286,21 @@ export default function App() {
     if (!meta) return;
     setPaths([...(repoFiles?.files || pathFiles || []), ...(diff?.files || []).map((f) => f.path)], [meta.root, meta.place]);
   }, [meta, pathFiles, repoFiles, diff]);
+
+  // The files read lately, however they were opened, for Go to file to offer.
+  const [recentFiles, setRecentFiles] = usePref("repo", "recentFiles", NO_FILES);
+  const reading = mode === "code" ? codePath : "";
+  const inViewer = overlay?.type === "file" && !overlay.draft ? overlay.file : "";
+  useEffect(() => {
+    for (const p of [reading, inViewer]) if (p) setRecentFiles((r) => [p, ...r.filter((x) => x !== p)].slice(0, RECENT_FILES));
+  }, [reading, inViewer, setRecentFiles]);
+  // Less the one on screen, and any since deleted, once the files are known.
+  const known = repoFiles?.files || pathFiles;
+  const offerRecent = useMemo(() => {
+    const has = known && new Set([...known, ...(diff?.files || []).map((f) => f.path)]);
+    const open = mode === "code" ? codePath : behind?.type === "file" ? behind.file : "";
+    return recentFiles.filter((p) => p !== open && (!has || has.has(p)));
+  }, [recentFiles, known, diff, mode, codePath, behind]);
   useEffect(() => {
     const onClick = (e) => {
       const a = e.target.closest?.("a.path-link");
@@ -2510,6 +2527,7 @@ export default function App() {
         <FilePalette
           initialQuery={overlay.query || ""}
           changed={files}
+          recent={offerRecent}
           onClose={closeOverlay}
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
@@ -2677,6 +2695,7 @@ export default function App() {
               startSession,
               closeSession,
               closeTask: meta?.task ? endTask : null,
+              newWorktree,
               renameSession: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
               openOverlay,
               openSearch,

@@ -7,7 +7,8 @@ import { Notices, useAppBadge, useHubActivity, useNotices, waitingIn } from "./N
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, relTime, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
 import { enableBack } from "./phone/back.js";
 import { usePush } from "./phone/push.js";
-import { IconBranch, IconCheck, IconChevron, IconDots, IconPlus, IconSearch, IconSettings, IconTemporary, IconX } from "./icons.jsx";
+import { IconBolt, IconBranch, IconCheck, IconChevron, IconDots, IconPlus, IconSearch, IconSettings, IconTemporary, IconX } from "./icons.jsx";
+import { ActionsPalette } from "./Actions.jsx";
 import { tabDot } from "./favicon.js";
 import { tabName, useAppearance, useTabIcon } from "./appearance.js";
 import { PRChip } from "./Header.jsx";
@@ -57,7 +58,7 @@ export default function Hub() {
     };
   }, [phoneApp]);
 
-  // "settings", "folder" or "clone", or { worktree } or { hooks }, a folder.
+  // "settings", "actions", "folder" or "clone", or { worktree } or { hooks }, a folder.
   const [dialog, setDialog] = useState(null);
   const filterRef = useRef(null);
   const newTask = () => startTask().catch((e) => setError(e.message));
@@ -75,6 +76,24 @@ export default function Hub() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // The same keys as a folder's page, from the filter box too.
+  useEffect(() => {
+    const onKey = (e) => {
+      const alt = e.code === "KeyA" && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey;
+      const palette = e.code === "KeyP" && e.shiftKey && !e.altKey && (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
+      if ((!alt && !palette) || document.querySelector(".backdrop")) return;
+      e.preventDefault();
+      setDialog("actions");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const hubActions = [
+    { id: "add-folder", name: "Add a folder", note: "One on this machine · also A", run: () => setDialog("folder") },
+    { id: "clone", name: "Clone a repository", note: "Into a folder of its own · also C", run: () => setDialog("clone") },
+    { id: "new-task", name: "New task", note: "A session with no project, in a folder deleted when you close it · also T", run: newTask },
+    { id: "settings", name: "Open settings", note: "For every folder · also the , key", run: () => setDialog("settings") },
+  ];
 
   const [data, setData] = useState(null);
   // By path, a folder's remote and git status: read as the page loads, as a
@@ -260,6 +279,11 @@ export default function Hub() {
         </div>
         <div className="topbar-right">
           {!phoneApp && <MachineMeter />}
+          {!phoneApp && (
+            <button className="icon" onClick={() => setDialog("actions")} title="Actions (Alt+A)">
+              <IconBolt size={16} />
+            </button>
+          )}
           <button
             className={cx("icon", update && "has-update")}
             onClick={() => setDialog("settings")}
@@ -391,6 +415,7 @@ export default function Hub() {
           update={update}
         />
       )}
+      {dialog === "actions" && <ActionsPalette hub extra={hubActions} onRun={(a) => (setDialog(null), a.run())} onClose={() => setDialog(null)} />}
       {dialog === "folder" && (
         <AddFolder
           onClose={() => setDialog(null)}
