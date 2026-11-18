@@ -473,6 +473,53 @@ func TestBackgroundWorkRunsUntilItsNotification(t *testing.T) {
 	}
 }
 
+// A SendMessage to a finished agent resumes it in its Agent call's
+// conversation, and its next notification names the SendMessage instead.
+func TestAResumedAgentRunsAgain(t *testing.T) {
+	result := func(uuid, parent, id string, rec map[string]any) map[string]any {
+		return map[string]any{"type": "user", "uuid": uuid, "parentUuid": parent,
+			"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": "ok"}}},
+			"toolUseResult": rec}
+	}
+	notice := func(uuid, parent, call string) map[string]any {
+		return map[string]any{"type": "attachment", "uuid": uuid, "parentUuid": parent,
+			"attachment": map[string]any{"type": "queued_command", "commandMode": "task-notification",
+				"prompt": "<task-notification>\n<task-id>a0047</task-id>\n<tool-use-id>" + call + "</tool-use-id>\n<status>completed</status>\n<summary>Agent completed</summary>\n</task-notification>"}}
+	}
+	tr := newTranscript("/repo")
+	task := func(id string) *Task {
+		for _, it := range tr.Items("") {
+			if it.ToolID == id {
+				return it.Task
+			}
+		}
+		return nil
+	}
+	tr.Feed([]byte(line(t, user("u1", "", "go")) +
+		line(t, assistant("a1", "u1", "m1", map[string]any{"type": "tool_use", "id": "t1", "name": "Agent", "input": map[string]any{"description": "fix", "prompt": "fix it"}})) +
+		line(t, result("r1", "a1", "t1", map[string]any{"isAsync": true, "status": "async_launched", "agentId": "a0047"})) +
+		line(t, notice("q1", "r1", "t1"))))
+	if tk := task("t1"); tk == nil || tk.Status != "completed" {
+		t.Fatalf("first run task %+v", tk)
+	}
+	tr.Feed([]byte(line(t, assistant("a2", "q1", "m2", map[string]any{"type": "tool_use", "id": "t2", "name": "SendMessage", "input": map[string]any{"to": "a0047", "message": "one more"}})) +
+		line(t, result("r2", "a2", "t2", map[string]any{"success": true, "message": "Resuming agent a0047", "resumedAgentId": "a0047"}))))
+	if tk := task("t1"); tk != nil {
+		t.Fatalf("a resumed agent still ended: %+v", tk)
+	}
+	tr.Feed([]byte(line(t, notice("q2", "r2", "t2"))))
+	if tk := task("t1"); tk == nil || tk.Status != "completed" {
+		t.Errorf("resumed run task %+v", tk)
+	}
+	// Resumed again before Claude was told the last run ended.
+	tr.Feed([]byte(line(t, assistant("a3", "q2", "m3", map[string]any{"type": "tool_use", "id": "t3", "name": "SendMessage", "input": map[string]any{"to": "a0047", "message": "and again"}})) +
+		line(t, result("r3", "a3", "t3", map[string]any{"success": true, "message": "Resuming agent a0047", "resumedAgentId": "a0047"})) +
+		line(t, notice("q3", "r3", "t2"))))
+	if tk := task("t1"); tk != nil {
+		t.Errorf("an earlier run's late notification ended the resumed one: %+v", tk)
+	}
+}
+
 // Work a process left running goes with it: dv restarting, or stopping a
 // session it had not heard from, means no notification is ever written.
 func TestBackgroundWorkOfAGoneProcessIsOver(t *testing.T) {

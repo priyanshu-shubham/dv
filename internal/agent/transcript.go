@@ -153,6 +153,7 @@ type Transcript struct {
 	results map[string]*Result
 	tasks   map[string]*Task  // by the tool_use id that started them
 	started map[string]string // background task id -> tool_use id
+	resumed map[string]string // Agent call -> the SendMessage that last resumed it
 	calls   map[string]string // when each call still without a result was made
 	// Compaction boundaries by the entry the conversation had reached. Claude
 	// Code carries on from that entry in a chain that goes around the boundary,
@@ -235,7 +236,7 @@ func tail(data []byte) (int, string) {
 func newTranscript(root string) *Transcript {
 	return &Transcript{
 		root: root, entries: map[string]*entry{}, results: map[string]*Result{},
-		tasks: map[string]*Task{}, started: map[string]string{}, calls: map[string]string{}, compacts: map[string][]*entry{}, msgs: map[string][]*entry{},
+		tasks: map[string]*Task{}, started: map[string]string{}, resumed: map[string]string{}, calls: map[string]string{}, compacts: map[string][]*entry{}, msgs: map[string][]*entry{},
 	}
 }
 
@@ -710,8 +711,8 @@ func summary(text string) string {
 	return strings.TrimSpace(text)
 }
 
-// track notes a call that left work running in the background, and a TaskStop
-// that ended some.
+// track notes a call that left work running in the background, a SendMessage
+// that woke a finished agent, and a TaskStop that ended some.
 func (t *Transcript) track(toolID string, r *toolUseResult) {
 	background := r.Background
 	if r.Async && background == "" {
@@ -720,19 +721,31 @@ func (t *Transcript) track(toolID string, r *toolUseResult) {
 	if background != "" {
 		t.started[background] = toolID
 	}
+	// The agent carries on in the Agent call's conversation, so that call is
+	// what runs again.
+	if id := t.started[r.Resumed]; id != "" {
+		delete(t.tasks, id)
+		t.resumed[id] = toolID
+	}
 	if id := t.started[r.Stopped]; id != "" && t.tasks[id] == nil {
 		t.tasks[id] = &Task{Status: "stopped"}
 	}
 }
 
 // finished reads the notification Claude Code sends when background work ends.
+// The task goes first: a resumed agent's names the SendMessage as its call.
 func (t *Transcript) finished(text string) {
 	if !strings.HasPrefix(text, "<task-notification>") {
 		return
 	}
-	id := firstGroup(taskTool, text)
+	call := firstGroup(taskTool, text)
+	id := t.started[firstGroup(taskID, text)]
 	if id == "" {
-		id = t.started[firstGroup(taskID, text)]
+		id = call
+	}
+	// An earlier run's, held back while Claude was busy until after the resume.
+	if r := t.resumed[id]; r != "" && call != "" && call != r {
+		return
 	}
 	if id != "" {
 		t.tasks[id] = &Task{Status: firstGroup(taskStatus, text), Summary: strings.TrimSpace(firstGroup(taskSummary, text))}
@@ -886,7 +899,8 @@ type toolUseResult struct {
 	Background string `json:"backgroundTaskId"`
 	Async      bool   `json:"isAsync"`
 	AgentID    string `json:"agentId"`
-	Stopped    string `json:"task_id"` // TaskStop's
+	Resumed    string `json:"resumedAgentId"` // SendMessage's, to a finished agent
+	Stopped    string `json:"task_id"`        // TaskStop's
 }
 
 // A failed call's record is only its error as a string, which the result's
