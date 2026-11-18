@@ -520,6 +520,41 @@ func TestAResumedAgentRunsAgain(t *testing.T) {
 	}
 }
 
+// Stopped from the page, an agent stays so until a SendMessage wakes it.
+func TestAnAgentStoppedHereRunsAgainWhenResumed(t *testing.T) {
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "go")) +
+		line(t, assistant("a1", "u1", "m1", map[string]any{"type": "tool_use", "id": "t1", "name": "Agent", "input": map[string]any{"description": "fix", "prompt": "fix it"}})) +
+		line(t, map[string]any{"type": "user", "uuid": "r1", "parentUuid": "a1",
+			"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}}},
+			"toolUseResult": map[string]any{"isAsync": true, "agentId": "a0047"}})))
+	p := &proc{tasksStopped: map[string]string{"a0047": tr.Resumed("a0047")}}
+	status := func() string {
+		items := tr.Items("")
+		stoppedHere(items, p, tr)
+		for _, it := range items {
+			if it.ToolID == "t1" && it.Task != nil {
+				return it.Task.Status
+			}
+		}
+		return ""
+	}
+	if s := status(); s != "stopped" {
+		t.Fatalf("stopped here: %q", s)
+	}
+	tr.Feed([]byte(line(t, assistant("a2", "r1", "m2", map[string]any{"type": "tool_use", "id": "t2", "name": "SendMessage", "input": map[string]any{"to": "a0047", "message": "go on"}})) +
+		line(t, map[string]any{"type": "user", "uuid": "r2", "parentUuid": "a2",
+			"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t2", "content": "ok"}}},
+			"toolUseResult": map[string]any{"success": true, "resumedAgentId": "a0047"}})))
+	if s := status(); s != "" {
+		t.Fatalf("resumed, still %q", s)
+	}
+	p.tasksStopped["a0047"] = tr.Resumed("a0047")
+	if s := status(); s != "stopped" {
+		t.Errorf("stopped again: %q", s)
+	}
+}
+
 // Work a process left running goes with it: dv restarting, or stopping a
 // session it had not heard from, means no notification is ever written.
 func TestBackgroundWorkOfAGoneProcessIsOver(t *testing.T) {

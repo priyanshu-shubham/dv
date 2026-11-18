@@ -732,6 +732,11 @@ func (t *Transcript) track(toolID string, r *toolUseResult) {
 	}
 }
 
+// Resumed is the SendMessage that last woke the background task, if any.
+func (t *Transcript) Resumed(task string) string {
+	return t.resumed[t.started[task]]
+}
+
 // finished reads the notification Claude Code sends when background work ends.
 // The task goes first: a resumed agent's names the SendMessage as its call.
 func (t *Transcript) finished(text string) {

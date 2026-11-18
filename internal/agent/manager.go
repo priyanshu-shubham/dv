@@ -919,20 +919,22 @@ func (m *Manager) StopTask(id, task string) error {
 	}
 	// Claude Code says so in the transcript only once the agent takes the
 	// notice up, which may be a turn away.
-	p.mu.Lock()
-	if p.tasksStopped == nil {
-		p.tasksStopped = map[string]bool{}
-	}
-	p.tasksStopped[task] = true
-	p.mu.Unlock()
 	m.mu.Lock()
 	f := m.follows[id]
 	m.mu.Unlock()
+	resumed := ""
 	if f != nil {
 		f.mu.Lock()
+		resumed = f.t.Resumed(task)
 		f.version++
 		f.mu.Unlock()
 	}
+	p.mu.Lock()
+	if p.tasksStopped == nil {
+		p.tasksStopped = map[string]string{}
+	}
+	p.tasksStopped[task] = resumed
+	p.mu.Unlock()
 	m.signal(id, false)
 	return nil
 }
@@ -1815,15 +1817,19 @@ func ran(p *proc) time.Time {
 }
 
 // stoppedHere marks the background work stopped from the page that the
-// transcript has not yet said ended.
-func stoppedHere(items []Item, p *proc) {
+// transcript has not yet said ended, and no SendMessage has woken since.
+func stoppedHere(items []Item, p *proc, t *Transcript) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i, it := range items {
-		if it.Task == nil && it.Result != nil && it.Result.Detail != nil && p.tasksStopped[it.Result.Detail.Background] {
+		if it.Task != nil || it.Result == nil || it.Result.Detail == nil {
+			continue
+		}
+		task := it.Result.Detail.Background
+		if resumed, ok := p.tasksStopped[task]; ok && resumed == t.Resumed(task) {
 			items[i].Task = &Task{Status: "stopped"}
 		}
 	}
@@ -1887,7 +1893,7 @@ func (m *Manager) update(id string, s *Sub) Update {
 		s.version = f.version
 		items := s.shown(f.t.Items(leaf, switches...), f.t.Start > 0)
 		ended(items, ran(p))
-		stoppedHere(items, p)
+		stoppedHere(items, p, f.t)
 		u.Reset, u.Keep, u.Items = s.diff(items)
 	}
 	u.Earlier = s.earlier

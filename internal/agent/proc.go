@@ -79,8 +79,9 @@ type proc struct {
 	queued  []Queued // messages sent while busy, until a turn takes them up
 	stopped bool     // the process was stopped on purpose, so its exit is no error
 	// tasksStopped is the background work stopped from the page, by task,
-	// before the transcript says so.
-	tasksStopped map[string]bool
+	// before the transcript says so. Each holds the agent's last resume then,
+	// as a later one starts it again.
+	tasksStopped map[string]string
 	// Whether the next start continues a transcript, and at which message when
 	// the conversation was rewound.
 	resume   bool
