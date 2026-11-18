@@ -36,6 +36,7 @@ export const IconCheck = svg(<path d="M3 8.5l3.5 3.5L13 4.5" />, { stroke: true 
 export const IconRefresh = svg(<path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2v3.5H10" />, { stroke: true });
 export const IconGauge = svg(<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0M8 11.5l2.5-3.5" />, { stroke: true });
 export const IconX = svg(<path d="M4 4l8 8M12 4l-8 8" />, { stroke: true });
+export const IconTrash = svg(<path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4M9.3 7v4" />, { stroke: true });
 export const IconPlus = svg(<path d="M8 3.5v9M3.5 8h9" />, { stroke: true });
 export const IconMinus = svg(<path d="M3.5 8h9" />, { stroke: true });
 export const IconExpand = svg(<path d="M5 6.5L8 3.5l3 3M5 9.5l3 3 3-3" />, { stroke: true });

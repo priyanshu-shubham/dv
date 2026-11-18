@@ -311,6 +311,8 @@ export const api = {
   agentStart: (id) => req(`/api/agent/sessions/${id}/start`, { method: "POST", body: "{}" }),
   // A temporary session leaves the list once it is closed.
   agentTemporary: (id, temporary) => req(`/api/agent/sessions/${id}/temporary`, { method: "POST", body: JSON.stringify({ temporary }) }),
+  // Closes it if open and takes it out of the list; agentTemporary(id, false) brings it back.
+  agentRemove: (id) => req(`/api/agent/sessions/${id}/remove`, { method: "POST", body: "{}" }),
   // A kept session is never stopped for being idle, and starts with dv.
   agentKeep: (id, keep) => req(`/api/agent/sessions/${id}/keep`, { method: "POST", body: JSON.stringify({ keep }) }),
   // Lets dv talk to a session a terminal has open, until it closes there or here.

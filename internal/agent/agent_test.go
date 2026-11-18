@@ -1145,6 +1145,39 @@ func TestATemporarySessionLeavesTheListOnceClosed(t *testing.T) {
 	}
 }
 
+func TestRemoveTakesASessionOutOfTheList(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "")
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	for _, id := range []string{"open", "past", "other"} {
+		os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(`{"type":"user","uuid":"u1","cwd":"`+root+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+	}
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	m.SetOpen("open", true)
+	listed := func() (ids []string) {
+		for _, s := range m.Sessions() {
+			ids = append(ids, s.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	m.Remove("open")
+	m.Remove("past")
+	if got := listed(); !slices.Equal(got, []string{"other"}) {
+		t.Fatalf("after removing %v", got)
+	}
+	if saved.Has("open") || saved.Has("past") {
+		t.Fatal("a removed session is left open")
+	}
+	m.SetTemporary("past", false)
+	if got := listed(); !slices.Equal(got, []string{"other", "past"}) {
+		t.Fatalf("after undoing %v", got)
+	}
+}
+
 func TestAnIdleSessionMovesToRecent(t *testing.T) {
 	root, cfg := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)

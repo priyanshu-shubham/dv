@@ -570,6 +570,16 @@ func (m *Manager) SetTemporary(id string, on bool) error {
 	return nil
 }
 
+// Remove takes a session out of the list in one step, closing it if open: it
+// is marked temporary without being opened first, as SetTemporary would.
+// Its transcript stays, and unmarking it brings it back.
+func (m *Manager) Remove(id string) error {
+	if err := m.saved.SetTemporary(id, true); err != nil {
+		return err
+	}
+	return m.SetOpen(id, false)
+}
+
 // SetKept keeps a session running: it is not stopped for being idle, and
 // starts with dv. Keeping one opens and starts it.
 func (m *Manager) SetKept(id string, on bool) error {

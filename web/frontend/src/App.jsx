@@ -12,7 +12,7 @@ import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction,
 import { BranchPalette } from "./Branches.jsx";
 import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
-import AgentView, { attachKey } from "./Agent.jsx";
+import AgentView, { attachKey, resumeWith } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
@@ -1449,6 +1449,29 @@ export default function App() {
     },
     [agent.sessions, agentId, setAgentId, loadSessions],
   );
+  const removeSession = useCallback(
+    async (id) => {
+      const row = agent.sessions.find((x) => x.id === id);
+      if (row?.running === "dv" && row.busy && !confirm(`${agentName(row.agent)} is still working in this session. Stop it and remove it?`)) return false;
+      try {
+        await api.agentRemove(id);
+      } catch (e) {
+        say("Could not remove the session", e.message);
+        return false;
+      }
+      if (id === agentId) setAgentId("");
+      loadSessions();
+      const undo = () => api.agentTemporary(id, false).then(loadSessions, (e) => say("Could not bring it back", e.message));
+      say(
+        "Removed from the list",
+        heldElsewhere(row) ? "It goes once the terminal running it closes" : `Its transcript stays for ${resumeWith(row?.agent)}`,
+        [{ label: "Undo", primary: true, run: undo }],
+        10000,
+      );
+      return true;
+    },
+    [agent.sessions, agentId, setAgentId, loadSessions],
+  );
 
   const pr = usePR(meta?.head?.branch, meta?.remote);
   // The branch is measured from its pull request's base once the server has
@@ -2692,6 +2715,7 @@ export default function App() {
               selectSession,
               startSession,
               closeSession,
+              removeSession,
               closeTask: meta?.task ? endTask : null,
               newWorktree,
               renameSession: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
@@ -2805,6 +2829,7 @@ export default function App() {
             onNewWorktree: newWorktree,
             onNewTask: boot.base ? () => startTask().catch((e) => say("Could not start a task", e.message)) : null,
             onClose: closeSession,
+            onRemove: removeSession,
             onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
           }}
           terminal={{

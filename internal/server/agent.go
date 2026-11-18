@@ -164,6 +164,18 @@ func (s *Server) handleAgentTemporary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleAgentRemove(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	if err := s.agent.Remove(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleAgentKeep(w http.ResponseWriter, r *http.Request) {
 	id, ok := session(w, r)
 	if !ok {

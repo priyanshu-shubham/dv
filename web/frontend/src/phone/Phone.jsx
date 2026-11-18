@@ -250,6 +250,7 @@ export default function Phone({ app }) {
             ]}
             onOpen={openSession}
             onClose={app.closeSession}
+            onRemove={app.removeSession}
             onRename={app.renameSession}
           />
         </section>

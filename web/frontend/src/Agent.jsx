@@ -46,6 +46,7 @@ import { slug } from "./boot.js";
 import {
   AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconStop,
   IconTemporary,
+  IconTrash,
   IconUndo, IconX,
 } from "./icons.jsx";
 import { AttachSheet, Composer as PhoneComposer, HoldSheet, JumpPad, JumpSheet, Marks, ModelSheet, ModeSheet, QueuedSheet, SessionBar } from "./phone/Session.jsx";
@@ -332,7 +333,7 @@ const AGENT_CHOICES = [
 ];
 
 // resumeWith is how a closed session is picked up again outside dv.
-const resumeWith = (agent) => (agent === "codex" ? "codex resume" : "claude --resume");
+export const resumeWith = (agent) => (agent === "codex" ? "codex resume" : "claude --resume");
 
 // What the blank session offers to start from: the work dv is for.
 const SUGGESTIONS = [
@@ -637,7 +638,9 @@ export default function AgentView({
   const [uploads, setUploads] = useState([]);
   const uploadsHere = uploads.filter((u) => u.to === (id || ""));
   // Sent from here, not yet in the conversation: { text, uuid, seen }, seen
-  // being how many prompts already said the same, so a repeat still waits.
+  // being the keys of what already said the same, so a repeat still waits. Keys
+  // rather than a count: the conversation can come again from a later
+  // compaction, a /compact's own, with fewer of them.
   const [pending, setPending] = useState([]);
   // What each message sent from here was written as, to put back in the box
   // when it is taken back: uuid -> { draft, attached, images }.
@@ -808,15 +811,20 @@ export default function AgentView({
   }, [caretKey]);
 
   const said = useMemo(() => {
-    const n = new Map();
+    const by = new Map();
+    const uuids = new Set();
     for (const it of items) {
-      const key = it.kind === "shell" ? "!" + it.text : it.kind === "prompt" || it.kind === "command" ? withoutVia(it.text) : null;
-      if (key !== null) n.set(key, (n.get(key) || 0) + 1);
+      const text = it.kind === "shell" ? "!" + it.text : it.kind === "prompt" || it.kind === "command" ? withoutVia(it.text) : null;
+      if (text === null) continue;
+      by.get(text)?.push(it.key) ?? by.set(text, [it.key]);
+      if (it.uuid) uuids.add(it.uuid);
     }
-    return n;
+    return { by, uuids };
   }, [items]);
+  const seenAs = (text) => new Set(said.by.get(text));
   useEffect(() => {
-    setPending((p) => (p.some((m) => (said.get(m.text) || 0) > m.seen) ? p.filter((m) => (said.get(m.text) || 0) <= m.seen) : p));
+    const arrived = (m) => said.uuids.has(m.uuid) || (said.by.get(m.text) || []).some((k) => !m.seen.has(k));
+    setPending((p) => (p.some(arrived) ? p.filter((m) => !arrived(m)) : p));
   }, [said]);
   // What is on its way in: queued in the session from anywhere - another tab,
   // before a reload - until Claude takes it up, then sent from here until the
@@ -1091,7 +1099,7 @@ export default function AgentView({
     setError("");
     const uuid = newUUID();
     sent.current.set(uuid, { draft: typed, attached: command ? [] : attached, images: pictures });
-    const entry = { text, uuid, pictures, seen: said.get(text) || 0, command: !!command };
+    const entry = { text, uuid, pictures, seen: seenAs(text), command: !!command };
     carry.current = id ? null : entry;
     setPending((p) => [...p, entry]);
     setDraft("");
@@ -1146,7 +1154,7 @@ export default function AgentView({
     if (!command || readOnly) return;
     setError("");
     const uuid = newUUID();
-    const entry = { text: "!" + command, uuid, shell: command, seen: said.get("!" + command) || 0 };
+    const entry = { text: "!" + command, uuid, shell: command, seen: seenAs("!" + command) };
     sent.current.set(uuid, { draft, attached: [], images: NO_IMAGES });
     carry.current = id ? null : entry;
     setPending((p) => [...p, entry]);
@@ -1174,7 +1182,7 @@ export default function AgentView({
   }, [live?.shell?.error, live?.shell?.stopped]);
   // compactNow is the terminal's /compact, sent without touching the box.
   const compactNow = async () => {
-    const entry = { text: "/compact", uuid: newUUID(), seen: said.get("/compact") || 0, command: true };
+    const entry = { text: "/compact", uuid: newUUID(), seen: seenAs("/compact"), command: true };
     setError("");
     setPending((p) => [...p, entry]);
     Object.assign(follow.current, { stick: true, anchor: null, opened: null, back: null });
@@ -4504,6 +4512,7 @@ export function SessionList({
   onNewWorktree,
   onNewTask,
   onClose,
+  onRemove,
   onRename,
 }) {
   const [filter, setFilter] = useState("");
@@ -4586,6 +4595,18 @@ export function SessionList({
             hint={s.title || s.prompt || ""}
             onRename={!heldElsewhere(s) ? (t) => onRename(s.id, t) : null}
           />
+          {onRemove && (
+            <button
+              className="session-close"
+              title={`Remove from the list${isOpen(s) ? ", closing it" : ""}. Its transcript stays for ${resumeWith(s.agent)}.`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(s.id);
+              }}
+            >
+              <IconTrash size={11} />
+            </button>
+          )}
           {isOpen(s) && (
             <button
               className="session-close"

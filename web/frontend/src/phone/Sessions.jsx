@@ -1,7 +1,7 @@
 // The Agent tab's list: what waits on you first - in any of the hub's folders -
 // then what is at work here, then the rest open here, then what is open in
 // this repository's worktrees, then in other folders, then the rest. A row opens its session; held, it offers what
-// else can be done to it; swiped aside, it closes.
+// else can be done to it; swiped aside, it closes, or leaves the list if closed.
 import { useState } from "react";
 import { AgentIcon } from "../icons.jsx";
 import { agentName, byLastSent, heldElsewhere, openFolderSession, cx, limitWindow, plainText, relTime, resetsWhen } from "../util.js";
@@ -12,7 +12,7 @@ import { say, useOpenIn } from "../Notices.jsx";
 
 const isOpen = (s) => s.open || s.running === "dv";
 
-export default function Sessions({ sessions, requests, elsewhere, repoRoot, available, usage, onOpen, onClose, onRename }) {
+export default function Sessions({ sessions, requests, elsewhere, repoRoot, available, usage, onOpen, onClose, onRemove, onRename }) {
   const [held, setHeld] = useState(null); // the session long-pressed
   const [renaming, setRenaming] = useState(null);
   const [limits, setLimits] = useState(false);
@@ -35,7 +35,8 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
       folder={f && (sibling(f) && f.branch ? f.branch : f.name)}
       onOpen={() => (f ? openFolderSession(f.slug, s.id) : onOpen(s.id))}
       onHold={f ? null : () => setHeld(s)}
-      onSwipe={f ? () => closeAway(f, s) : isOpen(s) ? () => onClose(s.id) : null}
+      onSwipe={f ? () => closeAway(f, s) : isOpen(s) ? () => onClose(s.id) : () => onRemove(s.id)}
+      removes={!f && !isOpen(s)}
     />
   );
 
@@ -142,6 +143,15 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
               }}
             />
           )}
+          <Row
+            icon="trash"
+            title="Remove from the list"
+            sub={isOpen(held) ? "Closes it; its transcript stays" : "Its transcript stays"}
+            onClick={() => {
+              onRemove(held.id);
+              setHeld(null);
+            }}
+          />
         </Sheet>
       )}
       {renaming && <Rename s={renaming} onRename={onRename} onClose={() => setRenaming(null)} />}
@@ -150,8 +160,9 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
 }
 
 // SessionRow is one session: its agent, its name, the last thing said or what
-// it asks, and how long ago. Swiped past a third of its width, it closes.
-function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
+// it asks, and how long ago. Swiped past a third of its width, it closes, or
+// when closed already, leaves the list.
+function SessionRow({ s, req, folder, onOpen, onHold, onSwipe, removes }) {
   const { ref, dx, armed, touch } = useSwipe(onSwipe);
   const hold = useLongPress(() => onHold?.());
   const status = req ? (
@@ -167,8 +178,8 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe }) {
     <div className={cx("p-swipe", armed && "armed")} ref={ref}>
       {onSwipe && (
         <div className="p-swipe-bg" aria-hidden="true">
-          <Icon name="x" />
-          <Icon name="x" />
+          <Icon name={removes ? "trash" : "x"} />
+          <Icon name={removes ? "trash" : "x"} />
         </div>
       )}
       <button

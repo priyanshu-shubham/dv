@@ -339,6 +339,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/agent/sessions/{id}/open", Guarded(s.handleAgentOpen))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/start", Guarded(s.handleAgentStart))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/temporary", Guarded(s.handleAgentTemporary))
+	mux.HandleFunc("POST /api/agent/sessions/{id}/remove", Guarded(s.handleAgentRemove))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/ask", Guarded(s.handleAgentAsk))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/keep", Guarded(s.handleAgentKeep))
 	mux.HandleFunc("POST /api/agent/sessions/{id}/share", Guarded(s.handleAgentShare))
