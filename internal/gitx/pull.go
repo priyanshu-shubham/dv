@@ -54,7 +54,10 @@ func (r *Repo) FastForward(branch string) (int, error) {
 	}
 	up = strings.TrimSpace(up)
 	if remote != "." {
-		if _, err := gitIn(r.Root, 2*time.Minute, "fetch", "--quiet", "--", remote); err != nil {
+		fetchMu.Lock()
+		_, err := gitIn(r.Root, 2*time.Minute, "fetch", "--quiet", "--", remote)
+		fetchMu.Unlock()
+		if err != nil {
 			return 0, fmt.Errorf("could not fetch %s: %w", remote, err)
 		}
 	}

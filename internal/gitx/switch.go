@@ -201,7 +201,9 @@ func (r *Repo) Fetch() error {
 }
 
 // fetched is when each repository, by its common git dir, was last fetched
-// by FetchStale; its worktrees share it.
+// by FetchStale; its worktrees share it. fetchMu also keeps a pull's fetch
+// apart from FetchStale's: git fails a fetch whose remote-tracking refs
+// another one moved meanwhile ("cannot lock ref").
 var (
 	fetchMu sync.Mutex
 	fetched = map[string]time.Time{}
