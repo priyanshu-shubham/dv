@@ -283,7 +283,7 @@ tells Claude Code each model's real context window, and shows no cost for them.
 In auto mode, where Anthropic would judge a Claude model's actions, a Codex
 model judges a Codex model's, so nothing from those sessions goes to Anthropic;
 an action it can't judge is left to you. **Edit the list…** in the picker hides
-models you don't use.
+models you don't use and puts the rest in the order you drag them into.
 
 An action can also run its prompt with the Codex CLI itself (`codex exec`), in
 a sandbox the action picks; its output shows under Actions.

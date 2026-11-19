@@ -21,7 +21,9 @@ import {
   agentName,
   attr,
   byLastSent,
-  modelGroups,
+  inOrder,
+  modelSource,
+  useReorder,
   copyText,
   cx,
   duration,
@@ -47,7 +49,7 @@ import {
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
+  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconGrip, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
   IconTemporary,
   IconTrash,
   IconUndo, IconX,
@@ -69,6 +71,7 @@ const NO_COMMANDS = [];
 const NO_MODELS = [];
 const NO_PICKED = {};
 const NO_HIDDEN = [];
+const NO_ORDER = [];
 const NO_NOTE = {};
 const DOUBLE_ESC_MS = 600;
 // How long the reader goes without a key before a request takes the keys.
@@ -1626,7 +1629,9 @@ export default function AgentView({
     // nameOf reads only modelChoices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelChoices, using]);
-  const choices = useMemo(() => (offList ? [...modelChoices, offList] : modelChoices), [modelChoices, offList]);
+  // As the user arranged them in the list editor.
+  const [modelOrder, setModelOrder] = usePref("user", "modelOrder", NO_ORDER);
+  const choices = useMemo(() => inOrder(offList ? [...modelChoices, offList] : modelChoices, modelOrder), [modelChoices, offList, modelOrder]);
   // The model the session is on: what it reports once running, else what was
   // asked for, else - resumed - what the transcript was last answered on.
   const chosen = choices.find((m) => m.id === (asked?.model || ""));
@@ -1950,6 +1955,7 @@ export default function AgentView({
               all={choices}
               hidden={hiddenModels}
               onHide={hideModel}
+              onOrder={setModelOrder}
               model={offList?.id || asked?.model || ""}
               efforts={onModel?.efforts}
               effort={effort}
@@ -2140,6 +2146,7 @@ export default function AgentView({
           all={choices}
           hidden={hiddenModels}
           onHide={hideModel}
+          onOrder={setModelOrder}
           model={offList?.id || asked?.model || ""}
           efforts={onModel?.efforts}
           effort={effort}
@@ -4400,7 +4407,7 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
 // terminal's /model has them. onPick is given { model } or { effort }; onAdd
 // and onDrop a model's name, to put on the list as /model takes it or take
 // off again.
-function ModelPicker({ label, models, all, hidden, onHide, model, efforts, effort, onPick, onAdd, onDrop }) {
+function ModelPicker({ label, models, all, hidden, onHide, onOrder, model, efforts, effort, onPick, onAdd, onDrop }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
@@ -4419,7 +4426,7 @@ function ModelPicker({ label, models, all, hidden, onHide, model, efforts, effor
       </button>
       {open && editing && (
         <div className={cx("model-list up model-editor-menu", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          <ModelListEditor models={all} hidden={hidden} onHide={onHide} onAdd={onAdd} onDrop={onDrop} onBack={() => setEditing(false)} />
+          <ModelListEditor models={all} hidden={hidden} onHide={onHide} onOrder={onOrder} onAdd={onAdd} onDrop={onDrop} onBack={() => setEditing(false)} />
         </div>
       )}
       {open && !editing && (
@@ -4482,12 +4489,17 @@ function ModelPicker({ label, models, all, hidden, onHide, model, efforts, effor
   );
 }
 
-// ModelListEditor is which models the picker offers, by where each comes
-// from: each switched on or off, one added by the name /model takes, and an
-// added one taken off again.
-function ModelListEditor({ models, hidden, onHide, onAdd, onDrop, onBack }) {
+// ModelListEditor is which models the picker offers, and in what order: each
+// switched on or off and dragged into place, one added by the name /model
+// takes, and an added one taken off again. models are in the menu's order.
+function ModelListEditor({ models, hidden, onHide, onOrder, onAdd, onDrop, onBack }) {
   const [adding, setAdding] = useState("");
   const shown = models.filter((m) => !hidden.includes(m.id)).length;
+  const { shown: order, dragging, grip, row } = useReorder(
+    models.map((m) => m.id),
+    onOrder,
+  );
+  const byId = new Map(models.map((m) => [m.id, m]));
   return (
     <div className="model-editor">
       <div className="model-editor-head">
@@ -4500,31 +4512,32 @@ function ModelListEditor({ models, hidden, onHide, onAdd, onDrop, onBack }) {
         </span>
       </div>
       <div className="model-editor-list">
-        {modelGroups(models).map(([title, list]) => (
-          <div key={title} className="model-editor-group">
-            <div className="menu-label">{title}</div>
-            {list.map((c) => {
-              const on = !hidden.includes(c.id);
-              return (
-                <div key={c.id} className={cx("model-editor-row", !on && "off")}>
-                  <span className="model-editor-text" onClick={() => onHide(c.id, on)}>
-                    <span className="model-name">
-                      {c.label}
-                      {c.tag && <span className="model-tag">{c.tag}</span>}
-                    </span>
-                    {c.description && <span className="model-note">{c.description}</span>}
-                  </span>
-                  {c.added && (
-                    <button className="ghost model-editor-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
-                      <IconTrash size={12} />
-                    </button>
-                  )}
-                  <Switch on={on} label={c.label} onChange={(show) => onHide(c.id, !show)} />
-                </div>
-              );
-            })}
-          </div>
-        ))}
+        {order.map((id) => {
+          const c = byId.get(id);
+          const on = !hidden.includes(c.id);
+          const from = modelSource(c);
+          return (
+            <div key={c.id} ref={row(c.id)} className={cx("model-editor-row", !on && "off", dragging === c.id && "dragging")}>
+              <button className="ghost model-editor-grip" title="Drag to reorder (↑ ↓)" aria-label={`Move ${c.label}`} {...grip(c.id)}>
+                <IconGrip size={12} />
+              </button>
+              <span className="model-editor-text" onClick={() => onHide(c.id, on)}>
+                <span className="model-name">
+                  {c.label}
+                  {c.tag && <span className="model-tag">{c.tag}</span>}
+                  {from && <span className="model-tag">{from}</span>}
+                </span>
+                {c.description && <span className="model-note">{c.description}</span>}
+              </span>
+              {c.added && (
+                <button className="ghost model-editor-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
+                  <IconTrash size={12} />
+                </button>
+              )}
+              <Switch on={on} label={c.label} onChange={(show) => onHide(c.id, !show)} />
+            </div>
+          );
+        })}
       </div>
       <label className="model-editor-add">
         <IconPlus size={12} />

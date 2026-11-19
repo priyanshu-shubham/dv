@@ -375,15 +375,73 @@ export const byLastSent = (a, b) => Date.parse(b.sent || b.updated) - Date.parse
 
 export const workingLabel = () => "Claude is working";
 
-// modelGroups sorts the model picker's list by where each model comes from,
-// for its editor: [[title, models]], none empty.
-export function modelGroups(models) {
-  const codex = (m) => m.id.startsWith("codex/");
-  return [
-    ["Claude", models.filter((m) => !m.added && !codex(m))],
-    ["Added by you", models.filter((m) => m.added && !codex(m))],
-    ["Codex sign-in", models.filter(codex)],
-  ].filter(([, list]) => list.length);
+// modelSource is where a model on the picker comes from, for its editor: ""
+// for Claude Code's own.
+export const modelSource = (m) => (m.id.startsWith("codex/") ? "Codex" : m.added ? "Added" : "");
+
+// inOrder is items as order (ids) arranges them. One order doesn't name - a
+// model released since it was set - keeps its place after the item it
+// follows by default, rather than going to the end.
+export function inOrder(items, order, id = (x) => x.id) {
+  const at = new Map(order.map((k, i) => [k, i]));
+  const out = items.filter((x) => at.has(id(x))).sort((a, b) => at.get(id(a)) - at.get(id(b)));
+  items.forEach((x, i) => {
+    if (at.has(id(x))) return;
+    const before = i > 0 ? out.indexOf(items[i - 1]) : -1;
+    out.splice(before + 1, 0, x);
+  });
+  return out;
+}
+
+// useReorder drags the rows of a list into a new order: grip(id) goes on a
+// row's handle, row(id) is its ref, shown is the ids as they stand while one
+// is dragged, and onOrder hears the order once it is let go. The handle also
+// moves its row with ↑ and ↓.
+export function useReorder(ids, onOrder) {
+  const [drag, setDrag] = useState(null); // { id, order }
+  const dragRef = useRef(null);
+  dragRef.current = drag;
+  const rows = useRef(new Map());
+  const move = (order, id, to) => {
+    const rest = order.filter((x) => x !== id);
+    return [...rest.slice(0, to), id, ...rest.slice(to)];
+  };
+  const grip = (id) => ({
+    onPointerDown: (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setDrag({ id, order: ids });
+    },
+    onPointerMove: (e) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const rest = d.order.filter((x) => x !== id);
+      let to = rest.findIndex((x) => {
+        const r = rows.current.get(x)?.getBoundingClientRect();
+        return r && e.clientY < r.top + r.height / 2;
+      });
+      if (to < 0) to = rest.length;
+      const order = move(d.order, id, to);
+      if (order.join("\n") !== d.order.join("\n")) setDrag({ id, order });
+    },
+    onPointerUp: () => {
+      const d = dragRef.current;
+      setDrag(null);
+      if (d && d.order.join("\n") !== ids.join("\n")) onOrder(d.order);
+    },
+    onPointerCancel: () => setDrag(null),
+    onKeyDown: (e) => {
+      const step = e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0;
+      const to = ids.indexOf(id) + step;
+      if (!step || to < 0 || to >= ids.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onOrder(move(ids, id, to));
+    },
+  });
+  const row = (id) => (el) => (el ? rows.current.set(id, el) : rows.current.delete(id));
+  return { shown: drag?.order || ids, dragging: drag?.id, grip, row };
 }
 
 // splitPath separates a path into its directory and file name so the sidebar

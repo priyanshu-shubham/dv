@@ -890,7 +890,30 @@ html.phone ::-webkit-scrollbar {
   padding: 8px 0 8px 24px;
 }
 
-/* The model sheet's list editor: each model with the desktop's switch. */
+/* The model sheet's list editor: each model with its handle to drag it by and
+   the desktop's switch. */
+.p-model-row {
+  padding-left: 4px;
+}
+
+.p-grip {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 48px;
+  color: var(--fg-3);
+  touch-action: none;
+}
+
+.p-model-row.dragging {
+  border-radius: 12px;
+  background: var(--m-high);
+}
+
+.p-model-row > .p-model-edit {
+  padding-left: 4px;
+}
 .p-added > .p-model-edit {
   flex: 1;
   min-width: 0;

@@ -6721,20 +6721,39 @@ body.resizing * {
   padding: 0 4px 4px;
 }
 
-.model-editor-group + .model-editor-group {
-  margin-top: 6px;
-}
-
-.model-editor-group .menu-label {
-  padding: 6px 8px 4px;
-}
-
 .model-editor-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
+  padding: 6px 8px 6px 2px;
   border-radius: var(--r-lg);
+}
+
+.model-list .model-editor-grip {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 28px;
+  padding: 0;
+  color: var(--fg-4);
+  cursor: grab;
+  touch-action: none;
+}
+
+.model-list .model-editor-grip:hover,
+.model-list .model-editor-grip:focus-visible {
+  background: none;
+  color: var(--fg-2);
+}
+
+.model-editor-row.dragging {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.model-editor-row.dragging .model-editor-grip {
+  cursor: grabbing;
 }
 
 .model-editor-row:hover {
