@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"dv/internal/gateway"
 	"dv/internal/notify"
 	"dv/internal/store"
 )
@@ -56,23 +57,65 @@ func AutoTitles(user *store.Prefs) func() bool {
 	}
 }
 
+// MaskEnvFiles reads whether the values in the open folders' .env files are
+// masked from models: the setting maskEnvFiles, on unless turned off.
+func MaskEnvFiles(user *store.Prefs) func() bool {
+	return func() bool {
+		if user == nil {
+			return true
+		}
+		var s struct {
+			On *bool `json:"maskEnvFiles"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.On == nil || *s.On
+	}
+}
+
+// AskLooseSecrets reads whether what looks like a secret is held, before a
+// session sends it, for the user to say: the setting askLooseSecrets, on
+// unless turned off.
+func AskLooseSecrets(user *store.Prefs) func() bool {
+	return func() bool {
+		if user == nil {
+			return true
+		}
+		var s struct {
+			On *bool `json:"askLooseSecrets"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.On == nil || *s.On
+	}
+}
+
 // AgentInstructions reads what dv adds to a session's own instructions as it
-// starts: how to show files in a reply, unless the setting filesInReplies is off.
+// starts: how to show files in a reply, unless the setting filesInReplies is
+// off, and what a masked secret's placeholder is, while any are.
 func AgentInstructions(user *store.Prefs) func() string {
 	return func() string {
+		var notes []string
+		if gw := gateway.Active(); gw != nil {
+			if list, _ := gw.Secrets(); len(list) > 0 {
+				notes = append(notes, secretsNote)
+			}
+		}
 		if user == nil {
-			return ""
+			return strings.Join(notes, "\n\n")
 		}
 		var s struct {
 			On *bool `json:"filesInReplies"`
 		}
 		json.Unmarshal(user.All()["settings"], &s)
-		if s.On != nil && !*s.On {
-			return ""
+		if s.On == nil || *s.On {
+			notes = append([]string{filesNote}, notes...)
 		}
-		return filesNote
+		return strings.Join(notes, "\n\n")
 	}
 }
+
+// The model, seeing a placeholder, took it for a secret it must not repeat,
+// and refused what the user asked of it.
+const secretsNote = "The user has masked some secrets from you: wherever one appears - in files, command output, or the user's messages - you see [[dv-secret:NAME]] in its place. Treat the placeholder as the value itself. Write it exactly as is wherever the value belongs, in commands, files and replies: dv puts the real value in before a command runs or a file is written, and shows the user a masked glimpse. Never ask for the real value or try to work it out."
 
 const filesNote = "You are running in dv, a web page where the user reads your replies. A line of its own reading ![title](path) shows that file in your reply: a picture, video, sound, PDF, or an HTML page, which runs in place with its scripts and can load files beside it by relative path. When something would come across better interactively than as text - a chart of real data, something to explore with controls, a UI mock-up - write it as an HTML page and show it this way. Unless the page belongs in the project, put it under .dv/pages/ in your working directory, which git ignores. Paths are absolute or relative to your working directory. A reply read in a chat app shows only its text."
 

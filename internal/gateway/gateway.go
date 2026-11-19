@@ -40,6 +40,9 @@ type Gateway struct {
 	keyDir, path string
 	mu           sync.Mutex
 	base         atomic.Pointer[string]
+	saved        atomic.Pointer[map[string]string] // the user's, by name
+	env          envScan
+	held         holds
 }
 
 var active atomic.Pointer[Gateway]
@@ -89,16 +92,40 @@ func (g *Gateway) Serve(addr net.Addr) {
 	base := "http://" + net.JoinHostPort(host, port) + Prefix + g.token
 	g.base.Store(&base)
 	active.Store(g)
+	// Known before a session starts, for the window it is told (Env).
+	g.codex.knownModels()
 }
 
-// Env is what a Claude Code dv starts runs with to go through the gateway;
-// nothing before one is serving.
-func Env() []string {
+// Env is what a Claude Code dv starts on model runs with to go through the
+// gateway; nothing before one is serving.
+func Env(model string) []string {
 	g := active.Load()
 	if g == nil {
 		return nil
 	}
-	return []string{"ANTHROPIC_BASE_URL=" + *g.base.Load()}
+	env := []string{"ANTHROPIC_BASE_URL=" + *g.base.Load()}
+	if w := g.unknownWindow(model); w > 0 {
+		env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(w))
+	}
+	return env
+}
+
+// unknownWindow is the window Claude Code is told a model it doesn't know
+// has - it takes 200k otherwise, and leaves its own models' as they are. A
+// process has the one: the Codex model it starts on's, else the smallest a
+// Codex model has, so one moved to later never goes past its end; one
+// larger still compacts, worded so when the backend refuses the length.
+func (g *Gateway) unknownWindow(model string) int {
+	if w := g.CodexWindow(model); w > 0 {
+		return w
+	}
+	least := 0
+	for _, m := range g.CodexModels() {
+		if m.Window > 0 && (least == 0 || m.Window < least) {
+			least = m.Window
+		}
+	}
+	return least
 }
 
 // Active is the gateway serving, nil if none is.
@@ -118,6 +145,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
+	}
+	g.refreshEnv()
+	if rest == "/v1/messages" {
+		g.hold(r.Context(), body, r.Header.Get("X-Claude-Code-Session-Id"))
 	}
 	body = g.mask.mask(body)
 	var head struct {

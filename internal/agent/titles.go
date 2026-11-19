@@ -107,7 +107,7 @@ func claudeTitle(gist string) (string, error) {
 		"--output-format", "json")
 	cmd.Dir = os.TempDir()
 	cmd.Env = append(os.Environ(), "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1")
-	cmd.Env = append(cmd.Env, gateway.Env()...)
+	cmd.Env = append(cmd.Env, gateway.Env(titleModel)...)
 	cmd.Stdin = strings.NewReader("<session>\n" + gist + "\n</session>")
 	out, err := cmd.Output()
 	var r struct {

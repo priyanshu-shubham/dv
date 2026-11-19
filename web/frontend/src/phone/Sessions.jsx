@@ -4,6 +4,7 @@
 // else can be done to it; swiped aside, it closes, or leaves the list if closed.
 import { useState } from "react";
 import { AgentIcon } from "../icons.jsx";
+import { secretsInText } from "../secrets.js";
 import { agentName, byLastSent, heldElsewhere, openFolderSession, cx, limitWindow, plainText, relTime, resetsWhen } from "../util.js";
 import { Icon } from "./icons.jsx";
 import { Row, Sheet, useLongPress, useSwipe } from "./Sheet.jsx";
@@ -201,7 +202,7 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe, removes }) {
           <span className="p-row-sub clamp2">
             {status}
             {folder && <span className="p-fold">{folder} · </span>}
-            {what}
+            {secretsInText(what)}
           </span>
         </span>
       </button>

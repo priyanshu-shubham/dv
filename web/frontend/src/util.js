@@ -375,6 +375,17 @@ export const byLastSent = (a, b) => Date.parse(b.sent || b.updated) - Date.parse
 
 export const workingLabel = () => "Claude is working";
 
+// modelGroups sorts the model picker's list by where each model comes from,
+// for its editor: [[title, models]], none empty.
+export function modelGroups(models) {
+  const codex = (m) => m.id.startsWith("codex/");
+  return [
+    ["Claude", models.filter((m) => !m.added && !codex(m))],
+    ["Added by you", models.filter((m) => m.added && !codex(m))],
+    ["Codex sign-in", models.filter(codex)],
+  ].filter(([, list]) => list.length);
+}
+
 // splitPath separates a path into its directory and file name so the sidebar
 // can dim the directory.
 export function splitPath(p) {

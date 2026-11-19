@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
+import { hashesAsSecrets, maskable, reloadSecrets, secretsInText, useSecrets, useSecretsVersion } from "./secrets.js";
+import { LooseSecrets, looseItems, MaskSecret } from "./Secrets.jsx";
 import { commentEvent, Request, RequestTitle, saidWith } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { grow } from "./hunks.js";
@@ -11,13 +13,14 @@ import { Media, MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from 
 import { PdfView } from "./Pdf.jsx";
 import { absolute, inlineFiles, inside, kindOf, splitShown } from "./shown.js";
 import { Orb } from "./Orb.jsx";
-import { Modal } from "./Overlays.jsx";
+import { Modal, Switch } from "./Overlays.jsx";
 import { say, useOpenIn } from "./Notices.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
 import {
   attr,
   byLastSent,
+  modelGroups,
   copyText,
   cx,
   duration,
@@ -43,7 +46,7 @@ import {
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
+  IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
   IconTemporary,
   IconTrash,
   IconUndo, IconX,
@@ -87,6 +90,7 @@ const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 // stream is down - dv stopped, most likely - and live is only what it last was.
 // With call, it is the conversation of the agent that call started instead.
 function useSession(id, call = "", from = "") {
+  const masks = useSecretsVersion();
   const key = id && `${id} ${call}`;
   const [state, setState] = useState({ key, items: [], live: null, lost: false });
   useEffect(() => {
@@ -117,7 +121,7 @@ function useSession(id, call = "", from = "") {
         }),
       () => setState((s) => (s.lost ? s : { ...s, lost: true })),
     );
-  }, [key, from]);
+  }, [key, from, masks]);
   return state.key === key ? state : { key, items: [], live: null, lost: false };
 }
 
@@ -422,17 +426,13 @@ async function pasteImages() {
 }
 
 // AddImages is the box's +: a file, or on a phone that can, what was copied.
-function AddImages({ onFiles, onPaste }) {
+function AddImages({ onFiles, onPaste, onMask }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
   const pick = (fn) => () => (setOpen(false), fn());
   return (
     <div className="model-menu" ref={ref}>
-      <button
-        className="ghost composer-add"
-        onClick={canReadClipboard() ? () => setOpen((o) => !o) : onFiles}
-        title="Add images or files - or paste or drop them in"
-      >
+      <button className="ghost composer-add" onClick={() => setOpen((o) => !o)} title="Add images or files - or paste or drop them in - or mask a secret">
         <IconPlus size={15} />
       </button>
       {open && (
@@ -440,9 +440,17 @@ function AddImages({ onFiles, onPaste }) {
           <button onClick={pick(onFiles)}>
             <span className="model-name">Photo or file</span>
           </button>
-          <button onClick={pick(onPaste)}>
-            <span className="model-name">Paste image</span>
-          </button>
+          {canReadClipboard() && (
+            <button onClick={pick(onPaste)}>
+              <span className="model-name">Paste image</span>
+            </button>
+          )}
+          {onMask && (
+            <button onClick={pick(onMask)}>
+              <span className="model-name">Mask a secret…</span>
+              <span className="model-note">Models are sent a placeholder in its place</span>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -605,7 +613,25 @@ export default function AgentView({
   // The suggestions under a slash: which is picked, and the draft Esc put them away for.
   const [pick, setPick] = useState(0);
   const [unsuggested, setUnsuggested] = useState(null);
-  const suggestions = useMemo(() => (draft === unsuggested ? NO_COMMANDS : commandsFor(draft, commands)), [draft, unsuggested, commands]);
+  // A # starting a word before the caret offers the masked secrets, to put a
+  // placeholder in the message for the model to use the secret by.
+  const [caret, setCaret] = useState(0);
+  useEffect(() => {
+    const track = () => document.activeElement === inputRef.current && setCaret(inputRef.current.selectionStart);
+    track();
+    document.addEventListener("selectionchange", track);
+    return () => document.removeEventListener("selectionchange", track);
+  }, [draft]);
+  const secretList = useSecrets();
+  const hash = useMemo(() => /(?:^|\s)#([A-Za-z0-9_]*)$/.exec(draft.slice(0, caret)), [draft, caret]);
+  const suggestions = useMemo(() => {
+    if (draft === unsuggested) return NO_COMMANDS;
+    const slashed = commandsFor(draft, commands);
+    if (slashed.length || !hash) return slashed;
+    const q = hash[1].toUpperCase();
+    const hits = [...secretList.filter((s) => s.name.startsWith(q)), ...secretList.filter((s) => !s.name.startsWith(q) && s.name.includes(q))];
+    return [...hits.map((s) => ({ name: s.name, secret: s })), { name: "#new", newSecret: true }];
+  }, [draft, unsuggested, commands, hash, secretList]);
   useEffect(() => setPick(0), [draft]);
   // Pictures to go with the next message, by session like the draft: { key, mediaType, data }.
   const [imagesBy, setImagesBy] = useState({});
@@ -633,6 +659,8 @@ export default function AgentView({
   const [undoing, setUndoing] = useState(null); // { uuid, until }
   const [error, setError] = useState("");
   const [rewinding, setRewinding] = useState(null); // { prompt } or {} to pick one
+  const [masking, setMasking] = useState(null); // { picked }: a secret being masked
+  const [loose, setLoose] = useState(null); // { found, words }: a message held over what looks like a secret
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
   const paneRef = useRef(null);
@@ -1054,7 +1082,7 @@ export default function AgentView({
   // one made for it.
   // words are sent in place of the box's, and go back in it if it fails: a
   // prompt picked, or a question asked from the code.
-  const send = async (words) => {
+  const send = async (words, checked = false) => {
     const typed = typeof words === "string" ? words : draft;
     if (lost) return; // the note over the box says why; the draft stays
     sentAt.current = Date.now();
@@ -1067,7 +1095,12 @@ export default function AgentView({
       onStart();
       return;
     }
-    const text = command ? command.text : composeMessage(typed, attached, threads);
+    // What looks like a secret, and isn't masked, is asked about first.
+    if (!command && !checked && typed.length >= 20 && userSettings.askLooseSecrets !== false) {
+      const { found, names } = await api.secretScan(typed).catch(() => ({ found: [] }));
+      if (found.length) return setLoose({ found, names, words });
+    }
+    const text = command ? command.text : composeMessage(hashesAsSecrets(typed), attached, threads);
     const pictures = command ? NO_IMAGES : images;
     if ((!text && !pictures.length) || readOnly) return;
     setError("");
@@ -1661,7 +1694,14 @@ export default function AgentView({
     menuRef.current?.children[pick]?.scrollIntoView({ block: "nearest" });
   }, [pick]);
   const complete = (c) => {
-    setDraft(`/${c.name} `);
+    if (c.secret || c.newSecret) {
+      const start = caret - hash[0].length + (hash[0].startsWith("#") ? 0 : 1);
+      const put = c.secret ? `#${c.name} ` : "";
+      setDraft(draft.slice(0, start) + put + draft.slice(caret));
+      setCaret(start + put.length);
+      requestAnimationFrame(() => inputRef.current?.setSelectionRange(start + put.length, start + put.length));
+      if (c.newSecret) setMasking({});
+    } else setDraft(`/${c.name} `);
     inputRef.current?.focus();
   };
   const pasteFiles = (e) => {
@@ -1682,11 +1722,24 @@ export default function AgentView({
           onMouseMove={() => setPick(i)}
           onClick={() => complete(c)}
         >
-          <span className="model-name">
-            /{c.name}
-            {c.argumentHint && <span className="command-args"> {c.argumentHint}</span>}
-          </span>
-          {c.description && <span className="model-note">{c.description}</span>}
+          {c.secret ? (
+            <>
+              <span className="model-name">
+                #{c.name} <span className="secret-chip">{c.secret.preview}</span>
+              </span>
+              <span className="model-note">{c.secret.from ? `From ${c.secret.from}` : "The model is sent a placeholder; commands it runs get the value"}</span>
+            </>
+          ) : c.newSecret ? (
+            <span className="model-name">Mask a new secret…</span>
+          ) : (
+            <>
+              <span className="model-name">
+                /{c.name}
+                {c.argumentHint && <span className="command-args"> {c.argumentHint}</span>}
+              </span>
+              {c.description && <span className="model-note">{c.description}</span>}
+            </>
+          )}
         </button>
       ))}
     </div>
@@ -1820,6 +1873,7 @@ export default function AgentView({
           <AddImages
             onFiles={() => fileRef.current.click()}
             onPaste={() => pasteImages().then((files) => (files.length ? addFiles(files) : setError("There is no image to paste."))).catch((e) => setError(e.message))}
+            onMask={() => setMasking({})}
           />
           <input
             ref={fileRef}
@@ -2026,6 +2080,9 @@ export default function AgentView({
       {sheet?.type === "model" && (
         <ModelSheet
           models={shownChoices}
+          all={choices}
+          hidden={hiddenModels}
+          onHide={hideModel}
           model={offList?.id || asked?.model || ""}
           efforts={onModel?.efforts}
           effort={effort}
@@ -2047,6 +2104,7 @@ export default function AgentView({
       )}
       {sheet?.type === "attach" && (
         <AttachSheet
+          onMask={() => setMasking({})}
           onFiles={addFiles}
           comments={openThreads.length}
           onComments={() => openThreads.forEach((t) => onAttach({ kind: "thread", threadId: t.id }, id))}
@@ -2079,7 +2137,9 @@ export default function AgentView({
     <OpenCall.Provider value={setPeek}>
     <Pictures.Provider value={pictures}>
     <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef}>
-      {!docked && <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} />}
+      {!docked && (
+        <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} onMask={(text) => setMasking({ picked: text })} />
+      )}
       {phone ? (
         peekItem ? (
           <SessionBar
@@ -2363,6 +2423,25 @@ export default function AgentView({
       )}
 
       {phoneSheets}
+      {masking && <MaskSecret picked={masking.picked} onClose={() => setMasking(null)} />}
+      {loose && (
+        <LooseSecrets
+          note="Your message isn't sent yet."
+          items={looseItems(loose.found, loose.names)}
+          onMask={async (names) => {
+            for (const [i, v] of loose.found.entries()) await api.secretAdd(names[i], v);
+            await reloadSecrets();
+            setLoose(null);
+            send(loose.words, true);
+          }}
+          onAllow={async () => {
+            await api.secretAllow(loose.found);
+            setLoose(null);
+            send(loose.words, true);
+          }}
+          onClose={() => setLoose(null)}
+        />
+      )}
       {rewinding && (
         <RewindPicker
           prompts={rewindable}
@@ -2452,7 +2531,7 @@ const copiesAll = (text) => (el) => el && wholeOf.set(el, text);
 // here (onReply, when this session can be written to) or in a new session's
 // message box. A page's quote goes with the page, for the agent to know where it
 // is from. It waits for the selection to be done, not each change.
-function SelectionAsk({ within, active, onReply, onAsk }) {
+function SelectionAsk({ within, active, onReply, onAsk, onMask }) {
   const [at, setAt] = useState(null); // { top, left, text, code, file, doc }
   const bar = useRef(null);
   const shown = useRef(false);
@@ -2580,10 +2659,17 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
         <IconNewSession size={13} />
         <span>New session</span>
       </button>
+      {onMask && maskable(at.text) && (
+        <button className="attach-btn" onClick={() => take(onMask)} title="Mask it as a secret: models are sent a placeholder in its place">
+          <IconLock size={13} />
+          <span>Mask</span>
+        </button>
+      )}
     </div>,
     document.body,
   );
 }
+
 
 const WORD = /[\p{L}\p{N}_]/u;
 
@@ -2953,7 +3039,7 @@ function Prompt({ item, session, pictures, pending, queued, hint, canRewind, onR
             (item.result.text ? <Lines className="agent-result" text={item.result.text} /> : <div className="agent-prompt-foot">No output</div>)}
         </>
       ) : (
-        text && <div className="agent-prompt-text">{text}</div>
+        text && <div className="agent-prompt-text">{secretsInText(text)}</div>
       )}
       <Refs refs={refs} raw={item.kind === "prompt" && CONTEXT.test(item.text) && item.text} onOpenFile={onOpenFile} />
       {(queued || hint || via || item.answer || onUndo) && (
@@ -3060,7 +3146,8 @@ function Sent({ entry, onOpenFile }) {
 }
 
 // Kept as written, line breaks and all, less the blank lines around it.
-const Thinking = ({ text }) => <div className="agent-thinking">{text.trim()}</div>;
+// A Codex model's reasoning comes as Markdown summaries, each headed in bold.
+const Thinking = ({ text }) => <Markdown md={md} text={text.trim()} className="markdown agent-thinking" />;
 
 // How long Shift+Tab waits for another press before the mode it is on is sent.
 const MODE_SETTLE_MS = 1000;
@@ -3345,7 +3432,7 @@ function ToolRow({ item, session, root, busy, running, onOpenFile }) {
           <span className="agent-tool-name">{seen ? "Viewed" : name || item.tool}</span>
           <span className={cx("agent-tool-what", mono && "mono")}>
             {LRM}
-            {what}
+            {secretsInText(what)}
           </span>
           {sum && <span className="agent-tool-sum">{sum}</span>}
           {command && state === "running" && item.at && <Elapsed from={item.at} className="agent-tool-sum" />}
@@ -4262,8 +4349,8 @@ function ModelPicker({ label, models, all, hidden, onHide, model, efforts, effor
         <IconChevronDown size={10} />
       </button>
       {open && editing && (
-        <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          <ModelListEditor models={all} hidden={hidden} onHide={onHide} onAdd={onAdd} onDrop={onDrop} />
+        <div className={cx("model-list up model-editor-menu", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
+          <ModelListEditor models={all} hidden={hidden} onHide={onHide} onAdd={onAdd} onDrop={onDrop} onBack={() => setEditing(false)} />
         </div>
       )}
       {open && !editing && (
@@ -4326,43 +4413,65 @@ function ModelPicker({ label, models, all, hidden, onHide, model, efforts, effor
   );
 }
 
-// ModelListEditor is which models the picker offers: each of the list's ticked
-// on or off, one added by the name /model takes, and an added one taken off.
-function ModelListEditor({ models, hidden, onHide, onAdd, onDrop }) {
+// ModelListEditor is which models the picker offers, by where each comes
+// from: each switched on or off, one added by the name /model takes, and an
+// added one taken off again.
+function ModelListEditor({ models, hidden, onHide, onAdd, onDrop, onBack }) {
   const [adding, setAdding] = useState("");
+  const shown = models.filter((m) => !hidden.includes(m.id)).length;
   return (
-    <div className="unasked model-editor">
-      <span className="unasked-title">Models on the list</span>
-      {models.map((c) => (
-        <div key={c.id} className="model-added">
-          <label className="model-edit-row">
-            <input type="checkbox" checked={!hidden.includes(c.id)} onChange={(e) => onHide(c.id, !e.target.checked)} />
-            <span className="model-name">
-              {c.label}
-              {c.tag && <span className="model-tag">{c.tag}</span>}
-            </span>
-          </label>
-          {c.added && (
-            <button className="model-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
-              <IconX size={10} />
-            </button>
-          )}
-        </div>
-      ))}
-      <input
-        className="model-add"
-        value={adding}
-        placeholder="Add a model, by the name /model takes"
-        spellCheck={false}
-        onChange={(e) => setAdding(e.target.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key !== "Enter" || !adding.trim()) return;
-          onAdd(adding.trim());
-          setAdding("");
-        }}
-      />
-      <span className="unasked-note">Unticked, a model leaves the menu but stays in use where a session is on it. The list is the same in every folder.</span>
+    <div className="model-editor">
+      <div className="model-editor-head">
+        <button className="ghost model-editor-back" onClick={onBack} title="Back to the models">
+          <IconBack size={12} />
+        </button>
+        <span className="model-editor-title">Models on the menu</span>
+        <span className="model-editor-count">
+          {shown} of {models.length}
+        </span>
+      </div>
+      <div className="model-editor-list">
+        {modelGroups(models).map(([title, list]) => (
+          <div key={title} className="model-editor-group">
+            <div className="menu-label">{title}</div>
+            {list.map((c) => {
+              const on = !hidden.includes(c.id);
+              return (
+                <div key={c.id} className={cx("model-editor-row", !on && "off")}>
+                  <span className="model-editor-text" onClick={() => onHide(c.id, on)}>
+                    <span className="model-name">
+                      {c.label}
+                      {c.tag && <span className="model-tag">{c.tag}</span>}
+                    </span>
+                    {c.description && <span className="model-note">{c.description}</span>}
+                  </span>
+                  {c.added && (
+                    <button className="ghost model-editor-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
+                      <IconTrash size={12} />
+                    </button>
+                  )}
+                  <Switch on={on} label={c.label} onChange={(show) => onHide(c.id, !show)} />
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <label className="model-editor-add">
+        <IconPlus size={12} />
+        <input
+          value={adding}
+          placeholder="Add a model, by the name /model takes"
+          spellCheck={false}
+          onChange={(e) => setAdding(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key !== "Enter" || !adding.trim()) return;
+            onAdd(adding.trim());
+            setAdding("");
+          }}
+        />
+      </label>
     </div>
   );
 }
@@ -4545,7 +4654,7 @@ export function SessionList({
             <IconX size={11} />
           </button>
         </div>
-        {(req || s.last) && <div className="session-last">{req ? `Wants to ${req.headline}` : plainText(s.last)}</div>}
+        {(req || s.last) && <div className="session-last">{req ? `Wants to ${req.headline}` : secretsInText(plainText(s.last))}</div>}
         <div className="session-meta">
           {req ? (
             <span className="session-asking">waiting on you</span>
@@ -4609,7 +4718,7 @@ export function SessionList({
         {s.last && (
           <div className="session-last">
             {s.lastBy === "you" && <span className="session-you">You: </span>}
-            {plainText(s.last)}
+            {secretsInText(plainText(s.last))}
           </div>
         )}
         <div className="session-meta">

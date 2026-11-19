@@ -2,8 +2,11 @@ package gateway
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type events []event
@@ -269,6 +272,92 @@ func TestClassify(t *testing.T) {
 	}
 	if !strings.HasPrefix(classify(0, "context_length_exceeded", "x").message, "prompt is too long") {
 		t.Error("an overflow is worded for Claude Code to compact")
+	}
+}
+
+func TestCodexStore(t *testing.T) {
+	home := t.TempDir()
+	os.WriteFile(filepath.Join(home, "config.toml"), []byte("model = \"x\"\ncli_auth_credentials_store = \"keyring\"\n\n[features]\nsecret_auth_storage = true\n[other]\ncli_auth_credentials_store = \"file\"\n"), 0o600)
+	if s := readCodexStore(home); s.mode != "keyring" || !s.encrypted {
+		t.Errorf("store %+v", s)
+	}
+	c := &codexUpstream{home: home}
+	if _, err := c.loginBytes(); err == nil || !strings.Contains(err.Error(), "encrypted") {
+		t.Errorf("an encrypted store: %v", err)
+	}
+	os.WriteFile(filepath.Join(home, "config.toml"), []byte(""), 0o600)
+	if _, err := c.loginBytes(); err != errNotSignedIn {
+		t.Errorf("no auth.json: %v", err)
+	}
+}
+
+func TestEnvFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".env.local"), []byte("# keys\nexport API_KEY=\"sk-live-0123456789\"\nPORT=3000\nDEBUG=true\nDB_URL=postgres://u:pw@db/app # main\nSHARED=saved-value-1234\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, ".env.example"), []byte("API_KEY=put-your-key-here\n"), 0o600)
+	g := &Gateway{}
+	saved := map[string]string{"MINE": "saved-value-1234"}
+	g.saved.Store(&saved)
+	Watch(func() []string { return []string{dir} }, func() bool { return true }, nil)
+	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
+	g.refreshEnv()
+	got := map[string]string{}
+	for name, v := range g.mask.byName {
+		got[name] = v
+	}
+	want := map[string]string{"MINE": "saved-value-1234", "API_KEY": "sk-live-0123456789", "DB_URL": "postgres://u:pw@db/app"}
+	if len(got) != len(want) {
+		t.Fatalf("masked %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	if from := g.envFromOf("API_KEY"); from != filepath.Join(filepath.Base(dir), ".env.local") {
+		t.Errorf("from %q", from)
+	}
+}
+
+func TestUnmasked(t *testing.T) {
+	g := &Gateway{}
+	saved := map[string]string{"KNOWN": "sk-known-0123456789abcdefghij"}
+	g.saved.Store(&saved)
+	g.remask()
+	text := "deploy with sk-live-9f8e7d6c5b4a39281706aBcD and ghp_abcdefghijklmnopqrstuvwxyz0123456789 " +
+		"but not sk-known-0123456789abcdefghij, commit 9c9bb1b0a1f2e3d4c5b6a7980f1e2d3c4b5a6978, " +
+		"id 3f2b8c1e-4a5d-4e6f-9a8b-7c6d5e4f3a2b, path /home/user/projects/some/deep/folder/file.go, " +
+		"or the word internationalizationsandlocalizations, but yes x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"
+	got := g.Unmasked(text)
+	want := []string{"sk-live-9f8e7d6c5b4a39281706aBcD", "ghp_abcdefghijklmnopqrstuvwxyz0123456789", "x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("found %q\nwant %q", got, want)
+	}
+}
+
+func TestHold(t *testing.T) {
+	dir := t.TempDir()
+	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
+	Watch(func() []string { return nil }, func() bool { return false }, func() bool { return true })
+	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","content":"TOKEN=x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"},{"type":"image","source":{"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"}}]}]}`)
+	done := make(chan struct{})
+	go func() { g.hold(t.Context(), body, "s"); close(done) }()
+	var held []Held
+	for i := 0; i < 100 && len(held) == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+		held = g.HeldNow()
+	}
+	if len(held) != 1 || len(held[0].Found) != 1 || held[0].Found[0].Preview != "x9Kq••••1QeA" || held[0].Found[0].Name != "TOKEN" {
+		t.Fatalf("held %+v", held)
+	}
+	if err := g.Answer(held[0].ID, []string{""}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	// Let go once, it goes from then on without asking.
+	if found := g.Unmasked(sentText(body)); len(found) != 0 {
+		t.Errorf("asked again about %v", found)
 	}
 }
 

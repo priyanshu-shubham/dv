@@ -115,6 +115,7 @@ type proc struct {
 	// as one sent while Claude works may only be taken up at the second.
 	modelCmd int
 	apiErr      string // the API error Claude Code last said, which its transcript holds
+	localCheck  bool   // started to check auto mode's actions itself (checksLocally)
 
 	wmu sync.Mutex // one write to stdin at a time
 }
@@ -196,7 +197,10 @@ func (p *proc) startLocked(name string) error {
 	// a session driven this way, and rewinding the code has nothing to go back
 	// to. The second has it say when a turn is over.
 	cmd.Env = append(os.Environ(), "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1")
-	cmd.Env = append(cmd.Env, gateway.Env()...)
+	cmd.Env = append(cmd.Env, gateway.Env(p.model)...)
+	if p.localCheck = checksLocally(p.model); p.localCheck {
+		cmd.Env = append(cmd.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=0")
+	}
 	ownGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -267,6 +271,10 @@ func (p *proc) turnOver() {
 		p.picked(model, effort)
 	}
 	p.ended()
+	// A /model may have moved it across, which the page's picks are told of in Configure.
+	if model != "" {
+		p.restartForCheck(model)
+	}
 }
 
 // refresh asks Claude Code how full the context is and what effort it runs at,

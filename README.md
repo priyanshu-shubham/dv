@@ -286,10 +286,17 @@ you don't use.
 An action can also run its prompt with the Codex CLI itself (`codex exec`), in
 a sandbox the action picks; its output shows under Actions.
 
-**Masked secrets**, in Settings › Agent, are sealed on this computer. Wherever
-one turns up in what a session sends - a file read, a command's output, your
-message - the model is sent `[[dv-secret:NAME]]` in its place, and the real
-value is put back in what it writes, so a command it runs still works.
+**Masked secrets** are sealed on this computer. Wherever one turns up in what a
+session sends - a file read, a command's output, your message - the model is
+sent `[[dv-secret:NAME]]` in its place, and the real value is put back in what
+it writes, so a command it runs still works. The page shows each as a chip with
+a glimpse of the value; hover one to see it, copy it or change it. Add one from
+**+** in the message box, **Mask** on selected text, or Settings › Agent, and
+use one in a message with `#NAME`. The values in an open folder's `.env` files
+are masked as they stand. Text that looks like a secret - a key's shape, a long
+random token - and isn't masked holds the request while dv asks whether to mask
+it or send it as is; each is asked about once, and one left unanswered for five
+minutes is masked. Both are on by default, in Settings › Agent.
 
 ## License
 

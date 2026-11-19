@@ -889,6 +889,20 @@ html.phone ::-webkit-scrollbar {
   padding: 8px 0 8px 24px;
 }
 
+/* The model sheet's list editor: each model with the desktop's switch. */
+.p-added > .p-model-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.p-model-edit .switch {
+  margin-left: 12px;
+}
+
+.p-model-edit.off .p-row-title {
+  color: var(--fg-3);
+}
+
 /* The sheet already says what the box is for. */
 .p-unasked-sheet .unasked {
   width: auto;

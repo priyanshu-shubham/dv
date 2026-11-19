@@ -148,10 +148,7 @@ func (c *codexUpstream) readAuth() (token, account string, exp time.Time, err er
 	// Codex rewrites the file in place as it refreshes, so a read in the
 	// middle finds it cut short: that is read again, not taken as signed out.
 	for try := 0; ; try++ {
-		b, err := os.ReadFile(filepath.Join(c.home, "auth.json"))
-		if errors.Is(err, os.ErrNotExist) {
-			return "", "", exp, errNotSignedIn
-		}
+		b, err := c.loginBytes()
 		if err != nil {
 			return "", "", exp, err
 		}

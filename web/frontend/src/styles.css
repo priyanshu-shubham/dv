@@ -6413,23 +6413,260 @@ body.resizing * {
   font: var(--fs-xs) var(--font-mono);
 }
 
-/* The picker's list editor, in the menu in place of its list. */
-.model-editor {
-  gap: 2px;
+/* A masked secret, shown as a glimpse of it: hovered, it offers the value. */
+.secret-chip {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--fg-2);
+  font: 0.92em / 1.35 var(--font-mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: default;
 }
 
-.model-edit-row {
+.secret-chip:hover,
+.secret-chip:focus-visible {
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--fg-3);
+  outline: none;
+}
+
+.secret-chip.shown {
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.secret-from {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+}
+
+.model-list.secret-hover {
+  position: fixed;
+  right: auto;
+  z-index: 120;
+  width: 240px;
+}
+
+.secret-hover .menu-label {
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.secret-hover-note {
+  padding: 4px 8px 6px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.modal.mask-secret {
+  width: min(440px, 100%);
+}
+
+.mask-secret-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 20px 18px;
+}
+
+.mask-secret-body input {
+  width: 100%;
+}
+
+.mask-secret-body input:not([type="password"]) {
+  font-family: var(--font-mono);
+}
+
+/* What the page and the model are shown of the secret being masked. */
+.mask-secret-seen {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  align-items: center;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  background: var(--bg-active);
+  font-size: var(--fs-xs);
+}
+
+.mask-secret-seen dt {
+  color: var(--fg-3);
+}
+
+.mask-secret-seen dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mask-secret-seen code {
+  color: var(--fg-2);
+}
+
+/* The picker's list editor, in the menu in place of its list: a head, the
+   models by where they come from, each with a switch, and a field to add one. */
+.model-list.up.model-editor-menu {
+  display: flex;
+  width: 340px;
+  max-height: min(560px, 70vh);
+  overflow: hidden;
+  padding: 0;
+}
+
+.model-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+.model-editor-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 24px 4px 2px;
+  gap: 6px;
+  padding: 8px 12px 6px 6px;
+}
+
+.model-editor-back {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
+.model-editor-title {
+  flex: 1;
+  color: var(--fg);
   font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.model-editor-count {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-editor-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 4px 4px;
+}
+
+.model-editor-group + .model-editor-group {
+  margin-top: 6px;
+}
+
+.model-editor-group .menu-label {
+  padding: 6px 8px 4px;
+}
+
+.model-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r-lg);
+}
+
+.model-editor-row:hover {
+  background: var(--bg-hover);
+}
+
+.model-editor-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
   cursor: pointer;
 }
 
-.model-editor .model-add {
-  width: 100%;
-  margin: 6px 0 2px;
+.model-editor-text .model-name {
+  font-size: var(--fs-sm);
+}
+
+.model-editor-text .model-note {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-editor-row.off .model-name {
+  color: var(--fg-3);
+}
+
+.model-editor-drop {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  justify-content: center;
+  color: var(--fg-3);
+  opacity: 0;
+}
+
+.model-editor-row:hover .model-editor-drop,
+.model-editor-drop:focus-visible {
+  opacity: 1;
+}
+
+.model-editor-drop:hover {
+  color: var(--fg);
+}
+
+/* Not the menu's own full-width rows. */
+.model-list .model-editor .switch {
+  display: block;
+  width: 34px;
+  padding: 0;
+  margin-left: 0;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+}
+
+.model-list .model-editor .switch.on {
+  background: var(--accent-fill);
+}
+
+.model-list .model-editor-back,
+.model-list .model-editor-drop {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  width: 24px;
+  padding: 0;
+}
+
+.model-editor-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 4px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border-soft, var(--border));
+  color: var(--fg-3);
+}
+
+.model-editor-add input {
+  flex: 1;
+  height: 36px;
+  padding: 0;
+  background: none;
+  font: var(--fs-xs) var(--font-mono);
+}
+
+.model-editor-add input:focus {
+  box-shadow: none;
 }
 
 /* Working: a thinking orb (thinking-orbs), whose motion is the kind of work. */
@@ -7531,7 +7768,19 @@ button.ghost.agent-context {
   border-left: 1px solid var(--border);
   color: var(--fg-3);
   font-size: var(--fs-sm);
-  white-space: pre-wrap;
+}
+
+.markdown.agent-thinking > :first-child {
+  margin-top: 0;
+}
+
+.markdown.agent-thinking > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown.agent-thinking strong {
+  color: var(--fg-2);
+  font-weight: 500;
 }
 
 .agent-note {

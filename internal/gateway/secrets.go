@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -11,10 +12,43 @@ import (
 	"dv/internal/secret"
 )
 
-// SecretInfo is what the page is shown of a secret: never its value.
+// SecretInfo is what the page is shown of a secret: never its value, only a
+// glimpse of it to tell it by.
 type SecretInfo struct {
-	Name string `json:"name"`
-	Hint string `json:"hint"`
+	Name    string `json:"name"`
+	Preview string `json:"preview"`
+	From    string `json:"from,omitempty"` // the .env file it was read from; saved by the user if none
+}
+
+// Redact puts each secret's placeholder in place of its value in b, as what
+// is sent to a model has it, for the page to show the secret as a chip.
+func (g *Gateway) Redact(b []byte) []byte {
+	g.refreshEnv()
+	return g.mask.mask(b)
+}
+
+// RedactText is Redact for words that go out of the page: a notice, a chat
+// app's message.
+func (g *Gateway) RedactText(s string) string { return string(g.Redact([]byte(s))) }
+
+// SecretValue is a secret's value, for the page to show where asked.
+func (g *Gateway) SecretValue(name string) (string, bool) {
+	g.mask.mu.RLock()
+	defer g.mask.mu.RUnlock()
+	v, ok := g.mask.byName[name]
+	return v, ok
+}
+
+// preview is a glimpse of a secret: its first few characters and its last,
+// where it is long enough to spare them.
+func preview(v string) string {
+	switch {
+	case len(v) >= 20:
+		return v[:4] + "••••" + v[len(v)-4:]
+	case len(v) >= 12:
+		return v[:2] + "••••" + v[len(v)-2:]
+	}
+	return "••••••"
 }
 
 type secretsFile struct {
@@ -24,7 +58,6 @@ type secretsFile struct {
 type sealedSecret struct {
 	Name   string `json:"name"`
 	Sealed string `json:"sealed"`
-	Hint   string `json:"hint"`
 }
 
 func sealedAs(name string) string { return "dv masked secret " + name }
@@ -60,20 +93,36 @@ func (g *Gateway) load() error {
 			values[s.Name] = v
 		}
 	}
-	g.mask.set(values)
+	g.saved.Store(&values)
+	g.remask()
 	return nil
 }
 
-// Secrets are the names of those masked, and a hint of each.
+// Secrets are the names of those masked, and a glimpse of each: the user's,
+// then those read from .env files.
 func (g *Gateway) Secrets() ([]SecretInfo, error) {
+	g.refreshEnv()
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	f, err := g.read()
+	g.mu.Unlock()
 	out := []SecretInfo{}
+	saved := map[string]bool{}
 	for _, s := range f.Secrets {
-		out = append(out, SecretInfo{s.Name, s.Hint})
+		v, _ := g.SecretValue(s.Name)
+		out = append(out, SecretInfo{Name: s.Name, Preview: preview(v)})
+		saved[s.Name] = true
 	}
-	return out, err
+	g.mask.mu.RLock()
+	masked := maps.Clone(g.mask.byName)
+	g.mask.mu.RUnlock()
+	var env []SecretInfo
+	for name, v := range masked {
+		if !saved[name] {
+			env = append(env, SecretInfo{Name: name, Preview: preview(v), From: g.envFromOf(name)})
+		}
+	}
+	slices.SortFunc(env, func(a, b SecretInfo) int { return strings.Compare(a.From+a.Name, b.From+b.Name) })
+	return append(out, env...), err
 }
 
 // SetSecret masks value as name from the next request on, replacing one of
@@ -101,7 +150,7 @@ func (g *Gateway) SetSecret(name, value string) error {
 		return err
 	}
 	f.Secrets = slices.DeleteFunc(f.Secrets, func(s sealedSecret) bool { return s.Name == name })
-	f.Secrets = append(f.Secrets, sealedSecret{name, sealed, hint(value)})
+	f.Secrets = append(f.Secrets, sealedSecret{name, sealed})
 	return g.write(f)
 }
 
@@ -125,13 +174,4 @@ func (g *Gateway) write(f secretsFile) error {
 		return err
 	}
 	return g.load()
-}
-
-// hint shows the end of a long secret, for telling two apart; a short one's
-// end would give away too much of it.
-func hint(v string) string {
-	if len(v) < 16 {
-		return fmt.Sprintf("%d characters", len(v))
-	}
-	return "…" + v[len(v)-4:]
 }

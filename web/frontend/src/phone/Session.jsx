@@ -3,7 +3,7 @@
 // conversation. AgentView keeps the state and does the work; these draw it.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cx } from "../util.js";
+import { cx, modelGroups } from "../util.js";
 import { say } from "../Notices.jsx";
 import { Pad } from "../Notes.jsx";
 import { Icon } from "./icons.jsx";
@@ -256,8 +256,40 @@ export function Composer({
 
 // ModelSheet picks the model and how hard it thinks. A model can be added by
 // the name /model takes.
-export function ModelSheet({ models, model, efforts, effort, onPick, onAdd, onDrop, onClose }) {
+export function ModelSheet({ models, all, hidden, onHide, model, efforts, effort, onPick, onAdd, onDrop, onClose }) {
   const [adding, setAdding] = useState(null); // the name being typed; null shows the row that asks for one
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <Sheet title="Models on the menu" onClose={onClose}>
+        {modelGroups(all).map(([title, list]) => (
+          <div key={title}>
+            <div className="p-sub-label">{title}</div>
+            {list.map((m) => {
+              const on = !hidden.includes(m.id);
+              return (
+                <div key={m.id} className="p-added">
+                  <Row
+                    title={m.label}
+                    sub={m.description}
+                    className={cx("p-model-edit", !on && "off")}
+                    onClick={() => onHide(m.id, on)}
+                    trail={<span className={cx("switch", on && "on")} role="switch" aria-checked={on} />}
+                  />
+                  {m.added && (
+                    <button className="p-icon small" onClick={() => onDrop(m.id)} aria-label={`Take ${m.label} off the list`}>
+                      <Icon name="trash" size={20} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <Row className="p-add-row" icon="back" title="Back to the models" onClick={() => setEditing(false)} />
+      </Sheet>
+    );
+  }
   return (
     <Sheet title="Model" onClose={onClose}>
 
@@ -288,7 +320,10 @@ export function ModelSheet({ models, model, efforts, effort, onPick, onAdd, onDr
         );
       })}
       {adding === null ? (
-        <Row className="p-add-row" icon="plus" title="Add a model" onClick={() => setAdding("")} />
+        <>
+          <Row className="p-add-row" icon="plus" title="Add a model" onClick={() => setAdding("")} />
+          {onHide && <Row className="p-add-row" icon="settings" title="Edit the list" sub="Which models the menu offers" onClick={() => setEditing(true)} />}
+        </>
       ) : (
         <form
           className="p-inline-form"
@@ -361,7 +396,7 @@ export function ModeSheet({ modes, mode, onPick, gear, onClose }) {
 
 // AttachSheet is +: pictures and files from the phone, the folder's comments,
 // and the agent's own ways in - ! for the shell, /compact.
-export function AttachSheet({ onFiles, comments, onComments, onShell, onCompact, onClose }) {
+export function AttachSheet({ onFiles, comments, onComments, onShell, onCompact, onMask, onClose }) {
   const camera = useRef(null);
   const photos = useRef(null);
   const files = useRef(null);
@@ -393,6 +428,7 @@ export function AttachSheet({ onFiles, comments, onComments, onShell, onCompact,
       {comments > 0 && <Row icon="comment" title={`Comments (${comments})`} sub="Every open comment, with the lines it's on" onClick={() => (onClose(), onComments())} />}
       <Row icon="terminal" title="Run in your shell" sub="Starts the message with !, and the agent is sent what it prints" onClick={() => (onClose(), onShell())} />
       {onCompact && <Row icon="compress" title="Compact" sub="Summarise the conversation so far to free up context" onClick={() => (onClose(), onCompact())} />}
+      {onMask && <Row icon="lock" title="Mask a secret" sub="Models are sent a placeholder in its place" onClick={() => (onClose(), onMask())} />}
     </Sheet>
   );
 }

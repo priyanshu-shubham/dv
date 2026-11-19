@@ -28,6 +28,7 @@ export const IconNewSession = svg(
   { stroke: true },
 );
 export const IconCopy = svg(<><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1" /></>, { stroke: true });
+export const IconLock = svg(<><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></>, { stroke: true });
 export const IconReply = svg(<path d="M6.5 4L3 7.5 6.5 11M3 7.5h6.5A3.5 3.5 0 0 1 13 11v1.5" />, { stroke: true });
 export const IconSettings = svg(<><path d="M2.5 4.5h6.5M13 4.5h.5M2.5 11.5h.5M7 11.5h6.5" /><circle cx="11" cy="4.5" r="2" /><circle cx="5" cy="11.5" r="2" /></>, { stroke: true });
 export const IconTemporary =svg(<circle cx="8" cy="8" r="5.5" strokeDasharray="2.4 2" />, { stroke: true });

@@ -419,8 +419,15 @@ export const api = {
   // telegram: { bot, chat, connect, origin, sending, sender }, {} with no bot
   // set up. Links in its messages go to the page's address as it sets up or tests.
   telegram: () => req("/api/notify/telegram", {}, ""),
-  // secrets: [{ name, hint }], masked in what any session sends a model
+  // secrets: [{ name, preview }], masked in what any session sends a model
   secrets: () => req("/api/secrets", {}, ""),
+  secretValue: (name) => req(`/api/secrets/${encodeURIComponent(name)}/value`, {}, ""),
+  // secretScan: { found }, what in text looks like a secret and isn't masked
+  secretScan: (text) => req("/api/secrets/scan", { method: "POST", body: JSON.stringify({ text }) }, ""),
+  secretAllow: (values) => req("/api/secrets/allow", { method: "POST", body: JSON.stringify({ values }) }, ""),
+  // secretsHeld: [{ id, session, found: [{ preview, name }] }], requests waiting over what looks like a secret
+  secretsHeld: () => req("/api/secrets/held", {}, ""),
+  secretAnswer: (id, names) => req(`/api/secrets/held/${id}`, { method: "POST", body: JSON.stringify({ names }) }, ""),
   secretAdd: (name, value) => req("/api/secrets", { method: "POST", body: JSON.stringify({ name, value }) }, ""),
   secretRemove: (name) => req(`/api/secrets/${encodeURIComponent(name)}`, { method: "DELETE" }, ""),
   telegramSetUp: (token) => req("/api/notify/telegram", { method: "POST", body: JSON.stringify({ token, origin: location.origin }) }, ""),

@@ -5,6 +5,7 @@
 import { createElement, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { drawDiagrams } from "./diagrams.js";
 import { useGrammarsVersion } from "./highlight.js";
+import { secretsInHTML, secretsInText, useSecrets } from "./secrets.js";
 import { copyText } from "./util.js";
 
 let known = { files: new Set(), byBase: new Map(), roots: [], version: 0, cache: new Map() };
@@ -157,9 +158,10 @@ export function linkPaths(md) {
 export function Markdown({ md, text, className, env }) {
   usePathsVersion();
   useGrammarsVersion();
+  useSecrets();
   const ref = useRef(null);
   useLayoutEffect(() => drawDiagrams(ref.current));
-  return createElement("div", { ref, className, onClick: copyCode, dangerouslySetInnerHTML: { __html: md.render(text || "", { ...env }) } });
+  return createElement("div", { ref, className, onClick: copyCode, dangerouslySetInnerHTML: { __html: secretsInHTML(md.render(text || "", { ...env })) } });
 }
 
 // copyCode answers the copy button codeBlocks puts on a code block. The mark
@@ -174,19 +176,22 @@ function copyCode(e) {
   }, () => {});
 }
 
-// linkText is plain text with its paths as links, for a <pre> of output.
+// linkText is plain text with its paths as links and its masked secrets as
+// chips, for a <pre> of output.
 export function linkText(text) {
-  const hits = pathsIn(text);
-  if (!hits.length) return text;
-  const out = [];
-  let at = 0;
-  for (const h of hits) {
-    if (h.start > at) out.push(text.slice(at, h.start));
-    out.push(
-      createElement("a", { key: h.start, href: hrefOf(h), className: "path-link", "data-path": h.path, "data-line": h.line }, text.slice(h.start, h.end)),
-    );
-    at = h.end;
-  }
-  if (at < text.length) out.push(text.slice(at));
-  return out;
+  return secretsInText(text, (part, from = 0) => {
+    const hits = pathsIn(part);
+    if (!hits.length) return part;
+    const out = [];
+    let at = 0;
+    for (const h of hits) {
+      if (h.start > at) out.push(part.slice(at, h.start));
+      out.push(
+        createElement("a", { key: from + h.start, href: hrefOf(h), className: "path-link", "data-path": h.path, "data-line": h.line }, part.slice(h.start, h.end)),
+      );
+      at = h.end;
+    }
+    if (at < part.length) out.push(part.slice(at));
+    return out;
+  });
 }

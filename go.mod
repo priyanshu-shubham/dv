@@ -8,10 +8,13 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.19.2
 	github.com/shirou/gopsutil/v4 v4.26.10
+	github.com/zalando/go-keyring v0.2.8
 )
 
 require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect

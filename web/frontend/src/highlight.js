@@ -8,6 +8,7 @@
 
 import { useSyncExternalStore } from "react";
 import hljs from "highlight.js/lib/common";
+import { secretsAsWords, secretsInHTML, secretWordsInHTML } from "./secrets.js";
 
 // Languages worth having beyond highlight.js's "common" bundle, registered
 // lazily so they cost nothing until a file needs them.
@@ -77,18 +78,19 @@ export function highlightLines(key, lines, lang) {
   if (hit && hit.lines === lines && hit.ready === ready) return hit.html;
 
   let html;
+  const plain = () => lines.map((l) => secretsInHTML(escapeHtml(l)));
   if (!ready || lines.length > MAX_HIGHLIGHT_LINES) {
-    html = lines.map(escapeHtml);
+    html = plain();
   } else {
     try {
-      let value = hljs.highlight(lines.join("\n"), { language: lang, ignoreIllegals: true }).value;
+      let value = hljs.highlight(secretsAsWords(lines.join("\n")), { language: lang, ignoreIllegals: true }).value;
       if (!NO_CALLS.has(lang)) value = markCalls(value);
-      html = splitHighlighted(value);
+      html = splitHighlighted(value).map(secretWordsInHTML);
       // A grammar that swallows newlines would desynchronise every row after
       // it, so fall back rather than render a scrambled file.
-      if (html.length !== lines.length) html = lines.map(escapeHtml);
+      if (html.length !== lines.length) html = plain();
     } catch {
-      html = lines.map(escapeHtml);
+      html = plain();
     }
   }
   cache.set(key, { lines, ready, html });
@@ -120,8 +122,8 @@ export function codeBlocks(md) {
     highlight: (code, lang) => {
       if (!lang || !ensureLanguage(lang, grammarLoaded) || !hljs.getLanguage(lang)) return "";
       try {
-        const r = hljs.highlight(code, { language: lang, ignoreIllegals: true });
-        return NO_CALLS.has(r.language) ? r.value : markCalls(r.value);
+        const r = hljs.highlight(secretsAsWords(code), { language: lang, ignoreIllegals: true });
+        return secretWordsInHTML(NO_CALLS.has(r.language) ? r.value : markCalls(r.value));
       } catch {
         return "";
       }

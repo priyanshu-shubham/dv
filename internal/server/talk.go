@@ -108,7 +108,7 @@ func (t talk) Start(m notify.Message) (string, error) {
 
 func (t talk) Stop(session string) error { return t.s.agent.Interrupt(session) }
 
-func (t talk) Reply(session string) string { return t.s.agent.Reply(session) }
+func (t talk) Reply(session string) string { return redacted(t.s.agent.Reply(session)) }
 
 func (t talk) Setup(session string) notify.Setup {
 	var s notify.Setup

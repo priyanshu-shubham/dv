@@ -891,6 +891,9 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 		}
 		// A model has its own effort, so either change can move it.
 		go p.refresh()
+		if model != nil {
+			p.restartForCheck(*model)
+		}
 	}
 	p.changed()
 	return nil

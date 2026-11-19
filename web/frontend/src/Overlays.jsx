@@ -23,6 +23,8 @@ import { PushSetting } from "./phone/PushSetting.jsx";
 import { pushable } from "./phone/push.js";
 import { SessionBar } from "./phone/Session.jsx";
 import { chime } from "./Notices.jsx";
+import { reloadSecrets, useSecrets } from "./secrets.js";
+import { MaskSecret } from "./Secrets.jsx";
 
 // Modal shell shared by every overlay. Escape retraces the trail of definitions
 // one step; Shift+Escape and a click outside leave it altogether. With nothing
@@ -1211,7 +1213,7 @@ export function SettingsOverlay({
               onPick={(on) => onChange({ addedTemporary: on })}
               choices={OFF_ON}
             />
-            <Secrets />
+            <Secrets settings={settings} onChange={onChange} />
           </>
         )}
         {tab === "terminal" && (
@@ -1605,80 +1607,71 @@ const onThisComputer = (origin) => /^https?:\/\/(localhost|127\.[\d.]+|\[::1\])(
 // Telegram - a trial run - shows nothing.
 // Secrets are swapped for a placeholder in what sessions send a model, and
 // back in what it writes, so a command it runs still has the real value.
-function Secrets() {
-  const [list, setList] = useState(null);
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
+function Secrets({ settings, onChange }) {
+  const list = useSecrets();
+  const [editing, setEditing] = useState(null); // { name } to change, {} to add
   const [said, setSaid] = useState(null);
-  useEffect(() => {
-    api.secrets().then(setList, (e) => setSaid(e.message));
-  }, []);
-  const run = async (p) => {
-    setBusy(true);
-    setSaid(null);
-    try {
-      setList(await p);
-      return true;
-    } catch (e) {
-      setSaid(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const add = async () => {
-    if (await run(api.secretAdd(name.trim(), value))) {
-      setName("");
-      setValue("");
-    }
-  };
-  const ready = name.trim() && value.trim() && !busy;
+  const remove = (name) =>
+    confirm(`Stop masking ${name}, and forget it?`) &&
+    api.secretRemove(name).then(reloadSecrets, (e) => setSaid(e.message));
+  const saved = list.filter((s) => !s.from);
+  const fromEnv = list.filter((s) => s.from);
+  const envOn = settings.maskEnvFiles !== false;
+  const row = (s) => (
+    <div className="settings-row" key={s.name}>
+      <div className="settings-text">
+        <div>{s.name}</div>
+        <div className="settings-note">
+          <span className="secret-chip">{s.preview}</span>
+          {s.from && <span className="secret-from">from {s.from}</span>}
+        </div>
+      </div>
+      {!s.from && (
+        <span className="settings-actions">
+          <button className="btn" onClick={() => setEditing({ name: s.name })}>
+            Change
+          </button>
+          <button className="btn" onClick={() => remove(s.name)}>
+            Remove
+          </button>
+        </span>
+      )}
+    </div>
+  );
   return (
     <>
       <div className="settings-heading">Masked secrets</div>
       <div className="settings-row">
         <div className="settings-text">
-          <div>Add a secret</div>
+          <div>Secrets kept from models</div>
           <div className={cx("settings-note", said && "prompt-error")}>
             {said ||
-              "Kept on this computer, sealed. Wherever it turns up in what a session dv started sends - a file read, a command's output, your message - the model is sent [[dv-secret:NAME]] instead, and what it writes back has the real value again. Sessions started in a terminal aren't covered."}
+              "Wherever one turns up in what a session dv started sends - a file read, a command's output, your message - the model is sent a placeholder instead, and what it writes back has the value again. The page shows it as a chip; hover one to see it. Also from + in the message box, # in a message, or Mask on selected text. Sessions started in a terminal aren't covered."}
           </div>
         </div>
-        <input
-          value={name}
-          placeholder="NAME"
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
-        />
-        <input
-          type="password"
-          value={value}
-          placeholder="Value"
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && ready && add()}
-        />
         <span className="settings-actions">
-          <button className="primary" disabled={!ready} onClick={add}>
+          <button className="primary" onClick={() => setEditing({})}>
             Add
           </button>
         </span>
       </div>
-      {list?.map((s) => (
-        <div className="settings-row" key={s.name}>
-          <div className="settings-text">
-            <div>{s.name}</div>
-            <div className="settings-note">{s.hint}</div>
-          </div>
-          <span className="settings-actions">
-            <button className="btn" disabled={busy} onClick={() => confirm(`Stop masking ${s.name}, and forget it?`) && run(api.secretRemove(s.name))}>
-              Remove
-            </button>
-          </span>
-        </div>
-      ))}
+      {saved.map(row)}
+      <Setting
+        label="Ask before sending what looks like a secret"
+        note="A key's shape, or a long random token, not masked yet - in your message, a file read, a command's output. The session waits for you to mask it or send it as is, and each is asked about once; unanswered for five minutes, it is masked."
+        value={settings.askLooseSecrets !== false}
+        onPick={(on) => onChange({ askLooseSecrets: on ? undefined : false })}
+        choices={OFF_ON}
+      />
+      <Setting
+        label="Mask the values in .env files"
+        note="Each value of 8 or more characters in a .env file at the top of an open folder, as the file stands now. .env.example and the like are left alone."
+        value={envOn}
+        onPick={(on) => (onChange({ maskEnvFiles: on ? undefined : false }), setTimeout(reloadSecrets, 2500))}
+        choices={OFF_ON}
+      />
+      {envOn && fromEnv.map(row)}
+      {editing && <MaskSecret name={editing.name} onClose={() => setEditing(null)} />}
     </>
   );
 }

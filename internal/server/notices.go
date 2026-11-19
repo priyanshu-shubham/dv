@@ -124,10 +124,10 @@ func noticeID() string {
 func (s *Server) doneNotice(a agent.Activity) notify.Notice {
 	n := notify.Notice{
 		ID: noticeID(), Kind: notify.Done, Session: a.ID,
-		Title: "Claude finished", Where: a.Title, Body: a.Last,
+		Title: "Claude finished", Where: redacted(a.Title), Body: redacted(a.Last),
 	}
 	if reply := s.agent.Reply(a.ID); reply != "" {
-		n.Body, n.Format = clip(reply), notify.Markdown
+		n.Body, n.Format = clip(redacted(reply)), notify.Markdown
 	}
 	return n
 }
@@ -138,6 +138,7 @@ func (s *Server) askNotice(r Asked) notify.Notice {
 		Title: "Claude wants to " + r.Headline, Where: r.Title,
 	}
 	n.Body, n.Format = askBody(r.Request)
+	n.Body = redacted(n.Body)
 	n.Body = clip(n.Body)
 	n.Choices, n.Answer = s.choices(r.Request)
 	return n

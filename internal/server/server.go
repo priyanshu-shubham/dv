@@ -373,7 +373,7 @@ func (s *Server) Handler(base string) http.Handler {
 		}
 		WritePage(w, Boot{Base: base, Prefs: s.allPrefs(), PrefsVersion: s.prefsVersion()})
 	})
-	return mux
+	return redactingAgent(mux)
 }
 
 // Restart asks main to stop dv and run it again in place, from the binary now

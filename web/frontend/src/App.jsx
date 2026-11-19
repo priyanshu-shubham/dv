@@ -16,6 +16,7 @@ import AgentView, { attachKey, RESUME } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
+import { HeldSecrets, SecretHover } from "./Secrets.jsx";
 import { pushable, subscribe, usePush } from "./phone/push.js";
 import { AttachTarget } from "./Threads.jsx";
 import { noteText } from "./Notes.jsx";
@@ -2508,6 +2509,8 @@ export default function App() {
 
   const overlays = (
     <>
+      <SecretHover />
+      <HeldSecrets />
       {windowed.length > 0 && (
         <AgentPrompt
           requests={windowed}
