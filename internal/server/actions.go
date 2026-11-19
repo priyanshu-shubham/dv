@@ -23,7 +23,8 @@ type actionRun struct {
 	Prompt  string `json:"prompt"`
 	Session string `json:"session"` // the session to send it to; "" starts one
 	// A new session's.
-	Agent     string `json:"agent"` // "codex" runs Prompt with `codex exec`; "" is Claude Code
+	Agent     string `json:"agent"` // "codex" runs Prompt with the Codex CLI, in a terminal; "" is Claude Code
+	Exec      bool   `json:"exec"`  // Codex's with `codex exec` instead, as a command action runs
 	Model     string `json:"model"`
 	Effort    string `json:"effort"`
 	Mode      string `json:"mode"`
@@ -63,6 +64,15 @@ func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == "codex" && a.Session == "" {
 		if !codexInstalled() {
 			writeErr(w, http.StatusBadRequest, errors.New("Codex is not installed here"))
+			return
+		}
+		if !a.Exec {
+			t, err := s.runCodexTerminal(a)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"terminal": t.ID()})
 			return
 		}
 		a.Command = "codex exec: " + firstLine(a.Prompt)

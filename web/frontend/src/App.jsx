@@ -8,7 +8,7 @@ import FileDiff, { cssId, unshownBody } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, FinishWorktree, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
-import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction, useAskSettings } from "./Actions.jsx";
+import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, isCommand, runAction, useAskSettings } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
 import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
@@ -1582,7 +1582,14 @@ export default function App() {
         );
         return;
       }
-      if (a.kind === "command") {
+      if (a.agent === "codex" && a.where !== "current" && !a.exec) {
+        runAction(a).then(
+          ({ terminal }) => say(`${a.name} started`, "In a new terminal. You are told each time Codex is done.", [{ label: "Open", primary: true, opens: true, run: () => openTerminal(terminal) }]),
+          (e) => say(`Could not run ${a.name}`, e.message),
+        );
+        return;
+      }
+      if (isCommand(a)) {
         runAction(a).then(
           () =>
             say(`${a.name} started`, `You are told how it ends; ${phoneApp ? "⚡" : "Alt+A"} lists it while it runs.`, [

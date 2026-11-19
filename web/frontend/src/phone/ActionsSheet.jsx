@@ -4,7 +4,7 @@
 // desktop's.
 import { useState } from "react";
 import { api } from "../api.js";
-import { actionKey, builtIns, describe, elapsed, pickRecent, ready, useActions, useAgentChoices, useRecentActions, useRunning } from "../Actions.jsx";
+import { actionKey, builtIns, describe, elapsed, isCommand, pickRecent, ready, useActions, useAgentChoices, useRecentActions, useRunning } from "../Actions.jsx";
 import { say } from "../Notices.jsx";
 import { cx } from "../util.js";
 import { Icon } from "./icons.jsx";
@@ -43,8 +43,8 @@ export default function ActionsSheet({ meta, session, extra, onRun, onEdit, onOu
     if (running[a.id]) return;
     if (!ready(a, session)) return say("Open a session first", "This action goes to the session open in the Agent tab.");
     used(a);
-    onRun(a, a.kind === "command");
-    if (a.kind === "command") setTimeout(look, 300);
+    onRun(a, isCommand(a));
+    if (isCommand(a)) setTimeout(look, 300);
   };
   const mineRow = (a) => (
     <Mine
@@ -52,7 +52,7 @@ export default function ActionsSheet({ meta, session, extra, onRun, onEdit, onOu
       a={a}
       sub={describe(a, info)}
       running={running[a.id] && elapsed(running[a.id].started, at)}
-      ran={a.kind === "command" && ran.has(a.id)}
+      ran={ran.has(a.id)}
       unready={!ready(a, session)}
       onRun={() => run(a)}
       onStop={() => api.stopAction(a.id).then(look, () => {})}

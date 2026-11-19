@@ -80,7 +80,7 @@ export function describe(a, info) {
   // No model picked is the default one, which Claude Code's list names under "".
   const model = modelsFor(a, info).find((m) => m.id === (a.model || ""));
   return [
-    a.agent === "codex" ? "Runs with codex exec" : a.temporary ? "New temporary session" : "New session",
+    a.agent === "codex" ? (a.exec ? "Runs with codex exec" : "New terminal") : a.temporary ? "New temporary session" : "New session",
     a.agent === "codex" ? "Codex" : "Claude",
     a.model ? a.modelLabel || model?.label || a.model : model?.label,
     a.effort,
@@ -91,15 +91,20 @@ export function describe(a, info) {
     .join(" · ");
 }
 
+// isCommand is an action the server runs as a command runs, with output to
+// show and a Stop, codex exec's too.
+export const isCommand = (a) => a.kind === "command" || (a.agent === "codex" && a.exec && a.where !== "current");
+
 // runAction sends a to the server, to session when it runs in the current one.
 export function runAction(a, session) {
   if (a.kind === "command") return api.runAction({ id: a.id, name: a.name, kind: "command", command: a.command });
   const current = a.where === "current";
   return api.runAction({
+    id: a.id,
     name: a.name,
     prompt: a.prompt,
     session: current ? session : "",
-    ...(!current && { agent: a.agent, model: a.model, effort: a.effort, mode: a.mode, temporary: a.temporary, close: a.close }),
+    ...(!current && { agent: a.agent, exec: !!a.exec, model: a.model, effort: a.effort, mode: a.mode, temporary: a.temporary, close: a.close }),
   });
 }
 
@@ -211,7 +216,7 @@ export function ActionsPalette({ meta, session, extra = NONE, hub = false, onRun
               <span className="sym">{a.name}</span>
               <span className="dim">{note(a)}</span>
             </button>
-            {a.kind === "command" && ran.has(a.id) && (
+            {ran.has(a.id) && (
               <button className="ghost action-output" onMouseMove={() => setSel(i)} onClick={() => onOutput(a.id)}>
                 Output
               </button>
@@ -554,10 +559,22 @@ function ActionForm({ action, info, onSave, onCancel }) {
           {info?.codex && (
             <Setting
               label="Runs with"
-              note={a.agent === "codex" ? "codex exec, in this folder: its output shows under Actions, and a notice says when it is done." : ""}
               value={a.agent}
               onPick={(agent) => edit({ agent, model: "", effort: "", modelLabel: "", mode: modeFor(agent, a.mode) })}
               choices={[["", "Claude Code"], ["codex", "Codex CLI"]]}
+            />
+          )}
+          {a.agent === "codex" && (
+            <Setting
+              label="Shown in"
+              note={
+                a.exec
+                  ? "codex exec, out of sight: its output shows under Actions, and a notice says when it is done."
+                  : "Codex itself, in a new terminal you can reply in. A notice brings each reply it finishes; it asks no approvals, so the sandbox is what holds it."
+              }
+              value={!!a.exec}
+              onPick={(exec) => edit({ exec })}
+              choices={[[false, "A terminal"], [true, "Actions' output"]]}
             />
           )}
           <div className="settings-row">

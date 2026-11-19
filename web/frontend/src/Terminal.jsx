@@ -286,6 +286,9 @@ function TermPane({ id, xterm, shown, active, theme, focus, copyOnSelect, typeAh
       scrollback: 10000,
       cursorBlink: true,
       theme: paletteOf(theme),
+      // A program taking the mouse (Codex, vim) leaves Shift+drag to select;
+      // on a Mac it is Option+drag, and only with this.
+      macOptionClickForcesSelection: true,
     });
     const fit = new xterm.FitAddon();
     term.loadAddon(fit);

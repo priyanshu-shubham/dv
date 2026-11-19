@@ -23,8 +23,8 @@ func TestQuote(t *testing.T) {
 		{[]string{"-t", "=it's"}, `-t '=it'\''s'`},
 		{[]string{"-S", "/tmp/a b"}, "-S '/tmp/a b'"},
 	} {
-		if got := quote(c.args); got != c.want {
-			t.Errorf("quote(%q) = %s, want %s", c.args, got, c.want)
+		if got := Quote(c.args); got != c.want {
+			t.Errorf("Quote(%q) = %s, want %s", c.args, got, c.want)
 		}
 	}
 }

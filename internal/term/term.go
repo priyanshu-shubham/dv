@@ -144,8 +144,23 @@ func Available() error { return supported }
 // Start opens a terminal with a shell in the folder.
 func (m *Manager) Start() (*Terminal, error) { return m.open(newID(), m.root) }
 
-func (m *Manager) open(id, dir string) (*Terminal, error) {
-	t := &Terminal{id: id, m: m, cols: 80, rows: 24, watchers: map[*Watcher]struct{}{}, epoch: newID()}
+// Run opens a terminal named name and types line into its shell, as the
+// reader would, so the shell is still there once what it runs ends. env is
+// added to the shell's, for line to refer to what would be awkward to quote.
+func (m *Manager) Run(name, line string, env ...string) (*Terminal, error) {
+	t, err := m.open(newID(), m.root, env...)
+	if err != nil {
+		return nil, err
+	}
+	t.Rename(name)
+	go t.typeOnceReady(line)
+	return t, nil
+}
+
+func (m *Manager) open(id, dir string, env ...string) (*Terminal, error) {
+	// DV_TERMINAL lets a program in it tell dv which terminal it is in.
+	env = append(env, "DV_TERMINAL="+id)
+	t := &Terminal{id: id, m: m, cols: 80, rows: 24, watchers: map[*Watcher]struct{}{}, epoch: newID(), env: env}
 	if err := t.start(dir); err != nil {
 		return nil, err
 	}
@@ -257,8 +272,9 @@ func (m *Manager) Redeem(tk, id string) bool {
 // Terminal is one shell in a pseudo-terminal, and once it has exited, what it
 // left on screen, until the reader starts another in its place or closes it.
 type Terminal struct {
-	id string
-	m  *Manager
+	id  string
+	m   *Manager
+	env []string
 
 	mu       sync.Mutex
 	name     string
@@ -376,7 +392,7 @@ func (t *Terminal) start(dir string) error {
 	shell := userShell()
 	cmd := shellCommand(shell)
 	cmd.Dir = dir
-	cmd.Env = shellEnv()
+	cmd.Env = append(shellEnv(), t.env...)
 	t.mu.Lock()
 	size := &pty.Winsize{Cols: uint16(t.cols), Rows: uint16(t.rows)}
 	t.mu.Unlock()

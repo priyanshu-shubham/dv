@@ -132,6 +132,8 @@ func run() error {
 		return note(*dir, flag.Args()[1:], os.Stdin)
 	case "claude":
 		return claude(flag.Args()[1:])
+	case "codex":
+		return codex(flag.Args()[1:])
 	default:
 		return fmt.Errorf("unknown command %q (dv -h lists them)", cmd)
 	}
@@ -526,6 +528,14 @@ func claude(args []string) error {
 		return fmt.Errorf("dv claude hook is for Claude Code to run; dv's hooks are added from its page")
 	}
 	permit.RunHook(os.Stdin, os.Stdout)
+	return nil
+}
+
+func codex(args []string) error {
+	if len(args) != 2 || args[0] != "notify" {
+		return fmt.Errorf("dv codex notify is for Codex to run, in a terminal a Codex action opened")
+	}
+	permit.RunCodexNotify(args[1])
 	return nil
 }
 

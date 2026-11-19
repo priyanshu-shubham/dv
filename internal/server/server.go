@@ -92,6 +92,7 @@ type Server struct {
 	actions   map[string]ranAction   // by session, until its turn is done
 	commands  map[string]*ranCommand // by action, while it runs
 	ran       map[string]*ranCommand // by action, its latest run, for its output
+	threads   map[string]string      // by terminal, the Codex thread its action began
 	closing   bool
 
 	task bool // a hub's one-off task, which has no worktrees
@@ -323,6 +324,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/claude/hook", Guarded(s.handleClaudeHook))
 	mux.HandleFunc("GET /api/claude/requests", Guarded(s.handleClaudeRequests))
 	mux.HandleFunc("POST /api/claude/requests/{id}", Guarded(s.handleClaudeAnswer))
+	mux.HandleFunc("POST /api/codex/notify", Guarded(s.handleCodexNotify))
 	mux.HandleFunc("GET /api/claude/hooks", Guarded(s.handleClaudeHooks))
 	mux.HandleFunc("POST /api/claude/hooks", Guarded(s.handleClaudeSetHooks))
 

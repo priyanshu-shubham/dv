@@ -131,7 +131,7 @@ func (m *Manager) Attach(session string, flags []string) (*Terminal, error) {
 // attachLine is typed into a shell, as the reader would, so detaching leaves
 // them at its prompt; the space keeps it out of most shells' history.
 func attachLine(session string, flags []string) string {
-	return " " + quote(append(append([]string{"tmux"}, flags...), "attach", "-t", "="+session)) + "\r"
+	return " " + Quote(append(append([]string{"tmux"}, flags...), "attach", "-t", "="+session)) + "\r"
 }
 
 // tmuxOf is the tmux client args would make, nil if they are not tmux.
@@ -296,9 +296,9 @@ func (t *Terminal) typeOnceReady(line string) {
 	t.Write([]byte(line))
 }
 
-// quote joins args as a POSIX shell would read them back; fish and zsh too,
+// Quote joins args as a POSIX shell would read them back; fish and zsh too,
 // where a word starting with = is the path of the command named by the rest.
-func quote(args []string) string {
+func Quote(args []string) string {
 	out := make([]string, len(args))
 	for i, a := range args {
 		if a != "" && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:@%+,") == "" {
