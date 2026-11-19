@@ -6489,11 +6489,36 @@ body.resizing * {
   width: min(440px, 100%);
 }
 
+/* However much is asked about, the box scrolls and its buttons stay in sight. */
 .mask-secret-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
   padding: 0 20px 18px;
+  overflow-y: auto;
+}
+
+.mask-secret-body > .held-finding {
+  flex: none;
+}
+
+.mask-secret-foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px 18px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.mask-secret-foot .check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
 }
 
 .mask-secret-body input:not(.tick) {
@@ -6501,7 +6526,6 @@ body.resizing * {
 }
 
 .held-from {
-  margin-top: -6px;
   color: var(--fg-2);
   font-size: var(--fs-sm);
 }
@@ -6514,6 +6538,41 @@ body.resizing * {
   padding: 10px 12px;
   border-radius: var(--r-lg);
   background: var(--bg-active);
+}
+
+.held-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.held-name > span {
+  flex: none;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.held-name > input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+/* In a session's prompt, as the dialog has them. */
+.prompt-secrets {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.prompt-secrets > .check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
 }
 
 .held-where {
@@ -6543,9 +6602,10 @@ body.resizing * {
   white-space: pre;
 }
 
+/* The server keeps the start short, so it stays whole; the end gives way. */
 .held-around.before {
-  flex: 0 1 auto;
-  direction: rtl;
+  flex: none;
+  max-width: 45%;
 }
 
 .held-around.after {
@@ -6558,8 +6618,19 @@ body.resizing * {
   max-width: 100%;
 }
 
+/* Shown, the value keeps to the line: what is around it gives way, and a value
+   longer than the line ends in an ellipsis, in full on hover. */
 .held-line .secret-chip.shown {
   flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.held-line:has(.shown) > .held-around {
+  display: none;
 }
 
 .held-line > .ghost {
@@ -8007,6 +8078,21 @@ button.ghost.agent-context {
   gap: 8px;
   color: var(--fg-3);
   font-size: var(--fs-sm);
+}
+
+/* Waiting on a question about a secret: the line itself asks it again. */
+button.agent-working.held {
+  padding: 2px 10px 2px 4px;
+  border-radius: var(--r-pill);
+  color: var(--fg-2);
+  text-align: left;
+  text-decoration: underline dotted var(--fg-4);
+  text-underline-offset: 3px;
+}
+
+button.agent-working.held:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 
 /* A tool call is one line - what it did, to what, and what came of it - that

@@ -56,12 +56,36 @@ func (g *Gateway) Unmasked(text string) []string {
 // package-lock.json and the like are full of.
 var digestBefore = regexp.MustCompile(`sha(?:1|256|384|512)-$`)
 
+// fileMagic is how a picture's or a PDF's base64 begins: PNG, JPEG, GIF,
+// WebP, PDF.
+var fileMagic = []string{"iVBORw0KGgo", "/9j/", "R0lGOD", "UklGR", "JVBERi0"}
+
+var plainPart = regexp.MustCompile(`^(?:[A-Za-z]+|[0-9]+)$`)
+
 // random says a token reads as a key, not a word, a path or a hash: letters
 // and digits mixed, and close to as unpredictable as such text gets. A git
 // hash or a checksum is hex, and named as what it is far more often.
 func random(s string) bool {
 	if hexOnly.MatchString(s) || strings.Count(s, "/") > 2 {
 		return false
+	}
+	for _, magic := range fileMagic {
+		if strings.HasPrefix(s, magic) {
+			return false
+		}
+	}
+	// A path or a name made of words and numbers: npm/_logs/2026-11-19T14_29-debug-0.
+	parts := strings.FieldsFunc(s, func(r rune) bool { return r == '/' || r == '_' || r == '-' })
+	if len(parts) >= 4 {
+		plain := 0
+		for _, p := range parts {
+			if plainPart.MatchString(p) {
+				plain++
+			}
+		}
+		if plain*2 > len(parts) {
+			return false
+		}
 	}
 	letters, digits := 0, 0
 	counts := map[rune]int{}

@@ -11,6 +11,7 @@ import (
 // what it is: a file Read gave back, a command the model ran, a message.
 type part struct {
 	where, detail, text string
+	model               bool // the model's own words or calls
 }
 
 var workingDir = regexp.MustCompile(`(?m)Primary working directory: (\S.*)$`)
@@ -29,7 +30,7 @@ func requestParts(body []byte) (cwd string, parts []part) {
 		return "", nil
 	}
 	if sys := textOf(req.System); sys != "" {
-		parts = append(parts, part{"Claude Code's system prompt", "", sys})
+		parts = append(parts, part{"Claude Code's system prompt", "", sys, false})
 		if m := workingDir.FindStringSubmatch(sys); m != nil {
 			cwd = strings.TrimSpace(m[1])
 		}
@@ -38,7 +39,7 @@ func requestParts(body []byte) (cwd string, parts []part) {
 	for _, m := range req.Messages {
 		var s string
 		if json.Unmarshal(m.Content, &s) == nil {
-			parts = append(parts, part{said(m.Role), "", s})
+			parts = append(parts, part{said(m.Role), "", s, m.Role == "assistant"})
 			continue
 		}
 		var blocks []struct {
@@ -54,9 +55,9 @@ func requestParts(body []byte) (cwd string, parts []part) {
 		for _, b := range blocks {
 			switch b.Type {
 			case "text":
-				parts = append(parts, part{said(m.Role), "", b.Text})
+				parts = append(parts, part{said(m.Role), "", b.Text, m.Role == "assistant"})
 			case "tool_use":
-				call := part{"The model's " + b.Name + " call", inputGist(b.Input), string(b.Input)}
+				call := part{"The model's " + b.Name + " call", inputGist(b.Input), string(b.Input), true}
 				calls[b.ID] = call
 				parts = append(parts, call)
 			case "tool_result":
@@ -66,7 +67,7 @@ func requestParts(body []byte) (cwd string, parts []part) {
 				if !ok {
 					name = "A tool"
 				}
-				parts = append(parts, part{"What " + name + " gave back", call.detail, textOf(b.Content)})
+				parts = append(parts, part{"What " + name + " gave back", call.detail, textOf(b.Content), false})
 			}
 		}
 	}
@@ -123,12 +124,13 @@ func locate(parts []part, v string) (where, detail, before, after string) {
 		if at < 0 {
 			continue
 		}
-		start := strings.LastIndexByte(p.text[:at], '\n') + 1
+		// From the last tab: Read numbers each line before one.
+		start := strings.LastIndexAny(p.text[:at], "\n\t") + 1
 		end := len(p.text)
 		if n := strings.IndexByte(p.text[at+len(v):], '\n'); n >= 0 {
 			end = at + len(v) + n
 		}
-		return p.where, p.detail, clipRunes(p.text[start:at], 60, true), clipRunes(p.text[at+len(v):end], 60, false)
+		return p.where, p.detail, clipRunes(p.text[start:at], 28, true), clipRunes(p.text[at+len(v):end], 40, false)
 	}
 	return "", "", "", ""
 }

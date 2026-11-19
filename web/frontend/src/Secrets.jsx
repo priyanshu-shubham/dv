@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { IconEye, IconX } from "./icons.jsx";
@@ -10,10 +10,10 @@ import { copyText, cx } from "./util.js";
 // LooseSecrets asks about what looks like a secret and isn't masked, before
 // it goes to a model: items [{ preview, name }], each masked under a name
 // the reader can change (onMask), or all let go as they are (onAllow). A
-// request the gateway holds also says where it comes from (from, and each
-// item's where and line), shows a value on asking (valueOf), and can stop
-// the asking for its session (both answers then get quiet = true).
-export function LooseSecrets({ title, from, note, items, valueOf, onMask, onAllow, onClose }) {
+// request the gateway holds (held, its id) also says where it comes from
+// (from, and each item's where and line), shows a value on asking, and can
+// stop the asking for its session (both answers then get quiet = true).
+export function LooseSecrets({ title, from, note, items, held, onMask, onAllow, onClose }) {
   const [names, setNames] = useState(() => items.map((it) => it.name));
   const [quiet, setQuiet] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -40,10 +40,10 @@ export function LooseSecrets({ title, from, note, items, valueOf, onMask, onAllo
       <div className="mask-secret-body">
         {from && <div className="held-from">{from}</div>}
         <div className="settings-note">
-          {note} Masked, the model is sent a placeholder in its place from now on, and commands it runs still get the value. Sent as is, dv won't ask about it again.
+          {note} Masked, it is saved to your secrets under the name you give it, the model is sent that name in its place from now on, and commands it runs still get the value. Sent as is, dv won't ask about it again.
         </div>
-        {valueOf ? (
-          items.map((it, i) => <HeldFinding key={i} item={it} valueOf={() => valueOf(i)} name={names[i]} onName={rename(i)} />)
+        {held ? (
+          <HeldFindings held={held} found={items} names={names} onNames={setNames} />
         ) : (
           <dl className="mask-secret-seen">
             {items.map((it, i) => (
@@ -58,15 +58,17 @@ export function LooseSecrets({ title, from, note, items, valueOf, onMask, onAllo
             ))}
           </dl>
         )}
+      </div>
+      <div className="mask-secret-foot">
         {error && <div className="settings-note prompt-error">{error}</div>}
-        {valueOf && (
+        {held && (
           <label className="check">
             <input type="checkbox" className="tick" checked={quiet} onChange={(e) => setQuiet(e.target.checked)} />
             Don't ask again in this session
           </label>
         )}
         <div className="action-form-foot">
-          <button className="mini" onClick={onClose}>
+          <button className="mini" onClick={onClose} title={onAllow.later ? "Asks again in a minute; the session waits meanwhile" : undefined}>
             {onAllow.later ? "Later" : "Cancel"}
           </button>
           <button className="btn" disabled={busy} onClick={act(() => onAllow(quiet))}>
@@ -81,11 +83,25 @@ export function LooseSecrets({ title, from, note, items, valueOf, onMask, onAllo
   );
 }
 
+// HeldFindings are what a request the gateway holds (held, its id) would
+// send, each with the name to mask it as.
+export function HeldFindings({ held, found, names, onNames }) {
+  const rename = (i) => (e) => onNames((ns) => ns.map((n, j) => (j === i ? e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") : n)));
+  return found.map((it, i) => (
+    <HeldFinding key={i} item={it} valueOf={async () => (await api.secretHeldValue(held, i)).value} name={names[i]} onName={rename(i)} />
+  ));
+}
+
 // HeldFinding is one thing a held request would send: where in it, the line
 // it is on with the value shown on asking, and the name to mask it as.
 function HeldFinding({ item, valueOf, name, onName }) {
   const [value, setValue] = useState(null);
   const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!shown) return;
+    const t = setTimeout(() => setShown(false), SHOWN_FOR);
+    return () => clearTimeout(t);
+  }, [shown]);
   const toggle = async () => {
     try {
       if (value === null) setValue(await valueOf());
@@ -103,18 +119,20 @@ function HeldFinding({ item, valueOf, name, onName }) {
         </div>
       )}
       <div className="held-line">
-        {/* Cut from its start, which is further from the value. */}
-        <span className="held-around before">
-          <span dir="ltr">{item.before}</span>
+        <span className="held-around before">{item.before}</span>
+        <span className={cx("secret-chip", shown && "shown")} title={shown ? value : undefined}>
+          {shown ? value : item.preview}
         </span>
-        <span className={cx("secret-chip", shown && "shown")}>{shown ? value : item.preview}</span>
         <span className="held-around after">{item.after}</span>
         <span className="spacer" />
         <button className="ghost" onClick={toggle} title={shown ? "Hide the value" : "Show the value"}>
           <IconEye size={13} />
         </button>
       </div>
-      <input value={name} spellCheck={false} onChange={onName} aria-label="Mask it as" />
+      <label className="held-name" title={`Masked, it is kept among your secrets as ${name || "this name"}, the model sees [[dv-secret:${name || "NAME"}]], and #${name || "NAME"} puts it in a message`}>
+        <span>Mask as</span>
+        <input value={name} spellCheck={false} onChange={onName} />
+      </label>
     </div>
   );
 }
@@ -131,15 +149,47 @@ export function looseItems(values, names = []) {
   });
 }
 
+// A value shown is hidden again after this long.
+const SHOWN_FOR = 10e3;
+
+// The requests held over a secret, as last heard, and those put off by when:
+// the session waits on one, so it comes back in a minute. The page's alone,
+// so a session can say it waits and offer the question again.
+let heldState = { held: [], later: new Map() };
+const heldListeners = new Set();
+function setHeldState(change) {
+  heldState = { ...heldState, ...change(heldState) };
+  heldListeners.forEach((f) => f());
+}
+const putOff = (later, id) => Date.now() - (later.get(id) || 0) < 60e3;
+
+// useHeldFor is the request a session's turn waits on, put off from asking,
+// or null; reviewHeld asks it again now.
+export function useHeldFor(session) {
+  const { held, later } = useSyncExternalStore(
+    (f) => (heldListeners.add(f), () => heldListeners.delete(f)),
+    () => heldState,
+  );
+  return (session && held.find((h) => !h.prompted && h.session === session && putOff(later, h.id))) || null;
+}
+export const reviewHeld = (id) =>
+  setHeldState(({ later }) => {
+    const next = new Map(later);
+    next.delete(id);
+    return { later: next };
+  });
+
 // HeldSecrets asks about what a session is about to send that looks like a
-// secret, which the gateway holds until it is told; one put off comes back
-// once nothing else is asked.
+// secret, which the gateway holds until it is told: a session no open folder
+// has, whose question can't be one of its prompts - a terminal's, say.
 export function HeldSecrets({ sessions = [] }) {
-  const [held, setHeld] = useState([]);
-  const [later, setLater] = useState(() => new Set());
+  const { held, later } = useSyncExternalStore(
+    (f) => (heldListeners.add(f), () => heldListeners.delete(f)),
+    () => heldState,
+  );
   useEffect(() => {
     let live = true;
-    const look = () => !document.hidden && api.secretsHeld().then((h) => live && setHeld(h), () => {});
+    const look = () => !document.hidden && api.secretsHeld().then((h) => live && setHeldState(() => ({ held: h })), () => {});
     look();
     const t = setInterval(look, 2000);
     return () => {
@@ -147,12 +197,13 @@ export function HeldSecrets({ sessions = [] }) {
       clearInterval(t);
     };
   }, []);
-  const h = held.find((x) => !later.has(x.id));
+  // One put to its session as a prompt is answered there.
+  const h = held.find((x) => !x.prompted && !putOff(later, x.id));
   if (!h) return null;
   const answer = async (names, quiet) => {
     await api.secretAnswer(h.id, names, quiet, from);
     if (names.some(Boolean)) await reloadSecrets();
-    setHeld((all) => all.filter((x) => x.id !== h.id));
+    setHeldState(({ held }) => ({ held: held.filter((x) => x.id !== h.id) }));
   };
   const allow = (quiet) => answer(h.found.map(() => ""), quiet);
   allow.later = true;
@@ -165,12 +216,12 @@ export function HeldSecrets({ sessions = [] }) {
       key={h.id}
       title="A session is about to send what looks like a secret"
       from={from}
-      note="It waits for you; unanswered for five minutes, it is masked."
+      note="The session waits for you. Closed, this comes back in a minute; unanswered for five minutes, it is all masked."
       items={h.found}
-      valueOf={async (i) => (await api.secretHeldValue(h.id, i)).value}
+      held={h.id}
       onMask={answer}
       onAllow={allow}
-      onClose={() => setLater((s) => new Set(s).add(h.id))}
+      onClose={() => setHeldState(({ later }) => ({ later: new Map(later).set(h.id, Date.now()) }))}
     />
   );
 }
@@ -322,8 +373,18 @@ export function SecretHover() {
   const toggle = async () => {
     try {
       const v = await valueOf();
-      at.chip.textContent = shown ? known?.preview || "••••••" : v;
-      at.chip.classList.toggle("shown", !shown);
+      const { chip } = at;
+      const preview = known?.preview || "••••••";
+      chip.textContent = shown ? preview : v;
+      chip.classList.toggle("shown", !shown);
+      if (!shown) {
+        setTimeout(() => {
+          if (!chip.classList.contains("shown")) return;
+          chip.textContent = preview;
+          chip.classList.remove("shown");
+          redraw((n) => n + 1);
+        }, SHOWN_FOR);
+      }
       redraw((n) => n + 1);
     } catch (e) {
       say(e.message);

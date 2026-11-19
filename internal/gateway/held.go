@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dv/internal/secret"
@@ -35,9 +36,23 @@ type Held struct {
 	Cwd     string    `json:"cwd,omitempty"`
 	At      time.Time `json:"at"`
 	Found   []Finding `json:"found"`
-	values  []string
-	answer  chan []string // a name for each finding, "" to let it go
+	// Prompted is put to the user in its session, as a permission prompt is,
+	// rather than in a dialog of its own.
+	Prompted bool `json:"prompted,omitempty"`
+	values   []string
+	answer   chan []string // a name for each finding, "" to let it go
+	unprompt context.CancelFunc
 }
+
+// Asker puts a held request to the open folder its session is in, as a
+// permission prompt, and says false where none has it. answer hears the
+// user; ctx ends once the request is settled some other way.
+type Asker func(ctx context.Context, h Held, answer func(names []string, quiet bool, label string)) bool
+
+var asker atomic.Pointer[Asker]
+
+// SetAsker has held requests put to the user through a.
+func SetAsker(a Asker) { asker.Store(&a) }
 
 type Finding struct {
 	Preview string `json:"preview"`
@@ -174,6 +189,9 @@ func (g *Gateway) Answer(id string, names []string) error {
 	h := g.held.waiting[i]
 	g.held.waiting = slices.Delete(g.held.waiting, i, i+1)
 	g.held.mu.Unlock()
+	if h.unprompt != nil {
+		h.unprompt()
+	}
 	if len(names) != len(h.values) {
 		names = make([]string, len(h.values))
 		for i, f := range h.Found {
@@ -274,17 +292,48 @@ func (g *Gateway) hold(ctx context.Context, body []byte, session string) {
 		return
 	}
 	text := sentText(body)
-	found := g.Unmasked(text)
-	g.held.mu.Lock()
-	// One already asked about, in a request still waiting, is that one's to settle.
-	for _, h := range g.held.waiting {
-		found = slices.DeleteFunc(found, func(v string) bool { return slices.Contains(h.values, v) })
-	}
-	if len(found) == 0 {
-		g.held.mu.Unlock()
-		return
-	}
 	cwd, parts := requestParts(body)
+	// What the model wrote itself is nothing new to it: only what comes in
+	// from the user's side is asked about.
+	parts = slices.DeleteFunc(parts, func(p part) bool { return p.model })
+	// Each part apart: a lock file read in one doesn't hide a key in another,
+	// as the many tokens of a long conversation taken together would.
+	var found []string
+	for _, p := range parts {
+		for _, v := range g.Unmasked(p.text) {
+			if !slices.Contains(found, v) {
+				found = append(found, v)
+			}
+		}
+	}
+	g.held.mu.Lock()
+	// One already asked about - for a request since given up, as on an
+	// interruption, or another still waiting - is waited on, not asked again.
+	var asked []*Held
+	for _, h := range g.held.waiting {
+		n := len(found)
+		found = slices.DeleteFunc(found, func(v string) bool { return slices.Contains(h.values, v) })
+		if len(found) < n {
+			asked = append(asked, h)
+		}
+	}
+	if len(found) > 0 {
+		asked = append(asked, g.askLocked(session, cwd, text, parts, found))
+	}
+	g.held.mu.Unlock()
+	for _, h := range asked {
+		select {
+		case <-h.answer:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// askLocked puts a question to the user about found, which stands until it
+// is answered or, after holdFor, masked: a request given up meanwhile leaves
+// it for the next to wait on.
+func (g *Gateway) askLocked(session, cwd, text string, parts []part, found []string) *Held {
 	h := &Held{ID: newHeldID(), Session: session, Cwd: cwd, At: time.Now(), values: found, answer: make(chan []string)}
 	taken := map[string]bool{}
 	for _, v := range found {
@@ -298,17 +347,23 @@ func (g *Gateway) hold(ctx context.Context, body []byte, session string) {
 		h.Found = append(h.Found, Finding{preview(v), name, where, detail, before, after})
 	}
 	g.held.waiting = append(g.held.waiting, h)
-	g.held.mu.Unlock()
-
-	select {
-	case <-h.answer:
-	case <-time.After(holdFor):
-		g.Answer(h.ID, nil)
-	case <-ctx.Done():
-		g.held.mu.Lock()
-		g.held.waiting = slices.DeleteFunc(g.held.waiting, func(x *Held) bool { return x == h })
-		g.held.mu.Unlock()
+	time.AfterFunc(holdFor, func() { g.Answer(h.ID, nil) })
+	if a := asker.Load(); a != nil && session != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		id := h.ID
+		h.Prompted = (*a)(ctx, *h, func(names []string, quiet bool, label string) {
+			if quiet {
+				g.StopAsking(id, label)
+			}
+			g.Answer(id, names)
+		})
+		if h.Prompted {
+			h.unprompt = cancel
+		} else {
+			cancel()
+		}
 	}
+	return h
 }
 
 func (g *Gateway) hasSecret(name string) bool {

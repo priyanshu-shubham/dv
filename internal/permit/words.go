@@ -65,6 +65,8 @@ func (r *Request) what() (verb, target string, path, many bool) {
 		return "start on this plan", in.PlanFilePath, true, false
 	case "AskUserQuestion":
 		return "ask you", "", false, false
+	case SecretsTool:
+		return "send what looks like a secret", "", false, false
 	}
 	if m := mcpTool.FindStringSubmatch(r.Tool); m != nil {
 		return "use", m[1] + ": " + m[2], false, false
@@ -88,6 +90,10 @@ func (r *Request) headline() string {
 }
 
 func (r *Request) options() []Option {
+	// Masked first, so a quick Enter or an unread notice is the safe answer.
+	if r.Tool == SecretsTool {
+		return []Option{{Label: "Mask and send"}, {Label: "Send as is", Allow: true}}
+	}
 	plan := r.Tool == "ExitPlanMode"
 	var offers []Option
 	for i, raw := range r.Suggestions {

@@ -435,8 +435,9 @@ export function AttachSheet({ onFiles, comments, onComments, onShell, onCompact,
 
 // Answers are a request's choices, docked over the message box: No and Yes,
 // and the rest - "and don't ask again", a plan's ways to start - behind More
-// when they don't fit. A plan's are all there is, so they are listed in full.
-export function Answers({ dock, question, options, said, plan, busy, error, onChoose }) {
+// when they don't fit. A plan's are all there is, so they are listed in full;
+// so are a secret's (safeFirst), whose first, the safe one, is the filled one.
+export function Answers({ dock, question, options, said, plan, safeFirst, busy, error, onChoose }) {
   const [more, setMore] = useState(false);
   if (!dock) return null;
   const no = options.findIndex((o) => !o.allow);
@@ -447,10 +448,15 @@ export function Answers({ dock, question, options, said, plan, busy, error, onCh
     <>
       <div className="p-dock-q">{question}</div>
       {error && <div className="p-dock-error">{error}</div>}
-      {plan ? (
+      {plan || safeFirst ? (
         <div className="p-dock-list">
           {options.map((o, i) => (
-            <button key={i} className={cx("p-btn", i === yes ? "filled" : o.allow ? "tonal" : "outline")} disabled={busy} onClick={() => onChoose(i)}>
+            <button
+              key={i}
+              className={cx("p-btn", safeFirst ? (i === 0 ? "filled" : "outline") : i === yes ? "filled" : o.allow ? "tonal" : "outline")}
+              disabled={busy}
+              onClick={() => onChoose(i)}
+            >
               {o.label}
             </button>
           ))}

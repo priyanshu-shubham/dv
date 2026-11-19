@@ -4,16 +4,20 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"dv/internal/gateway"
 	"dv/internal/gitx"
 	"dv/internal/notify"
 	"dv/internal/server"
@@ -50,8 +54,23 @@ func New(url string, user *store.Prefs, folders *store.Folders, notices *notify.
 		open: map[string]*review{}, jobs: map[string]*job{}, usedAt: map[string]time.Time{},
 	}
 	notices.SetHub(h)
+	gateway.SetAsker(h.askHeld)
 	go h.sweepIdle()
 	return h
+}
+
+// askHeld puts a request the gateway holds to the open folder its session is
+// one of, as that folder's prompts are put.
+func (h *Hub) askHeld(ctx context.Context, held gateway.Held, answer func(names []string, quiet bool, label string)) bool {
+	h.mu.Lock()
+	open := slices.Collect(maps.Values(h.open))
+	h.mu.Unlock()
+	for _, rv := range open {
+		if rv.srv.AskHeld(ctx, held, answer) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close stops every review and job, and the Claude Code sessions dv runs.

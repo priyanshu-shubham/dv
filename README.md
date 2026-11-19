@@ -297,9 +297,11 @@ a glimpse of the value; hover one to see it, copy it or change it. Add one from
 use one in a message with `#NAME`. The values in an open folder's `.env` files
 are masked as they stand, but for plain words such as `development`. Text that
 looks like a secret - a key's shape, a long random token - and isn't masked
-holds the request while dv asks whether to mask it or send it as is, showing
-where it is - the file read, the command - and the line around it; each is
-asked about once, and one left unanswered for five minutes is masked. A session
+holds the request while dv asks whether to mask it or send it as is. It is
+asked as the session's permission prompts are, so it shows in the session, in
+Needs you and as a notification, with where it is - the file read, the
+command - and the line around it; each is asked about once, and one left
+unanswered for five minutes is masked. A session
 can be left out of the asking from **+** in its message box. Both are on by
 default, and what was sent as is or left out can be undone, in Settings ›
 Secrets.

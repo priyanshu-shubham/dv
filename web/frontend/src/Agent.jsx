@@ -4,7 +4,7 @@ import MarkdownIt from "markdown-it";
 import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
 import { hashesAsSecrets, maskable, reloadSecrets, secretsInText, useSecrets, useSecretsVersion } from "./secrets.js";
-import { LooseSecrets, looseItems, MaskSecret } from "./Secrets.jsx";
+import { LooseSecrets, looseItems, MaskSecret, reviewHeld, useHeldFor } from "./Secrets.jsx";
 import { commentEvent, Request, RequestTitle, saidWith } from "./AgentPrompt.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { grow } from "./hunks.js";
@@ -696,6 +696,7 @@ export default function AgentView({
   const [error, setError] = useState("");
   const [rewinding, setRewinding] = useState(null); // { prompt } or {} to pick one
   const [masking, setMasking] = useState(null); // { picked }: a secret being masked
+  const heldHere = useHeldFor(id);
   const [loose, setLoose] = useState(null); // { found, words }: a message held over what looks like a secret
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
@@ -2378,7 +2379,9 @@ export default function AgentView({
           {/* What Claude is doing is under what it was asked; what waits for it, under that. */}
           {incoming.filter((w) => !w.queued && !w.behind).map(bubble)}
           {/* A terminal's turn is only known to have started by its last message. */}
-          {busy && !ask && <Activity live={live} items={items} root={root} since={live?.shell?.since || live?.since || items.findLast((it) => it.turn)?.at} />}
+          {busy && !ask && (
+            <Activity live={live} items={items} root={root} held={heldHere} since={live?.shell?.since || live?.since || items.findLast((it) => it.turn)?.at} />
+          )}
           {incoming.filter((w) => w.queued || w.behind).map(bubble)}
           {/* As the terminal's guess, they are there while the box is empty. */}
           {/* The phone's are chips over its box. */}
@@ -3317,10 +3320,13 @@ function Streaming({ block, root }) {
 
 // Activity is what Claude is doing, while it works: an orb whose motion is the
 // kind of work, a word or two for it, and how long the turn has gone on since.
-function Activity({ live, items, root, since }) {
-  const [state, label] = JSON.parse(useDwell(JSON.stringify(activityOf(live, items, root)), ACTIVITY_DWELL_MS));
-  return (
-    <div className="agent-working">
+// held is a question about a secret the turn waits on, put off from asking.
+function Activity({ live, items, root, since, held }) {
+  const [state, label] = JSON.parse(
+    useDwell(JSON.stringify(held ? ["breathing", "Waiting for you: it is about to send what looks like a secret"] : activityOf(live, items, root)), ACTIVITY_DWELL_MS),
+  );
+  const parts = (
+    <>
       <Fade value={state} className="orb">
         {(s) => <Orb state={s} />}
       </Fade>
@@ -3328,7 +3334,14 @@ function Activity({ live, items, root, since }) {
         {(l) => l}
       </Fade>
       {since && <Elapsed from={since} className="agent-working-time" />}
-    </div>
+    </>
+  );
+  return held ? (
+    <button className="agent-working held" onClick={() => reviewHeld(held.id)} title="Review what it is about to send">
+      {parts}
+    </button>
+  ) : (
+    <div className="agent-working">{parts}</div>
   );
 }
 

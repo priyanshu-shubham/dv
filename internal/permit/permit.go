@@ -38,10 +38,19 @@ type Request struct {
 	Options  []Option `json:"options"`
 }
 
+// SecretsTool is the request dv's gateway puts when a session is about to
+// send what looks like a secret: Input is the findings, a yes sends them as
+// they are, and a no masks them.
+const SecretsTool = "dv:secrets"
+
 // Answer is the reader's decision on a request.
 type Answer struct {
 	Allow bool   `json:"allow"`
 	Note  string `json:"note"`
+	// Names and Quiet answer a SecretsTool request: the name to mask each
+	// finding as, and whether to ask about the session again.
+	Names []string `json:"names,omitempty"`
+	Quiet bool     `json:"quiet,omitempty"`
 	// Suggestion indexes the suggestion to apply along with an allow.
 	Suggestion *int `json:"suggestion"`
 	// Answers are AskUserQuestion's, by question: the labels picked, or what

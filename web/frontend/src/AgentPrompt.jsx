@@ -10,6 +10,11 @@ import { cx, isTyping, LRM, selectedAttr, splitPath, useCopy, usePersisted } fro
 import { readPref, usePref } from "./prefs.js";
 import { AgentIcon, IconFile, IconX } from "./icons.jsx";
 import { Answers } from "./phone/Session.jsx";
+import { HeldFindings } from "./Secrets.jsx";
+import { reloadSecrets } from "./secrets.js";
+
+// The request dv's gateway puts over what looks like a secret (permit.SecretsTool).
+const SECRETS = "dv:secrets";
 
 const NO_COMMENTS = [];
 
@@ -152,6 +157,11 @@ export function Request({
 
   const what = describe(req);
   const asking = req.tool === "AskUserQuestion";
+  // What looks like a secret, held by dv's gateway: masked under these names,
+  // or sent as is.
+  const secrets = req.tool === SECRETS;
+  const [names, setNames] = useState(() => (req.input?.found || []).map((f) => f.name));
+  const [quiet, setQuiet] = useState(false);
   const manyQuestions = asking && (req.input?.questions?.length || 0) > 1;
   const options = req.options;
   const modeOption = options.findIndex((o) => o.mode === "acceptEdits");
@@ -184,9 +194,13 @@ export function Request({
         unsaved.focus();
         return;
       }
+      if (secrets) {
+        if (!o.allow && names.some((n) => !n)) return setError("Each needs a name to be masked as.");
+        return answer({ allow: o.allow, names: o.allow ? [] : names, quiet }).then(() => o.allow || reloadSecrets());
+      }
       answer({ allow: o.allow, note: withComments(note, comments, req), suggestion: o.suggestion });
     },
-    [options, answer, note, comments, req],
+    [options, answer, note, comments, req, secrets, names, quiet],
   );
 
   // Each request is met at Yes, held off for a moment when it shows and again
@@ -277,6 +291,14 @@ export function Request({
           keysRef={questionKeys}
           onAnswer={answer}
         />
+      ) : secrets ? (
+        <div className="prompt-body prompt-secrets" ref={bodyRef}>
+          <HeldFindings held={req.input?.held} found={req.input?.found || []} names={names} onNames={setNames} />
+          <label className="check">
+            <input type="checkbox" className="tick" checked={quiet} onChange={(e) => setQuiet(e.target.checked)} />
+            Don't ask again in this session
+          </label>
+        </div>
       ) : (
         <div className="prompt-body" ref={bodyRef}>
           {(req.previews?.length ? req.previews : [null]).map((p) => (
@@ -299,7 +321,17 @@ export function Request({
 
       {/* The phone's answers sit over the message box, which is the note. */}
       {phone && !asking && (
-        <Answers dock={dock} question={question(req, what)} options={options} said={said} plan={req.tool === "ExitPlanMode"} busy={busy} error={error} onChoose={choose} />
+        <Answers
+          dock={dock}
+          question={question(req, what)}
+          options={options}
+          said={said}
+          plan={req.tool === "ExitPlanMode"}
+          safeFirst={secrets}
+          busy={busy}
+          error={error}
+          onChoose={choose}
+        />
       )}
       {phone && asking && error && <div className="prompt-error">{error}</div>}
 
@@ -311,14 +343,14 @@ export function Request({
               <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
                 {options.map((o, i) => {
                   const no = req.tool === "ExitPlanMode" ? "keep planning" : "stops Claude";
-                  const hint = optionHint(o, said, no);
+                  const hint = secrets ? secretsHint(o) : optionHint(o, said, no);
                   return (
                     <button
                       key={i}
                       id={`opt-${req.id}-${i}`}
                       role="option"
                       aria-selected={i === sel}
-                      className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && "no")}
+                      className={cx("palette-row", "prompt-option", i === sel && "on", !o.allow && !secrets && "no")}
                       disabled={busy}
                       // Not mouseenter: that also fires when a scroll carries a row
                       // under a pointer at rest, which would change what Enter answers.
@@ -334,20 +366,22 @@ export function Request({
                   );
                 })}
               </div>
-              <label className="prompt-note">
-                <span className="badge" title="Tab">
-                  ⇥
-                </span>
-                <textarea
-                  ref={noteRef}
-                  rows={1}
-                  value={note}
-                  placeholder={
-                    options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"
-                  }
-                  onChange={(e) => onDraft({ note: e.target.value })}
-                />
-              </label>
+              {!secrets && (
+                <label className="prompt-note">
+                  <span className="badge" title="Tab">
+                    ⇥
+                  </span>
+                  <textarea
+                    ref={noteRef}
+                    rows={1}
+                    value={note}
+                    placeholder={
+                      options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"
+                    }
+                    onChange={(e) => onDraft({ note: e.target.value })}
+                  />
+                </label>
+              )}
             </div>
           </div>
 
@@ -367,9 +401,11 @@ export function Request({
                 <span>
                   <kbd>Enter</kbd> {asking ? "pick" : "answer"}
                 </span>
-                <span>
-                  <kbd>Tab</kbd> note
-                </span>
+                {!secrets && (
+                  <span>
+                    <kbd>Tab</kbd> note
+                  </span>
+                )}
                 {onLater && (
                   <span>
                     <kbd>Esc</kbd> later
@@ -1026,6 +1062,8 @@ function describe(req) {
       return { verb: "start on this plan", target: input.planFilePath, path: true };
     case "AskUserQuestion":
       return { verb: "ask you", target: "" };
+    case SECRETS:
+      return { verb: "send what looks like a secret", target: "" };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(req.tool);
   if (mcp) return { verb: "use", target: `${mcp[1]}: ${mcp[2]}` };
@@ -1049,8 +1087,14 @@ function question(req, what) {
       return "Fetch this page?";
     case "ExitPlanMode":
       return "Start on this plan?";
+    case SECRETS:
+      return (req.input?.found?.length || 0) > 1 ? "Mask these before they are sent?" : "Mask this before it is sent?";
   }
   return "Allow this?";
+}
+
+function secretsHint(o) {
+  return o.allow ? "as written, and not asked about again" : "saved to your secrets under the names above; the model sees only the name";
 }
 
 function optionHint(o, said, no) {

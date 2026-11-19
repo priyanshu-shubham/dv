@@ -1,14 +1,18 @@
 package server
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"dv/internal/gateway"
+	"dv/internal/permit"
 )
 
 var errNoGateway = errors.New("dv's model gateway is not running, so it masks nothing")
@@ -95,6 +99,29 @@ func HandleHeldValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"value": v})
+}
+
+// AskHeld puts a request the gateway holds to the reader as one of this
+// folder's prompts, where the session is one of its own: in the session, in
+// Needs you, and as a notice.
+func (s *Server) AskHeld(ctx context.Context, h gateway.Held, answer func(names []string, quiet bool, label string)) bool {
+	if !s.agent.Visible(h.Session) {
+		return false
+	}
+	input, _ := json.Marshal(map[string]any{"cwd": h.Cwd, "found": h.Found, "held": h.ID})
+	req := &permit.Request{Session: h.Session, Tool: permit.SecretsTool, Input: input}
+	go func() {
+		a := s.permit.Put(ctx, req)
+		if a == nil {
+			return
+		}
+		names := a.Names
+		if a.Allow {
+			names = make([]string, len(h.Found))
+		}
+		answer(names, a.Quiet, cmp.Or(s.agent.Title(h.Session), "New session")+" · "+filepath.Base(s.repo.Root))
+	}()
+	return true
 }
 
 // HandleExemptions are what Settings lists to undo: the values let go as they

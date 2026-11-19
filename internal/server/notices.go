@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dv/internal/agent"
+	"dv/internal/gateway"
 	"dv/internal/notify"
 	"dv/internal/permit"
 )
@@ -193,6 +194,19 @@ func askBody(r *permit.Request) (string, string) {
 			qs[i] = q.Question
 		}
 		return strings.Join(qs, "\n"), ""
+	case permit.SecretsTool:
+		var held struct {
+			Found []gateway.Finding `json:"found"`
+		}
+		json.Unmarshal(r.Input, &held)
+		lines := make([]string, len(held.Found))
+		for i, f := range held.Found {
+			lines[i] = f.Name + "  " + f.Preview
+			if f.Detail != "" {
+				lines[i] += "  · " + f.Detail
+			}
+		}
+		return strings.Join(lines, "\n"), ""
 	}
 	return string(r.Input), notify.Code
 }

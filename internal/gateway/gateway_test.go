@@ -1,9 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -389,6 +392,141 @@ func TestHold(t *testing.T) {
 	}
 	if found := again.Unmasked(sentText(body)); len(found) != 1 {
 		t.Errorf("forgotten, yet not asked about: %v", found)
+	}
+}
+
+// A long conversation has many tokens that read as random; a key read in one
+// of its tool results is still asked about.
+func TestHoldInALongConversation(t *testing.T) {
+	dir := t.TempDir()
+	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
+	Watch(func() []string { return nil }, func() bool { return false }, func() bool { return true })
+	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
+	var earlier []string
+	for i := range 8 {
+		earlier = append(earlier, fmt.Sprintf(`{"role":"user","content":"id %d: Qm7xZ%dpLr4TbW9nKc2VhY6sJd8GfA3eUq"}`, i, i))
+	}
+	body := []byte(`{"messages":[` + strings.Join(earlier, ",") +
+		`,{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/w/.env.test"}}]}` +
+		`,{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"DEPLOY_TOKEN=xtL9jGhycTAar2mar3nGJPYVDTitJYpLw7Yf # staging"}]}]}`)
+	go g.hold(t.Context(), body, "s")
+	var held []Held
+	for i := 0; i < 100 && len(held) == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+		held = g.HeldNow()
+	}
+	if len(held) != 1 || !slices.ContainsFunc(held[0].Found, func(f Finding) bool { return f.Name == "DEPLOY_TOKEN" }) {
+		t.Fatalf("held %+v", held)
+	}
+	g.Answer(held[0].ID, nil)
+}
+
+// A request given up while asked about - an interruption - leaves its question
+// up, and the next carrying the same value waits on it rather than asking again.
+func TestGivenUpIsAskedOnce(t *testing.T) {
+	dir := t.TempDir()
+	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
+	Watch(func() []string { return nil }, func() bool { return false }, func() bool { return true })
+	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
+	body := []byte(`{"messages":[{"role":"user","content":"TOKEN=x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"}]}`)
+	ctx, cancel := context.WithCancel(t.Context())
+	first := make(chan struct{})
+	go func() { g.hold(ctx, body, "s"); close(first) }()
+	for i := 0; i < 100 && len(g.HeldNow()) == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-first
+	again := make(chan struct{})
+	go func() { g.hold(t.Context(), body, "s"); close(again) }()
+	time.Sleep(50 * time.Millisecond)
+	held := g.HeldNow()
+	if len(held) != 1 {
+		t.Fatalf("asked %d times", len(held))
+	}
+	select {
+	case <-again:
+		t.Fatal("the retry went without waiting")
+	default:
+	}
+	g.Answer(held[0].ID, []string{""})
+	<-again
+}
+
+// A session an open folder has is asked in it, as its permission prompts are;
+// its answer settles the request, and a request settled otherwise takes the
+// prompt down.
+func TestHeldIsPrompted(t *testing.T) {
+	dir := t.TempDir()
+	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
+	Watch(func() []string { return nil }, func() bool { return false }, func() bool { return true })
+	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
+	type put struct {
+		ctx    context.Context
+		h      Held
+		answer func([]string, bool, string)
+	}
+	puts := make(chan put, 2)
+	SetAsker(func(ctx context.Context, h Held, answer func([]string, bool, string)) bool {
+		if h.Session != "mine" {
+			return false
+		}
+		puts <- put{ctx, h, answer}
+		return true
+	})
+	defer asker.Store(nil)
+
+	body := []byte(`{"messages":[{"role":"user","content":"TOKEN=x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"}]}`)
+	done := make(chan struct{})
+	go func() { g.hold(t.Context(), body, "mine"); close(done) }()
+	p := <-puts
+	if held := g.HeldNow(); len(held) != 1 || !held[0].Prompted || p.h.Found[0].Name != "TOKEN" {
+		t.Fatalf("held %+v", held)
+	}
+	p.answer([]string{"MY_TOKEN"}, false, "")
+	<-done
+	if v, ok := g.SecretValue("MY_TOKEN"); !ok || v != "x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA" {
+		t.Fatalf("masked as %q, %v", v, ok)
+	}
+	if p.ctx.Err() == nil {
+		t.Error("the prompt is still up once answered")
+	}
+
+	other := []byte(`{"messages":[{"role":"user","content":"KEY=Zq81mXv0Lp4TnR7wYc2BsD9fHj6KgUe3"}]}`)
+	go g.hold(t.Context(), other, "a terminal's")
+	for i := 0; i < 100 && len(g.HeldNow()) == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if held := g.HeldNow(); len(held) != 1 || held[0].Prompted {
+		t.Fatalf("one no folder has is the dialog's: %+v", held)
+	}
+	g.Answer(g.HeldNow()[0].ID, nil)
+}
+
+func TestModelsOwnWordsAreNotAsked(t *testing.T) {
+	dir := t.TempDir()
+	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
+	Watch(func() []string { return nil }, func() bool { return false }, func() bool { return true })
+	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
+	body := []byte(`{"messages":[{"role":"assistant","content":[{"type":"text","text":"try KEY=Zq81mXv0Lp4TnR7wYc2BsD9fHj6KgUe3"},` +
+		`{"type":"tool_use","id":"t1","name":"Edit","input":{"new_string":"x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"}}]}]}`)
+	g.hold(t.Context(), body, "s")
+	if len(g.HeldNow()) != 0 {
+		t.Fatalf("asked about the model's own: %+v", g.HeldNow())
+	}
+}
+
+func TestNotRandom(t *testing.T) {
+	for _, s := range []string{
+		"npm/_logs/2026-11-19T14_29_58_022Z-debug-0",
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk",
+	} {
+		if random(s) {
+			t.Errorf("%s taken for a key", s)
+		}
+	}
+	if !random("xtL9jGhycTAar2mar3nGJPYVDTitJYpLw7Yf") {
+		t.Error("a key not taken for one")
 	}
 }
 

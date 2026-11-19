@@ -171,6 +171,7 @@ func run() error {
 		return err
 	}
 	defer srv.Close()
+	gateway.SetAsker(srv.AskHeld)
 	ln, err := listen(*host, *port, repo.Root)
 	if err != nil {
 		return err
