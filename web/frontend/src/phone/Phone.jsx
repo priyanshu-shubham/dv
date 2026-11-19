@@ -243,11 +243,8 @@ export default function Phone({ app }) {
             requests={app.requests}
             elsewhere={app.elsewhere}
             repoRoot={meta?.repoRoot}
-            available={app.agent.available || !!app.agent.codex?.available}
-            usage={[
-              { agent: "", limits: app.agent.usage },
-              { agent: "codex", limits: app.agent.codex?.usage },
-            ]}
+            available={app.agent.available}
+            usage={[{ agent: "", limits: app.agent.usage }]}
             onOpen={openSession}
             onClose={app.closeSession}
             onRemove={app.removeSession}

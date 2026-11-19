@@ -1178,7 +1178,7 @@ export function SettingsOverlay({
             />
             <Setting
               label="Suggest a next message"
-              note="Shows what you might say next under the agent's reply, to put in the message box: Codex's own follow-ups, and a guess Claude Code makes after each turn with a small request of its own. A Claude session takes a change up the next time it starts."
+              note="Shows what you might say next under the agent's reply, to put in the message box: a guess Claude Code makes after each turn with a small request of its own. A session takes a change up the next time it starts."
               value={settings.promptSuggestions !== false}
               onPick={(on) => onChange({ promptSuggestions: on ? undefined : false })}
               choices={OFF_ON}
@@ -1211,6 +1211,7 @@ export function SettingsOverlay({
               onPick={(on) => onChange({ addedTemporary: on })}
               choices={OFF_ON}
             />
+            <Secrets />
           </>
         )}
         {tab === "terminal" && (
@@ -1584,12 +1585,17 @@ export const SESSION_MODES = [
   ["acceptEdits", "Edits", "Accept edits"],
   ["plan", "Plan"],
   ["auto", "Auto"],
-  ["autoAskEdits", "Auto, ask", "Auto, ask before edits (Codex asks before everything)"],
+  ["autoAskEdits", "Auto, ask", "Auto, ask before edits"],
 ];
 
-// modesFor is SESSION_MODES less what agent has no way to do: Codex's auto
-// review takes every approval, edits too.
-export const modesFor = (agent) => (agent === "codex" ? SESSION_MODES.filter(([id]) => id !== "autoAskEdits") : SESSION_MODES);
+// `codex exec` asks nothing, so what it may touch is set before it starts.
+const CODEX_SANDBOXES = [
+  ["", "Read only", "Codex reads the folder but changes nothing"],
+  ["workspace-write", "Edit the folder", "Codex can change files in the folder"],
+  ["danger-full-access", "Full access", "No sandbox at all"],
+];
+
+export const modesFor = (agent) => (agent === "codex" ? CODEX_SANDBOXES : SESSION_MODES);
 
 const onThisComputer = (origin) => /^https?:\/\/(localhost|127\.[\d.]+|\[::1\])(:\d+)?$/.test(origin);
 
@@ -1597,6 +1603,86 @@ const onThisComputer = (origin) => /^https?:\/\/(localhost|127\.[\d.]+|\[::1\])(
 // token pasted here, then the reader's chat connected by pressing Start in
 // it, which this looks for every few seconds until it happens. A dv with no
 // Telegram - a trial run - shows nothing.
+// Secrets are swapped for a placeholder in what sessions send a model, and
+// back in what it writes, so a command it runs still has the real value.
+function Secrets() {
+  const [list, setList] = useState(null);
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState(null);
+  useEffect(() => {
+    api.secrets().then(setList, (e) => setSaid(e.message));
+  }, []);
+  const run = async (p) => {
+    setBusy(true);
+    setSaid(null);
+    try {
+      setList(await p);
+      return true;
+    } catch (e) {
+      setSaid(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const add = async () => {
+    if (await run(api.secretAdd(name.trim(), value))) {
+      setName("");
+      setValue("");
+    }
+  };
+  const ready = name.trim() && value.trim() && !busy;
+  return (
+    <>
+      <div className="settings-heading">Masked secrets</div>
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Add a secret</div>
+          <div className={cx("settings-note", said && "prompt-error")}>
+            {said ||
+              "Kept on this computer, sealed. Wherever it turns up in what a session dv started sends - a file read, a command's output, your message - the model is sent [[dv-secret:NAME]] instead, and what it writes back has the real value again. Sessions started in a terminal aren't covered."}
+          </div>
+        </div>
+        <input
+          value={name}
+          placeholder="NAME"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+        />
+        <input
+          type="password"
+          value={value}
+          placeholder="Value"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ready && add()}
+        />
+        <span className="settings-actions">
+          <button className="primary" disabled={!ready} onClick={add}>
+            Add
+          </button>
+        </span>
+      </div>
+      {list?.map((s) => (
+        <div className="settings-row" key={s.name}>
+          <div className="settings-text">
+            <div>{s.name}</div>
+            <div className="settings-note">{s.hint}</div>
+          </div>
+          <span className="settings-actions">
+            <button className="btn" disabled={busy} onClick={() => confirm(`Stop masking ${s.name}, and forget it?`) && run(api.secretRemove(s.name))}>
+              Remove
+            </button>
+          </span>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function Telegram({ settings, onReady }) {
   const [st, setSt] = useState(null);
   const [token, setToken] = useState("");
@@ -2129,7 +2215,7 @@ export function HelpOverlay({ onClose }) {
         ["f", "View the whole file at the focused line"],
         ["c", "Comment on the focused line"],
         ["a", "Ask about the focused line, or the file, in the Ask panel"],
-        ["Shift+A", "Add the focused line, or the file, to your next message to Claude or Codex"],
+        ["Shift+A", "Add the focused line, or the file, to your next message to Claude"],
         ["v", "Mark the current file viewed, in Diff (one file at a time, then on to the next)"],
         ["o", "One file at a time, or every file in one scroll, in Diff"],
         ["u", "Toggle split / unified"],
@@ -2146,7 +2232,7 @@ export function HelpOverlay({ onClose }) {
     [
       "Agent",
       [
-        ["↑ ↓ Enter 1-9", "Answer what Claude or Codex is asking; Tab adds a note, Esc leaves it under the bell"],
+        ["↑ ↓ Enter 1-9", "Answer what Claude is asking; Tab adds a note, Esc leaves it under the bell"],
         ["Esc Esc", "Rewind the session to before one of your messages"],
         ["Esc", "Take back a queued message, or one sent a moment ago; otherwise stop the agent"],
         ["[ / ]", "Your previous / next message"],

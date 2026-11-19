@@ -6413,6 +6413,25 @@ body.resizing * {
   font: var(--fs-xs) var(--font-mono);
 }
 
+/* The picker's list editor, in the menu in place of its list. */
+.model-editor {
+  gap: 2px;
+}
+
+.model-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 24px 4px 2px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.model-editor .model-add {
+  width: 100%;
+  margin: 6px 0 2px;
+}
+
 /* Working: a thinking orb (thinking-orbs), whose motion is the kind of work. */
 .orb {
   flex: none;

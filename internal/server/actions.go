@@ -23,7 +23,7 @@ type actionRun struct {
 	Prompt  string `json:"prompt"`
 	Session string `json:"session"` // the session to send it to; "" starts one
 	// A new session's.
-	Agent     string `json:"agent"` // "codex", or "" for Claude Code
+	Agent     string `json:"agent"` // "codex" runs Prompt with `codex exec`; "" is Claude Code
 	Model     string `json:"model"`
 	Effort    string `json:"effort"`
 	Mode      string `json:"mode"`
@@ -60,6 +60,19 @@ func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("the action has no prompt"))
 		return
 	}
+	if a.Agent == "codex" && a.Session == "" {
+		if !codexInstalled() {
+			writeErr(w, http.StatusBadRequest, errors.New("Codex is not installed here"))
+			return
+		}
+		a.Command = "codex exec: " + firstLine(a.Prompt)
+		if err := s.runCommand(a, codexArgs(a)...); err != nil {
+			writeErr(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{})
+		return
+	}
 	id := a.Session
 	if id != "" && !sessionID.MatchString(id) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("%q is not a session id", id))
@@ -90,14 +103,12 @@ func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
 // or mode that is not on offer is left to the agent's own.
 func (s *Server) startFor(a actionRun) (string, error) {
 	switch {
-	case a.Agent == "codex" && !agent.CodexAvailable():
-		return "", errors.New("Codex is not installed here")
-	case a.Agent == "" && !agent.Available():
+	case !agent.Available():
 		return "", errors.New("Claude Code is not installed here")
-	case a.Agent != "" && a.Agent != "codex":
-		return "", fmt.Errorf("dv runs Claude Code and Codex, not %q", a.Agent)
+	case a.Agent != "":
+		return "", fmt.Errorf("dv starts Claude Code sessions, not %q ones", a.Agent)
 	}
-	id, err := s.agent.Create(a.Agent)
+	id, err := s.agent.Create()
 	if err != nil {
 		return "", err
 	}

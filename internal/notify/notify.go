@@ -32,7 +32,6 @@ type Notice struct {
 	Folder   string    `json:"folder,omitempty"` // its slug in a hub
 	Place    string    `json:"place"`            // the folder's name
 	Session  string    `json:"session"`
-	Agent    string    `json:"agent,omitempty"`    // "codex"; "" is Claude Code
 	Request  string    `json:"request,omitempty"`  // an Ask's, which its folder's page answers in a window of its own
 	Action   string    `json:"action,omitempty"`   // a command action's, whose output its folder's page shows
 	Terminal string    `json:"terminal,omitempty"` // a terminal's, which its folder's page shows

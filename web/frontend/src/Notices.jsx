@@ -8,7 +8,7 @@ import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { agentName, byLastSent, cx, OUTPUT_KEY, PHONE_APP, TERMINAL_KEY, useMedia } from "./util.js";
+import { byLastSent, cx, OUTPUT_KEY, PHONE_APP, TERMINAL_KEY, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 // A request is two pulses, a turn's end a tick.
@@ -221,7 +221,7 @@ export function useOpenIn(folders) {
     });
   }, [all]);
   const close = async (f, s) => {
-    if (s.running === "dv" && s.busy && !confirm(`${agentName(s.agent)} is still working in this session. Stop it and close?`)) return;
+    if (s.running === "dv" && s.busy && !confirm("Claude is still working in this session. Stop it and close?")) return;
     const k = key({ f, s });
     setClosing((c) => new Set(c).add(k));
     try {

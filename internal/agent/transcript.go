@@ -28,9 +28,6 @@ type Item struct {
 	UUID   string `json:"uuid,omitempty"`
 	Before string `json:"before,omitempty"`
 	Images int    `json:"images,omitempty"` // fetched one by one, by the prompt's uuid
-	// Answer marks a prompt that is only the reader's words on an answer to a
-	// call, which Codex takes as a message of its own: "yes" or "no".
-	Answer string `json:"answer,omitempty"`
 
 	Tool   string          `json:"tool,omitempty"`
 	ToolID string          `json:"toolId,omitempty"`

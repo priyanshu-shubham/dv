@@ -191,11 +191,9 @@ func (s *Server) Close() {
 // Status is what a hub shows of a review it serves.
 type Status struct {
 	Sessions int `json:"sessions"` // run by dv
-	Working  int `json:"working"`
-	// Codex marks Codex among the agents working, which are otherwise Claude.
-	Codex   bool `json:"codex,omitempty"`
-	Claude  bool `json:"claude,omitempty"`
-	Waiting int  `json:"waiting"` // prompts on the reader
+	Working  int  `json:"working"`
+	Claude   bool `json:"claude,omitempty"`
+	Waiting  int  `json:"waiting"` // prompts on the reader
 }
 
 // Asked is a request waiting on the reader, named by its session, for a page
@@ -248,11 +246,7 @@ func (s *Server) Status() Status {
 		}
 		if a.Busy {
 			st.Working++
-			if a.Agent == "codex" {
-				st.Codex = true
-			} else {
-				st.Claude = true
-			}
+			st.Claude = true
 		}
 	}
 	for _, r := range s.permit.Waiting() {

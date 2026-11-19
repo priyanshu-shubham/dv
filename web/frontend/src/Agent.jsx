@@ -1,7 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
-import { codexDirectives, followupsIn } from "./directives.js";
 import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
 import { api } from "./api.js";
 import { commentEvent, Request, RequestTitle, saidWith } from "./AgentPrompt.jsx";
@@ -13,13 +12,13 @@ import { PdfView } from "./Pdf.jsx";
 import { absolute, inlineFiles, inside, kindOf, splitShown } from "./shown.js";
 import { Orb } from "./Orb.jsx";
 import { Modal } from "./Overlays.jsx";
-import { useOpenIn } from "./Notices.jsx";
+import { say, useOpenIn } from "./Notices.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
 import {
-  agentName,
   attr,
   byLastSent,
+  copyText,
   cx,
   duration,
   heldElsewhere,
@@ -44,7 +43,7 @@ import {
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconStop,
+  IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
   IconTemporary,
   IconTrash,
   IconUndo, IconX,
@@ -55,7 +54,7 @@ import { useBack } from "./phone/back.js";
 import { Icon as PhoneIcon } from "./phone/icons.jsx";
 import { Photo } from "./phone/Photo.jsx";
 
-const md = inlineFiles(codeBlocks(codexDirectives(linkPaths(new MarkdownIt({ html: false, linkify: true })))));
+const md = inlineFiles(codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true }))));
 // A command's output is Markdown, or lines of plain text that must stay lines.
 const mdOutput = codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true })));
 const NO_THREADS = [];
@@ -65,15 +64,15 @@ const NO_QUEUED = [];
 const NO_COMMANDS = [];
 const NO_MODELS = [];
 const NO_PICKED = {};
+const NO_HIDDEN = [];
 const NO_NOTE = {};
 const DOUBLE_ESC_MS = 600;
 // How long the reader goes without a key before a request takes the keys.
 const KEYS_SETTLE_MS = 1000;
 // How long after sending Esc takes the message back instead of stopping the
-// agent. dv holds a message sent to Codex mid-turn for as long (holdFor).
+// agent.
 const TAKE_BACK_MS = 2000;
-// A phone's Undo, under the message, wants longer to be reached. Past
-// holdFor, a Codex message is taken back by rewinding, which leaves its edits.
+// A phone's Undo, under the message, wants longer to be reached.
 const PHONE_TAKE_BACK_MS = 4000;
 // Stop takes Send's place once a message goes while the agent works; a tap on
 // it this soon is the one that sent, come down twice.
@@ -320,20 +319,8 @@ function Chip({ kind, path, lines, label, title, on, onClick, onRemove }) {
 
 const EFFORTS = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra" };
 
-// The agents a new session can start with.
-const agentLabel = (agent) => (
-  <span className="agent-label">
-    <AgentIcon agent={agent} size={12} />
-    {agentName(agent)}
-  </span>
-);
-const AGENT_CHOICES = [
-  { id: "", label: agentLabel(""), description: "Claude Code, with your Claude settings and login" },
-  { id: "codex", label: agentLabel("codex"), description: "Codex, with your Codex config and login" },
-];
-
-// resumeWith is how a closed session is picked up again outside dv.
-export const resumeWith = (agent) => (agent === "codex" ? "codex resume" : "claude --resume");
+// RESUME is how a closed session is picked up again outside dv.
+export const RESUME = "claude --resume";
 
 // What the blank session offers to start from: the work dv is for.
 const SUGGESTIONS = [
@@ -509,7 +496,7 @@ const tokens = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n 
 // ContextMeter is how full the session's context is, with a tick where Claude
 // Code compacts it. Near there it says how close, as the terminal does. Given
 // onCompact, it is also where to compact it now.
-function ContextMeter({ context: { used, max, compact }, agent, onCompact }) {
+function ContextMeter({ context: { used, max, compact }, onCompact }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
   const pct = Math.min(100, (used / max) * 100);
@@ -519,11 +506,9 @@ function ContextMeter({ context: { used, max, compact }, agent, onCompact }) {
   const className = cx("agent-context", used >= limit * 0.9 ? "high" : used >= limit * 0.75 && "warn");
   const title =
     `Context: ${used.toLocaleString()} of ${max.toLocaleString()} tokens (${Math.round(pct)}%). ` +
-    (agent === "codex"
-      ? "Codex compacts the conversation as it nears the end, summarising it to make room."
-      : compact
-        ? `Claude Code compacts the conversation at ${compact.toLocaleString()}, summarising it to make room.`
-        : "Claude Code compacts the conversation as it nears the end, when auto-compact is on.");
+    (compact
+      ? `Claude Code compacts the conversation at ${compact.toLocaleString()}, summarising it to make room.`
+      : "Claude Code compacts the conversation as it nears the end, when auto-compact is on.");
   const meter = (
     <>
       <Bar pct={pct} tick={compact && (compact / max) * 100} />
@@ -578,7 +563,7 @@ function prettyModel(id) {
 // AgentView is Agent mode's main pane: one session's conversation, and the box
 // to talk to it in. A session running in a terminal is followed, not talked to.
 export default function AgentView({
-  id, session, agents, newAgent, onNewAgent, modes: allModes, root, view, contextLines, wrap, threads, attached,
+  id, session, agents, modes: allModes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
   requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, task = false, onChanged, reveal, boxFocus, offline, active = true,
   docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent, phone = null,
@@ -592,21 +577,15 @@ export default function AgentView({
   const [fromBy, setFromBy] = useState({});
   const from = fromBy[id] || "";
   const { items: read, live, earlier, lost: dropped, more } = useSession(id, "", from);
-  // Whose session this is, Codex's or Claude Code's (""); for the blank one,
-  // whose the next session will be.
-  const agentKind = id ? session?.agent || live?.agent || "" : newAgent;
-  // Codex's turns come with their times.
-  const items = useMemo(() => (agentKind === "codex" ? read : withWorked(read, !!live?.busy)), [read, agentKind, live?.busy]);
-  const name = agentName(agentKind);
-  const { available, models = NO_MODELS, mode: defaultMode } = agents[agentKind] || agents[""];
-  // Codex's auto review takes every approval, edits too.
+  const items = useMemo(() => withWorked(read, !!live?.busy), [read, live?.busy]);
+  const name = "Claude";
+  const { available, models = NO_MODELS, mode: defaultMode } = agents[""];
   const [unaskedText] = usePref("user", "unaskedEdits", "");
   const modes = useMemo(() => {
-    if (agentKind === "codex") return allModes.filter((m) => m.id !== "autoAskEdits");
     const globs = globLines(unaskedText);
     return globs.length ? allModes.map((m) => (m.id === "autoAskEdits" ? { ...m, description: `Not for ${globs.join(", ")}` } : m)) : allModes;
-  }, [agentKind, allModes, unaskedText]);
-  const unaskedGear = agentKind !== "codex" && { id: "autoAskEdits", title: "Edits it doesn't ask about", panel: <UnaskedEdits /> };
+  }, [allModes, unaskedText]);
+  const unaskedGear = { id: "autoAskEdits", title: "Edits it doesn't ask about", panel: <UnaskedEdits /> };
   // Hidden rather than gone in the other modes, so coming back draws nothing
   // again; its keys and its grabs for focus wait until then.
   // Docked in the Ask panel, it is shown beside another view whose keys they are.
@@ -617,13 +596,12 @@ export default function AgentView({
   const [draft, setDraft] = usePref("repo", "draft:" + (id || (docked ? "ask" : "new")), "");
   // The slash commands the agent takes, asked for on coming to the view and
   // again on starting to type one, which is when a new skill would be wanted.
-  const [commandsBy, setCommandsBy] = useState({});
-  const commands = commandsBy[agentKind] || NO_COMMANDS;
+  const [commands, setCommands] = useState(NO_COMMANDS);
   const slashing = draft.startsWith("/");
   useEffect(() => {
     if (!active || !available || (commands.length && !slashing)) return;
-    api.agentCommands(agentKind).then((r) => r.commands?.length && setCommandsBy((by) => ({ ...by, [agentKind]: r.commands })), () => {});
-  }, [active, available, slashing, agentKind]);
+    api.agentCommands().then((r) => r.commands?.length && setCommands(r.commands), () => {});
+  }, [active, available, slashing]);
   // The suggestions under a slash: which is picked, and the draft Esc put them away for.
   const [pick, setPick] = useState(0);
   const [unsuggested, setUnsuggested] = useState(null);
@@ -679,15 +657,11 @@ export default function AgentView({
     [addQuote, onAttach, id],
   );
   const [userSettings] = usePref("user", "settings", NO_SETTINGS);
-  // What you might say next, under the latest reply: Codex's follow-ups in it,
-  // and Claude Code's guess after it. Once you have said something since,
-  // they are out of date.
+  // What you might say next, under the latest reply: Claude Code's guess after it.
   const offered = useMemo(() => {
-    if (userSettings.promptSuggestions === false) return [];
-    const last = items.findLast((it) => it.kind === "text" || it.kind === "prompt" || it.kind === "command" || it.kind === "shell");
-    const own = last?.kind === "text" ? followupsIn(md, last.text) : [];
-    return live?.suggestion ? [...own, { label: live.suggestion, prompt: live.suggestion }] : own;
-  }, [items, live?.suggestion, userSettings.promptSuggestions]);
+    if (userSettings.promptSuggestions === false || !live?.suggestion) return [];
+    return [{ label: live.suggestion, prompt: live.suggestion }];
+  }, [live?.suggestion, userSettings.promptSuggestions]);
   const putDraft = useCallback(
     (text) => {
       caretToEnd.current = true;
@@ -747,8 +721,8 @@ export default function AgentView({
   // Code added from a conversation goes with that conversation's next message,
   // whichever session Diff and Files are adding to.
   const attachTarget = useMemo(
-    () => ({ choices: [{ id, label: "this session", agent: agentKind }], target: id, onTarget: () => {}, newAgent }),
-    [id, agentKind, newAgent],
+    () => ({ choices: [{ id, label: "this session" }], target: id, onTarget: () => {} }),
+    [id],
   );
   const byTool = useMemo(() => {
     const m = new Map();
@@ -1120,7 +1094,7 @@ export default function AgentView({
       // Remembered on starting rather than on picking, which Shift+Tab does on
       // its way past each mode. Plan is for the one task.
       if (!id && !docked && picks.mode && picks.mode !== "plan") {
-        setPicked((all) => ({ ...all, [agentKind]: { ...(all[agentKind] || NO_PICKED), mode: picks.mode } }));
+        setPicked((all) => ({ ...all, "": { ...(all[""] || NO_PICKED), mode: picks.mode } }));
       }
       if (!id && temporaryNew && !docked) {
         await api.agentTemporary(to, true);
@@ -1299,8 +1273,7 @@ export default function AgentView({
     }
     setUndoing(null);
     const prompt = items[i];
-    // Codex keeps no copies of the files, so its edits stay.
-    const code = agentKind !== "codex" && items.slice(i + 1).some((it) => it.result?.edited);
+    const code = items.slice(i + 1).some((it) => it.result?.edited);
     rewind(prompt, { conversation: true, code });
   }, [undoing, items, busy]);
 
@@ -1319,16 +1292,15 @@ export default function AgentView({
   // With no session yet, the mode picked waits for the one the first message
   // starts; the model and effort are the remembered ones below.
   const [picks, setPicks] = useState({});
-  // The model, effort and mode last picked, by agent, since the models are the
-  // agent's own: where a new session starts, as it starts with the agent last
-  // picked. { "": { model, effort, mode }, codex: … }
+  // The model, effort and mode last picked, where a new session starts:
+  // { "": { model, effort, mode } }, keyed as when dv ran more than one agent.
   const [picked, setPicked] = usePref("user", "newModel", NO_PICKED);
   // Only what the agent still offers: a model it has dropped, or an effort that
   // model no longer takes, is not asked for - dv would turn it down, as would
   // the agent. Until it has answered with its models, nothing is.
   // Docked, it starts as Settings say instead.
   const startWith = useMemo(() => {
-    const want = (docked ? startAs : picked[agentKind]) || NO_PICKED;
+    const want = (docked ? startAs : picked[""]) || NO_PICKED;
     const on = models.find((c) => c.id === (want.model || ""));
     // Settings name it on purpose, so it goes even before the agent has said what it offers.
     const unknown = docked && !models.length;
@@ -1338,7 +1310,7 @@ export default function AgentView({
     if (want.effort && (on?.efforts?.includes(want.effort) || unknown)) start.effort = want.effort;
     if (want.mode && (docked || modes.some((m) => m.id === want.mode))) start.mode = want.mode;
     return start;
-  }, [picked, agentKind, models, modes, docked, startAs]);
+  }, [picked, models, modes, docked, startAs]);
   const temporary = id ? !!session?.temporary : temporaryNew;
   const toggleTemporary = () => {
     if (!id) return onTemporaryNew(!temporary);
@@ -1350,7 +1322,7 @@ export default function AgentView({
     const ask = "Talk to this session here as well as in its terminal? Neither sees what's said in the other. Closing it here leaves it to the terminal again.";
     if (confirm(ask)) api.agentShare(id).then(onChanged, (e) => setError(e.message));
   };
-  const shareLink = agentKind !== "codex" && (
+  const shareLink = (
     <>
       {" "}
       <button className="link" onClick={share}>
@@ -1358,11 +1330,6 @@ export default function AgentView({
       </button>
     </>
   );
-  // The models are the agent's own, so what was picked goes with the agent.
-  const pickAgent = (kind) => {
-    setPicks({});
-    onNewAgent(kind);
-  };
   // A model or effort picked for the session to come is where the next one
   // starts too; one picked in a session under way is that conversation's own.
   // The mode is remembered once the session starts in it, see send.
@@ -1373,11 +1340,11 @@ export default function AgentView({
     const { mode, ...pick } = patch;
     if (Object.keys(pick).length) {
       setPicked((all) => {
-        const next = { ...(all[agentKind] || NO_PICKED), ...pick };
+        const next = { ...(all[""] || NO_PICKED), ...pick };
         // As a session does: an effort the new model does not take is dropped.
         const m = pick.model !== undefined && models.find((c) => c.id === pick.model);
         if (m && !m.efforts?.includes(next.effort)) delete next.effort;
-        return { ...all, [agentKind]: next };
+        return { ...all, "": next };
       });
     }
     if (mode !== undefined) setPicks((p) => ({ ...p, mode }));
@@ -1567,7 +1534,7 @@ export default function AgentView({
     const on = models.find((c) => c.id === name || c.model === name);
     if (!on) {
       try {
-        await api.agentModel(agentKind, name, true);
+        await api.agentModel("", name, true);
       } catch (e) {
         return setError(e.message);
       }
@@ -1575,7 +1542,7 @@ export default function AgentView({
     }
     settings({ model: on?.id ?? name });
   };
-  const dropModel = (name) => api.agentModel(agentKind, name, false).then(onChanged, (e) => setError(e.message));
+  const dropModel = (name) => api.agentModel("", name, false).then(onChanged, (e) => setError(e.message));
   // Claude's ids read as names; Codex's are named by its own list.
   const nameOf = (model) => (/^claude-/.test(model || "") ? prettyModel(model) : modelChoices.find((m) => sameModel(m.model, model))?.label || model);
   // Claude Code offers only the latest of each kind. A session put on an older
@@ -1599,6 +1566,13 @@ export default function AgentView({
     chosen;
   const modelLabel = nameOf(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || nameOf(live.lastModel))) || chosen?.label || asked?.model;
   const effort = live?.effortUsing || asked?.effort || onModel?.effort || "";
+  // Taken off the menu in its list editor, but for the one the session is on.
+  const [hiddenModels, setHiddenModels] = usePref("user", "hiddenModels", NO_HIDDEN);
+  const shownChoices = useMemo(
+    () => choices.filter((c) => !hiddenModels.includes(c.id) || c.id === onModel?.id),
+    [choices, hiddenModels, onModel?.id],
+  );
+  const hideModel = (id, hide) => setHiddenModels((h) => (hide ? [...h.filter((x) => x !== id), id] : h.filter((x) => x !== id)));
 
   // Asked here, where the terminal would ask it, one at a time.
   const waiting = requests.filter((r) => r.session === id);
@@ -1757,7 +1731,7 @@ export default function AgentView({
   const commandNote = command && !suggestions.length ? (
     <div className="composer-command" title={command.description}>
       <span className="composer-command-name">/{command.name}</span>
-      <span className="composer-command-note">{command.description || `A ${agentKind === "codex" ? "Codex" : "Claude Code"} command`}</span>
+      <span className="composer-command-note">{command.description || "A Claude Code command"}</span>
     </div>
   ) : (
     shell && (
@@ -1857,18 +1831,17 @@ export default function AgentView({
               e.target.value = "";
             }}
           />
-          {!id && !docked && agents[""].available && agents.codex.available && (
-            <Picker label={agentLabel(agentKind)} title="The agent this session runs" choices={AGENT_CHOICES} value={agentKind} onPick={pickAgent} />
-          )}
           {/* Hidden for the moment it takes to ask the agent, rather than naming no model. */}
           {choices.length > 0 && (
             <ModelPicker
               label={modelLabel}
-              models={choices}
+              models={shownChoices}
+              all={choices}
+              hidden={hiddenModels}
+              onHide={hideModel}
               model={offList?.id || asked?.model || ""}
               efforts={onModel?.efforts}
               effort={effort}
-              pending={live?.pending}
               onPick={(patch) => settings(patch)}
               onAdd={addModel}
               onDrop={dropModel}
@@ -1876,8 +1849,7 @@ export default function AgentView({
           )}
           <Picker
             label={modes.find((m) => m.id === mode)?.label || MODE_NAMES[mode] || mode}
-            title={live?.pending ? `Permission mode (Shift+Tab). ${name} takes it from the next turn.` : "Permission mode (Shift+Tab)"}
-            pending={live?.pending}
+            title="Permission mode (Shift+Tab)"
             choices={modes}
             value={mode}
             onPick={pickMode}
@@ -1890,7 +1862,7 @@ export default function AgentView({
               onClick={toggleTemporary}
               title={
                 temporary
-                  ? `Temporary: once closed, this session leaves the list. Its transcript stays for ${resumeWith(agentKind)}. Click to keep it.`
+                  ? `Temporary: once closed, this session leaves the list. Its transcript stays for ${RESUME}. Click to keep it.`
                   : "Make this session temporary: once closed, it leaves the list"
               }
             >
@@ -2011,7 +1983,6 @@ export default function AgentView({
       model={choices.length > 0 ? String(modelLabel || "").replace(/ \(1M\)$/, "") : ""}
       effort={EFFORT_SHORT[effort] || EFFORTS[effort] || effort}
       mode={MODE_SHORT[mode] || modes.find((m) => m.id === mode)?.label || MODE_NAMES[mode] || mode}
-      pending={live?.pending}
       onModel={() => setSheet({ type: "model" })}
       onMode={() => setSheet({ type: "mode" })}
       onAttach={() => setSheet({ type: "attach" })}
@@ -2054,14 +2025,10 @@ export default function AgentView({
       {sheet?.type === "jump" && <JumpSheet said={yours().map(promptLine)} at={readingAt()} onPick={toPrompt} onClose={closeSheet} />}
       {sheet?.type === "model" && (
         <ModelSheet
-          agents={!id && !docked && agents[""].available && agents.codex.available ? AGENT_CHOICES : null}
-          agent={agentKind}
-          onAgent={pickAgent}
-          models={choices}
+          models={shownChoices}
           model={offList?.id || asked?.model || ""}
           efforts={onModel?.efforts}
           effort={effort}
-          pending={live?.pending}
           onPick={settings}
           onAdd={addModel}
           onDrop={dropModel}
@@ -2073,7 +2040,6 @@ export default function AgentView({
           // Named as the box names them, in full under.
           modes={modes.map((m) => (MODE_SHORT[m.id] ? { ...m, label: MODE_SHORT[m.id], description: [m.label, m.description].filter(Boolean).join(" · ") } : m))}
           mode={mode}
-          pending={live?.pending}
           onPick={pickMode}
           gear={unaskedGear}
           onClose={closeSheet}
@@ -2095,13 +2061,13 @@ export default function AgentView({
     </>
   );
 
-  if (!agents[""].available && !agents.codex.available) {
+  if (!agents[""].available) {
     return (
       <div className="agent-pane" hidden={!active}>
         <div className="empty-state">
-          <h2>Neither Claude Code nor Codex is installed</h2>
+          <h2>Claude Code is not installed</h2>
           <p>
-            The Agent view runs the <code>claude</code> or <code>codex</code> CLI, and neither is on your PATH. Install one and reload.
+            The Agent view runs the <code>claude</code> CLI, which is not on your PATH. Install it and reload.
           </p>
         </div>
       </div>
@@ -2155,7 +2121,7 @@ export default function AgentView({
               effort={peekAgent ? sub.live?.effortUsing || sub.live?.lastEffort : ""}
               onBack={() => setPeek(null)}
               onStop={
-                running === "dv" && agentKind !== "codex"
+                running === "dv"
                   ? (task) => api.agentStopTask(id, task).catch((e) => setError(e.message))
                   : null
               }
@@ -2174,7 +2140,7 @@ export default function AgentView({
             </span>
           )}
           <span className="spacer" />
-          {live?.context?.max > 0 && <ContextMeter context={live.context} agent={agentKind} onCompact={!readOnly && !lost ? compactNow : null} />}
+          {live?.context?.max > 0 && <ContextMeter context={live.context} onCompact={!readOnly && !lost ? compactNow : null} />}
           {live?.cost > 0 && <span className="dim agent-cost">${live.cost.toFixed(2)}</span>}
           {docked && (
             <>
@@ -2188,7 +2154,7 @@ export default function AgentView({
           )}
           {/* As on its card: what closing does depends on what runs it, and says so. */}
           {!docked && (
-            <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, agentKind, shared)}>
+            <button className="ghost agent-close" onClick={() => onClose(id)} title={closeHint(running, temporary, shared)}>
               <IconX size={13} />
             </button>
           )}
@@ -2226,7 +2192,6 @@ export default function AgentView({
           <SubagentView
             key={peek}
             session={id}
-            agent={agentKind}
             items={sub.items}
             live={sub.live}
             working={working(peekItem, !!live?.busy, running)}
@@ -2269,7 +2234,6 @@ export default function AgentView({
               key={it.key}
               item={it}
               session={id}
-              agent={agentKind}
               onHold={phone ? holdPrompt : undefined}
               onUndo={undoable(it.uuid) ? undoSent : undefined}
               run={runs.byFirst.get(it.key)}
@@ -2367,7 +2331,7 @@ export default function AgentView({
       )}
       {/* The box stays through a lost connection: taken out, it would take the
           focus and the cursor of someone still typing with it. */}
-      {peekItem ? null : readOnly && agentKind !== "codex" && hooks?.on === false ? (
+      {peekItem ? null : readOnly && hooks?.on === false ? (
         // Asked here, where the prompts would have come up, rather than when dv
         // is installed or first run: hooks go in Claude Code's settings for good.
         <div className="agent-readonly">
@@ -2388,9 +2352,7 @@ export default function AgentView({
             </div>
           )}
           <div className="agent-readonly">
-            {agentKind === "codex"
-              ? "This session is open in a terminal. dv follows it, but only the terminal can talk to it or answer its prompts."
-              : "This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it."}
+            This session is open in a terminal. dv follows it and shows its prompts, but only the terminal can talk to it.
             {shareLink}
           </div>
         </>
@@ -2407,7 +2369,6 @@ export default function AgentView({
           loading={picking && !!earlier && allPrompts?.id !== id}
           start={rewinding.prompt}
           running={running}
-          agent={agentKind}
           onClose={() => setRewinding(null)}
           onRewind={rewind}
         />
@@ -2480,6 +2441,12 @@ const NOT_ASKED = "textarea, input, .agent-composer, .agent-head, .agent-edit .f
 // Code drawn as a block; a `code` outside one is inline, in what was said.
 const CODE_BLOCK = "pre, .agent-code, .agent-found-line";
 
+// What Copy all takes for a selection inside an element: a reply's Markdown as
+// written, or an output's every line however few are shown. On a phone,
+// dragging a selection's handle across screens of it is the hard way.
+const wholeOf = new WeakMap();
+const copiesAll = (text) => (el) => el && wholeOf.set(el, text);
+
 // SelectionAsk is a small bar over text selected in the conversation - what was
 // said, a call, its result, a page a reply shows - that quotes it in a reply
 // here (onReply, when this session can be written to) or in a new session's
@@ -2505,7 +2472,9 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
       const el = (n) => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
       const ends = [el(sel.getRangeAt(0).startContainer), el(sel.getRangeAt(0).endContainer)];
       if (!frame && ends.some((e) => !root.contains(e) || e.closest(NOT_ASKED))) return setAt(null);
-      if (snap) snapToWords(sel);
+      // Android drops its handles and menu for a selection a script changed,
+      // which ended a drag across long text wherever the finger paused.
+      if (snap && !matchMedia(TOUCH).matches) snapToWords(sel);
       const text = sel.toString().replace(/^\s*\n|\s+$/g, "");
       if (!text) return setAt(null);
       let r = sel.getRangeAt(0).getBoundingClientRect();
@@ -2519,12 +2488,15 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
       if (r.bottom < box.top || r.top > box.bottom) return setAt(null);
       const above = r.top - 34;
       const inline = ends.map((e) => e.closest("code"));
+      let whole;
+      for (let n = !frame && el(sel.getRangeAt(0).commonAncestorContainer); n && n !== root && whole == null; n = n.parentElement) whole = wholeOf.get(n);
       setAt({
         top: above >= box.top ? above : Math.min(r.bottom + 6, box.bottom - 34),
         left: Math.min(Math.max((r.left + r.right) / 2, box.left + 80), box.right - 80),
         text,
         code: ends.every((e) => e.closest(CODE_BLOCK)) ? "block" : inline[0] && inline[0] === inline[1] ? "inline" : false,
         file: (frame || ends[0]).closest(".agent-shown-card")?.dataset.path,
+        whole,
         doc,
       });
     };
@@ -2592,6 +2564,12 @@ function SelectionAsk({ within, active, onReply, onAsk }) {
       style={touch ? undefined : { top: at.top, left: at.left }}
       onMouseDown={(e) => e.preventDefault()}
     >
+      {touch && at.whole != null && (
+        <button className="attach-btn" onClick={() => take(() => copyText(at.whole).then(() => say("Copied"), () => say("Could not copy")))}>
+          <IconCopy size={13} />
+          <span>Copy all</span>
+        </button>
+      )}
       {onReply && (
         <button className="attach-btn" onClick={() => take(onReply)} title="Quote this in your reply, in this session">
           <IconReply size={13} />
@@ -2817,7 +2795,7 @@ function TaskOutput({ session, call, item }) {
 }
 
 // closeHint says what closing a session does, which depends on what runs it.
-function closeHint(running, temporary, agent, shared) {
+function closeHint(running, temporary, shared) {
   if (shared) {
     return "Stop talking to this session in dv. Its terminal has it to itself again.";
   }
@@ -2827,8 +2805,7 @@ function closeHint(running, temporary, agent, shared) {
   const after = temporary
     ? "It is temporary, so it leaves the list."
     : "It moves to Recent, and carries on from where it was when you next send to it.";
-  const what = agent === "codex" ? "stops what Codex is doing and lets the session go" : "stops the Claude Code running it";
-  return running === "dv" ? `Close the session: dv ${what}. ${after}` : `Close the session. ${after}`;
+  return running === "dv" ? `Close the session: dv stops the Claude Code running it. ${after}` : `Close the session. ${after}`;
 }
 
 // TURN_STEPS are what a turn does, whose times say when it was last at work.
@@ -3673,9 +3650,8 @@ function AgentText({ text, root, streaming, onAttach }) {
   const parts = useMemo(() => splitShown(md, text), [text]);
   const className = cx("markdown agent-text", streaming && "streaming");
   const env = { root };
-  if (!parts.some((p) => p.path)) return <Markdown md={md} env={env} text={text} className={className} />;
   return (
-    <div className="agent-shown-text">
+    <div className="agent-reply" ref={copiesAll(text)}>
       {parts.map((p, i) =>
         p.path ? (
           <Shown key={i} file={p} root={root} streaming={streaming} onAttach={onAttach} />
@@ -3896,7 +3872,7 @@ function ToolBody({ item, session, root, onOpenFile }) {
       {!(r?.said && !r.yes) && (
         <>
           {r && !out && <div className="file-note loading">Loading...</div>}
-          {out?.error && <pre className={cx("agent-result", r.isError && "error")}>{linkText(r.text)}</pre>}
+          {out?.error && <pre className={cx("agent-result", r.isError && "error")} ref={copiesAll(r.text)}>{linkText(r.text)}</pre>}
           {out && !out.error && <Output tool={tool} input={input} out={out} failed={r.isError} root={root} onOpenFile={onOpenFile} />}
         </>
       )}
@@ -3975,7 +3951,7 @@ function Lines({ className, text }) {
   const lines = text.replace(/\n$/, "").split("\n");
   const cut = !all && lines.length > SHOWN_LINES + 3;
   return (
-    <div className={cx(className, "agent-lines")}>
+    <div className={cx(className, "agent-lines")} ref={copiesAll(text.replace(/\n$/, ""))}>
       <pre>{linkText(cut ? lines.slice(0, SHOWN_LINES).join("\n") : text)}</pre>
       {cut && (
         <button className="link agent-more" onClick={() => setAll(true)}>
@@ -3998,7 +3974,7 @@ function ReadLines({ read, onOpenFile }) {
   const ready = langReady(read.lang);
   const html = useMemo(() => highlightLines("read:" + read.path + ":" + read.start, shown, read.lang), [shown, read.lang, read.path, read.start, ready]);
   return (
-    <div className="agent-code">
+    <div className="agent-code" ref={copiesAll(lines.join("\n"))}>
       {html.map((h, i) => {
         const n = read.start + i;
         return (
@@ -4103,8 +4079,8 @@ function Todos({ todos }) {
 // fetched when the card nears the screen, and commented on the way the diff
 // is. A comment here remembers the edit it was left on, and goes with the next
 // message unless taken out.
-function EditCard({ item, session, agent, view, contextLines, wrap, threads, onAttach, onComment, onThreadAction, onSymbol, onOpenFile }) {
-  const whose = `${agentName(agent)}'s edit`;
+function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, onComment, onThreadAction, onSymbol, onOpenFile }) {
+  const whose = "Claude's edit";
   const e = item.result.edited;
   const ref = useRef(null);
   const [state, setState] = useState(null); // { ed } or { error }
@@ -4268,9 +4244,9 @@ function EditCard({ item, session, agent, view, contextLines, wrap, threads, onA
 // terminal's /model has them. onPick is given { model } or { effort }; onAdd
 // and onDrop a model's name, to put on the list as /model takes it or take
 // off again.
-function ModelPicker({ label, models, model, efforts, effort, pending, onPick, onAdd, onDrop }) {
+function ModelPicker({ label, models, all, hidden, onHide, model, efforts, effort, onPick, onAdd, onDrop }) {
   const [open, setOpen] = useState(false);
-  const [adding, setAdding] = useState(null); // the name being typed; null shows the row that asks for one
+  const [editing, setEditing] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
   const room = useRoom(open, ref);
   const levels = useMemo(() => [...new Set(models.map((m) => m.efforts?.join(" ")).filter(Boolean))], [models]);
@@ -4278,62 +4254,35 @@ function ModelPicker({ label, models, model, efforts, effort, pending, onPick, o
     <div className="model-menu" ref={ref}>
       <button
         className="mini composer-pick"
-        onClick={() => (setOpen((o) => !o), setAdding(null))}
-        title={pending ? "Model and effort, from the next turn" : "Model and effort"}
+        onClick={() => (setOpen((o) => !o), setEditing(false))}
+        title="Model and effort"
       >
         {label}
         {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
         <IconChevronDown size={10} />
       </button>
-      {open && (
+      {open && editing && (
         <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          {models.map((c) => {
-            const row = (
-              <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
-                <span className="model-name">
-                  {c.label}
-                  {c.tag && <span className="model-tag">{c.tag}</span>}
-                </span>
-                {c.description && <span className="model-note">{c.description}</span>}
-              </button>
-            );
-            return c.added ? (
-              <div key={c.id} className="model-added">
-                {row}
-                <button className="model-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
-                  <IconX size={10} />
-                </button>
-              </div>
-            ) : (
-              row
-            );
-          })}
-          {adding === null ? (
-            <button className="model-add-row" onClick={() => setAdding("")}>
+          <ModelListEditor models={all} hidden={hidden} onHide={onHide} onAdd={onAdd} onDrop={onDrop} />
+        </div>
+      )}
+      {open && !editing && (
+        <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
+          {models.map((c) => (
+            <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
               <span className="model-name">
-                <IconPlus size={10} />
-                Add a model…
+                {c.label}
+                {c.tag && <span className="model-tag">{c.tag}</span>}
               </span>
+              {c.description && <span className="model-note">{c.description}</span>}
             </button>
-          ) : (
-            <input
-              className="model-add"
-              value={adding}
-              placeholder="Name, as for /model"
-              title="It stays on the list for every session."
-              spellCheck={false}
-              autoFocus
-              onChange={(e) => setAdding(e.target.value)}
-              onBlur={() => adding.trim() || setAdding(null)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === "Escape") setAdding(null);
-                if (e.key !== "Enter" || !adding.trim()) return;
-                onAdd(adding.trim());
-                setAdding(null);
-              }}
-            />
-          )}
+          ))}
+          <button className="model-add-row" onClick={() => setEditing(true)}>
+            <span className="model-name">
+              <IconSettings size={10} />
+              Edit the list…
+            </span>
+          </button>
           {levels.length > 0 && (
             <div className="model-efforts" title="How hard the model thinks before answering">
               <span>Effort</span>
@@ -4377,6 +4326,47 @@ function ModelPicker({ label, models, model, efforts, effort, pending, onPick, o
   );
 }
 
+// ModelListEditor is which models the picker offers: each of the list's ticked
+// on or off, one added by the name /model takes, and an added one taken off.
+function ModelListEditor({ models, hidden, onHide, onAdd, onDrop }) {
+  const [adding, setAdding] = useState("");
+  return (
+    <div className="unasked model-editor">
+      <span className="unasked-title">Models on the list</span>
+      {models.map((c) => (
+        <div key={c.id} className="model-added">
+          <label className="model-edit-row">
+            <input type="checkbox" checked={!hidden.includes(c.id)} onChange={(e) => onHide(c.id, !e.target.checked)} />
+            <span className="model-name">
+              {c.label}
+              {c.tag && <span className="model-tag">{c.tag}</span>}
+            </span>
+          </label>
+          {c.added && (
+            <button className="model-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
+              <IconX size={10} />
+            </button>
+          )}
+        </div>
+      ))}
+      <input
+        className="model-add"
+        value={adding}
+        placeholder="Add a model, by the name /model takes"
+        spellCheck={false}
+        onChange={(e) => setAdding(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key !== "Enter" || !adding.trim()) return;
+          onAdd(adding.trim());
+          setAdding("");
+        }}
+      />
+      <span className="unasked-note">Unticked, a model leaves the menu but stays in use where a session is on it. The list is the same in every folder.</span>
+    </div>
+  );
+}
+
 const HOW = [
   { label: "Restore the conversation", hint: "the code stays as it is", conversation: true, code: false },
   { label: "Restore the code and the conversation", hint: "undo Claude's edits since", conversation: true, code: true },
@@ -4385,11 +4375,10 @@ const HOW = [
 ];
 
 // RewindPicker is the terminal's double Esc: pick a message, then what to take
-// back to before it. Codex keeps no copies of the files it changes, so there
-// only the conversation goes back.
-function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewind }) {
+// back to before it.
+function RewindPicker({ prompts, loading, start, running, onClose, onRewind }) {
   const list = useMemo(() => prompts.slice().reverse(), [prompts]);
-  const how = agent === "codex" ? HOW.filter((h) => !h.code) : HOW;
+  const how = HOW;
   const [prompt, setPrompt] = useState(start || null);
   const [sel, setSel] = useState(0);
   const rows = prompt ? how : list;
@@ -4462,14 +4451,14 @@ function RewindPicker({ prompts, loading, start, running, agent, onClose, onRewi
           <kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> rewind · <kbd>Esc</kbd> {prompt && !start ? "back" : "close"}
         </span>
         {running === "dv" && <span className="spacer" />}
-        {running === "dv" && <span>Anything {agentName(agent)} is doing stops.</span>}
+        {running === "dv" && <span>Anything Claude is doing stops.</span>}
       </div>
     </Modal>
   );
 }
 
 // SessionID is enough of the ID to tell sessions apart; a click copies all of
-// it, for claude --resume or codex resume.
+// it, for claude --resume.
 function SessionID({ id }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -4547,7 +4536,7 @@ export function SessionList({
           <SessionName title={s.title || "New session"} hint={`${s.title || "New session"}\nIn ${f.name}`} />
           <button
             className="session-close"
-            title={closeHint(s.running, s.temporary, s.agent, s.shared)}
+            title={closeHint(s.running, s.temporary, s.shared)}
             onClick={(e) => {
               e.stopPropagation();
               closeAway(f, s);
@@ -4563,9 +4552,6 @@ export function SessionList({
           ) : (
             <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? "working" : "running in dv") : relTime(s.updated)}</span>
           )}
-          <span className="session-agent" title={s.agent === "codex" ? "A Codex session" : "A Claude Code session"}>
-            <AgentIcon agent={s.agent} size={11} />
-          </span>
           <span className="spacer" />
           <span className="session-folder">{where}</span>
         </div>
@@ -4598,7 +4584,7 @@ export function SessionList({
           {onRemove && (
             <button
               className="session-close"
-              title={`Remove from the list${isOpen(s) ? ", closing it" : ""}. Its transcript stays for ${resumeWith(s.agent)}.`}
+              title={`Remove from the list${isOpen(s) ? ", closing it" : ""}. Its transcript stays for ${RESUME}.`}
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove(s.id);
@@ -4610,7 +4596,7 @@ export function SessionList({
           {isOpen(s) && (
             <button
               className="session-close"
-              title={closeHint(s.running, s.temporary, s.agent, s.shared)}
+              title={closeHint(s.running, s.temporary, s.shared)}
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(s.id);
@@ -4632,9 +4618,6 @@ export function SessionList({
           ) : (
             <span>{s.running === "terminal" ? "in a terminal" : s.running === "dv" ? (s.busy ? s.status || "working" : "running in dv") : relTime(s.updated)}</span>
           )}
-          <span className="session-agent" title={s.agent === "codex" ? "A Codex session" : "A Claude Code session"}>
-            <AgentIcon agent={s.agent} size={11} />
-          </span>
           <SessionID id={s.id} />
           {s.temporary && (
             <span className="session-temporary" title="Temporary: it leaves the list once closed">
@@ -4692,7 +4675,7 @@ export function SessionList({
         {others.map(awayRow)}
         {recent.length > 0 && <div className="session-group">Recent</div>}
         {recent.map(row)}
-        {!available && <div className="empty">Neither the claude nor the codex CLI is on your PATH.</div>}
+        {!available && <div className="empty">The claude CLI is not on your PATH.</div>}
         {available && shown.length === 0 && !(q && awayShown.length) && (
           <div className="empty">{q ? "No sessions match." : "No sessions in this repository yet."}</div>
         )}

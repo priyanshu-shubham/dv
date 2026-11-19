@@ -175,7 +175,7 @@ function copy(text) {
 // the answers sit over it in the dock.
 export function Composer({
   name, draft, onDraft, inputRef, onPaste, placeholder, canSend, onSend, onStop, stop, lost,
-  extras, model, effort, mode, pending, onModel, onMode, onAttach,
+  extras, model, effort, mode, onModel, onMode, onAttach,
   asking, said, dockRef, offered, onOffer, chips,
 }) {
   // What floats over the conversation - the bar for selected text - sits above the box.
@@ -234,7 +234,6 @@ export function Composer({
             {mode && (
               <button className="p-pick" onClick={onMode}>
                 <span className="p-pick-text">{mode}</span>
-                {pending && <span className="p-pick-effort">next turn</span>}
                 <Icon name="drop" size={18} />
               </button>
             )}
@@ -255,23 +254,13 @@ export function Composer({
   );
 }
 
-// ModelSheet picks the model and how hard it thinks; for a session not yet
-// started, the agent too. A model can be added by the name /model takes.
-export function ModelSheet({ agents, agent, onAgent, models, model, efforts, effort, pending, onPick, onAdd, onDrop, onClose }) {
+// ModelSheet picks the model and how hard it thinks. A model can be added by
+// the name /model takes.
+export function ModelSheet({ models, model, efforts, effort, onPick, onAdd, onDrop, onClose }) {
   const [adding, setAdding] = useState(null); // the name being typed; null shows the row that asks for one
   return (
     <Sheet title="Model" onClose={onClose}>
-      {agents && (
-        <div className="p-seg">
-          {agents.map((a) => (
-            <button key={a.id} className={cx(a.id === agent && "on")} onClick={() => onAgent(a.id)}>
-              {a.id === agent && <Icon name="check" size={18} />}
-              {a.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {pending && <div className="p-note">Changes take effect from the next turn.</div>}
+
       {models.map((m) => {
         const choice = (
           <Choice
@@ -342,7 +331,7 @@ export function ModelSheet({ agents, agent, onAgent, models, model, efforts, eff
   );
 }
 
-export function ModeSheet({ modes, mode, pending, onPick, gear, onClose }) {
+export function ModeSheet({ modes, mode, onPick, gear, onClose }) {
   const [setting, setSetting] = useState(false);
   if (setting) {
     return (
@@ -353,7 +342,6 @@ export function ModeSheet({ modes, mode, pending, onPick, gear, onClose }) {
   }
   return (
     <Sheet title="Permission mode" onClose={onClose}>
-      {pending && <div className="p-note">Changes take effect from the next turn.</div>}
       {modes.map((m) => {
         const choice = <Choice key={m.id} title={m.label} sub={m.description} on={m.id === mode} onClick={() => (onPick(m.id), onClose())} />;
         return m.id === gear?.id ? (

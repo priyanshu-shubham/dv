@@ -17,9 +17,6 @@ import (
 // setupText is a message's words, intro then the session's setup.
 func setupText(intro string, s notify.Setup) string {
 	parts := []string{"Claude"}
-	if s.Agent == "codex" {
-		parts[0] = "Codex"
-	}
 	if m := modelOf(s); m.Label != "" {
 		parts = append(parts, m.Label)
 	}

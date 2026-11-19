@@ -722,7 +722,7 @@ function Start({ onWay, onAdded }) {
     <div className="hub-start">
       <div className="hub-start-head">
         <h1 className="agent-start-title">Welcome to your hub</h1>
-        <p>One address for every folder you work in: review what changed, run Claude Code or Codex, and open terminals, from here or your phone.</p>
+        <p>One address for every folder you work in: review what changed, run Claude Code, and open terminals, from here or your phone.</p>
       </div>
       <div className="hub-ways">
         {WAYS.map(({ id, key, Icon, title, note }) => (

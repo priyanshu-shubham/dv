@@ -293,14 +293,13 @@ export const api = {
 
   agentSessions: () => req("/api/agent/sessions"),
   // agentCommands is the slash commands an agent's sessions take: { commands: [{ name, description, argumentHint }] }.
-  agentCommands: (agent = "") => req(`/api/agent/commands${agent ? `?agent=${agent}` : ""}`),
+  agentCommands: () => req("/api/agent/commands"),
   // agentModel puts a model on the agent's list, as /model names it, or takes one put there off.
   agentModel: (agent, model, add) => req("/api/agent/models", { method: "POST", body: JSON.stringify({ agent, model, add }) }),
 
   // agentCreate makes a session to send a first message to; nothing runs yet.
-  // agent is "codex", or "" for Claude Code. ask makes it the Ask panel's,
-  // never listed.
-  agentCreate: (agent = "", ask = false) => req("/api/agent/sessions", { method: "POST", body: JSON.stringify({ agent, ask }) }),
+  // ask makes it the Ask panel's, never listed.
+  agentCreate: (ask = false) => req("/api/agent/sessions", { method: "POST", body: JSON.stringify({ ask }) }),
   // agentAsk takes a session out of the Ask panel, into the list, or back.
   agentAsk: (id, ask) => req(`/api/agent/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ ask }) }),
 
@@ -420,6 +419,10 @@ export const api = {
   // telegram: { bot, chat, connect, origin, sending, sender }, {} with no bot
   // set up. Links in its messages go to the page's address as it sets up or tests.
   telegram: () => req("/api/notify/telegram", {}, ""),
+  // secrets: [{ name, hint }], masked in what any session sends a model
+  secrets: () => req("/api/secrets", {}, ""),
+  secretAdd: (name, value) => req("/api/secrets", { method: "POST", body: JSON.stringify({ name, value }) }, ""),
+  secretRemove: (name) => req(`/api/secrets/${encodeURIComponent(name)}`, { method: "DELETE" }, ""),
   telegramSetUp: (token) => req("/api/notify/telegram", { method: "POST", body: JSON.stringify({ token, origin: location.origin }) }, ""),
   telegramRemove: () => req("/api/notify/telegram", { method: "DELETE" }, ""),
   telegramTest: () => req("/api/notify/telegram/test", { method: "POST", body: JSON.stringify({ origin: location.origin }) }, ""),

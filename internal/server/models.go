@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -10,20 +11,23 @@ import (
 	"unicode"
 
 	"dv/internal/agent"
+	"dv/internal/gateway"
 )
 
 // addedModels is the user pref of that name: the models the user put on the
-// picker's list, by agent, each as /model takes it.
+// picker's list, each as /model takes it, under "" as when dv ran more than
+// one agent.
 type addedModels map[string][]string
 
 // modelVersion is what is left off a model to name its kind: claude-opus-4-1 is an Opus.
 var modelVersion = regexp.MustCompile(`-\d.*$`)
 
-// withAdded is what a session of kind's can be put on: what its agent offers,
-// then the models the user added. An added one takes the effort levels of the
-// offered model of its kind, as the page does for a session moved to it with
-// /model. Until the agent has said what it offers, nothing is added either.
-func (s *Server) withAdded(kind string, offered []agent.Model) []agent.Model {
+// withAdded is what a session can be put on: what Claude Code offers, the
+// models the user added, then the Codex sign-in's. An added one takes the
+// effort levels of the offered model of its kind, as the page does for a
+// session moved to it with /model. Until Claude Code has said what it
+// offers, nothing is added either.
+func (s *Server) withAdded(offered []agent.Model) []agent.Model {
 	if len(offered) == 0 {
 		return offered
 	}
@@ -31,7 +35,7 @@ func (s *Server) withAdded(kind string, offered []agent.Model) []agent.Model {
 	json.Unmarshal(s.user.All()["addedModels"], &added)
 	// Clipped, so appending never writes into the agent's own list.
 	out := slices.Clip(offered)
-	for _, id := range added[kind] {
+	for _, id := range added[""] {
 		if slices.ContainsFunc(out, func(m agent.Model) bool { return m.ID == id || m.Model == id }) {
 			continue
 		}
@@ -43,11 +47,33 @@ func (s *Server) withAdded(kind string, offered []agent.Model) []agent.Model {
 		}
 		out = append(out, m)
 	}
+	return append(out, codexModels(out)...)
+}
+
+// codexModels are the models the user's Codex sign-in offers a Claude Code
+// session, through dv's gateway; one already on the list isn't put on twice.
+func codexModels(listed []agent.Model) []agent.Model {
+	gw := gateway.Active()
+	if gw == nil {
+		return nil
+	}
+	var out []agent.Model
+	for _, m := range gw.CodexModels() {
+		id := gateway.ModelPrefix + m.Slug
+		if slices.ContainsFunc(listed, func(l agent.Model) bool { return l.ID == id }) {
+			continue
+		}
+		desc := "Through your Codex sign-in"
+		if m.Window > 0 {
+			desc += fmt.Sprintf(" · %dk context", m.Window/1000)
+		}
+		out = append(out, agent.Model{ID: id, Model: id, Label: m.Label, Description: desc, Efforts: m.Efforts, Effort: m.Default})
+	}
 	return out
 }
 
 func (s *Server) modelsFor(session string) []agent.Model {
-	return s.withAdded(s.agent.AgentOf(session), s.agent.OptionsFor(session).Models)
+	return s.withAdded(s.agent.Options().Models)
 }
 
 // handleAgentModels puts a model on an agent's list, or takes one the user put
@@ -63,7 +89,7 @@ func (s *Server) handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSpace(req.Model)
-	if req.Agent != "" && req.Agent != "codex" || id == "" || len(id) > 200 || strings.ContainsFunc(id, unicode.IsSpace) {
+	if req.Agent != "" || id == "" || len(id) > 200 || strings.ContainsFunc(id, unicode.IsSpace) {
 		writeErr(w, http.StatusBadRequest, errors.New("a model is named in one word, as /model takes it"))
 		return
 	}

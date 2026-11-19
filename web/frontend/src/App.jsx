@@ -12,7 +12,7 @@ import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, runAction,
 import { BranchPalette } from "./Branches.jsx";
 import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
-import AgentView, { attachKey, resumeWith } from "./Agent.jsx";
+import AgentView, { attachKey, RESUME } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
@@ -28,7 +28,6 @@ import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
 import {
-  agentName,
   byLastSent,
   cx,
   globMatcher,
@@ -128,18 +127,7 @@ export default function App() {
   const [attachedBy, setAttachedBy] = usePref("repo", "agentAttachedBy", NO_ATTACHED_BY);
   const [attachPick, setAttachPick] = usePref("repo", "agentAttachTo", null);
   const [temporaryNew, setTemporaryNew] = useState(false); // the blank session's Temporary toggle
-  // The agent a new session starts with, "" for Claude Code, as last picked;
-  // one that is not installed gives way to the one that is.
-  const [newAgentPicked, setNewAgent] = usePref("user", "newAgent", "");
-  const newAgent = agent.codex?.available && (newAgentPicked === "codex" || !agent.available) ? "codex" : "";
-  const agents = useMemo(
-    () => ({
-      "": { available: agent.available, models: agent.models || [], mode: agent.mode, usage: agent.usage },
-      // Its models are null until the app-server has answered.
-      codex: agent.codex ? { ...agent.codex, models: agent.codex.models || [] } : { available: false, models: [] },
-    }),
-    [agent],
-  );
+  const agents = useMemo(() => ({ "": { available: agent.available, models: agent.models || [], mode: agent.mode, usage: agent.usage } }), [agent]);
   const sideRight = settings.sidebar === "right";
   const [agentReveal, setAgentReveal] = useState(null);
   // Counts what was put in the Agent view's message box from elsewhere, each
@@ -1375,9 +1363,9 @@ export default function App() {
     const t = setInterval(() => document.hidden || loadSessions(), 2500);
     return () => clearInterval(t);
   }, [mode, loadSessions]);
-  // The models come from asking Claude Code and Codex, which the first load sets off.
+  // The models come from asking Claude Code, which the first load sets off.
   useEffect(() => {
-    if (mode !== "agent" || (!agent.available || agent.models?.length) && (!agent.codex || agent.codex.models?.length)) return;
+    if (mode !== "agent" || !agent.available || agent.models?.length) return;
     const t = setTimeout(loadSessions, 500);
     return () => clearTimeout(t);
   }, [mode, agent, loadSessions]);
@@ -1396,7 +1384,7 @@ export default function App() {
   // for a moment, so other sessions can send to it; stepping through the list
   // does not start each one passed.
   const onScreen = mode === "agent" ? agent.sessions.find((x) => x.id === agentId) : null;
-  const wake = onScreen?.open && !onScreen.running && onScreen.agent !== "codex" ? onScreen.id : "";
+  const wake = onScreen?.open && !onScreen.running ? onScreen.id : "";
   useEffect(() => {
     if (!wake) return;
     const t = setTimeout(() => api.agentStart(wake).then(loadSessions, () => {}), 1000);
@@ -1405,11 +1393,11 @@ export default function App() {
   // A session is made when its first message is sent; until then it is the
   // page's blank one.
   const newSession = useCallback(async () => {
-    const { id } = await api.agentCreate(newAgent);
+    const { id } = await api.agentCreate();
     setAgentId(id);
     loadSessions();
     return id;
-  }, [newAgent, setAgentId, loadSessions]);
+  }, [setAgentId, loadSessions]);
   const startSession = useCallback(() => {
     setAgentId("");
     requestAnimationFrame(() => document.querySelector(".agent-composer textarea")?.focus());
@@ -1441,7 +1429,7 @@ export default function App() {
   const closeSession = useCallback(
     async (id) => {
       const row = agent.sessions.find((x) => x.id === id);
-      if (row?.running === "dv" && row.busy && !confirm(`${agentName(row.agent)} is still working in this session. Stop it and close?`)) return false;
+      if (row?.running === "dv" && row.busy && !confirm("Claude is still working in this session. Stop it and close?")) return false;
       await api.agentOpen(id, false).catch(() => {});
       if (id === agentId) setAgentId("");
       loadSessions();
@@ -1452,7 +1440,7 @@ export default function App() {
   const removeSession = useCallback(
     async (id) => {
       const row = agent.sessions.find((x) => x.id === id);
-      if (row?.running === "dv" && row.busy && !confirm(`${agentName(row.agent)} is still working in this session. Stop it and remove it?`)) return false;
+      if (row?.running === "dv" && row.busy && !confirm("Claude is still working in this session. Stop it and remove it?")) return false;
       try {
         await api.agentRemove(id);
       } catch (e) {
@@ -1464,7 +1452,7 @@ export default function App() {
       const undo = () => api.agentTemporary(id, false).then(loadSessions, (e) => say("Could not bring it back", e.message));
       say(
         "Removed from the list",
-        heldElsewhere(row) ? "It goes once the terminal running it closes" : `Its transcript stays for ${resumeWith(row?.agent)}`,
+        heldElsewhere(row) ? "It goes once the terminal running it closes" : `Its transcript stays for ${RESUME}`,
         [{ label: "Undo", primary: true, run: undo }],
         10000,
       );
@@ -1876,7 +1864,7 @@ export default function App() {
     const who = tabName(settings);
     const repo = meta ? `${who} - ${meta.repo} (${meta.place})` : who;
     const ended = dot === "done";
-    const note = n > 0 ? `${agentName(requests[0].via)} is waiting` : ended && "Finished";
+    const note = n > 0 ? "Claude is waiting" : ended && "Finished";
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
   }, [requests, dot, meta, settings.tabName]);
   const update = useUpdate(settings.updateCheck === false);
@@ -1913,7 +1901,7 @@ export default function App() {
     if (agentId && agentId !== attachPick && writable(agent.sessions.find((s) => s.id === agentId))) setAttachPick(agentId);
   }, [agentId, agent.sessions, attachPick, setAttachPick]);
   const attachChoices = useMemo(() => {
-    const choice = (s) => ({ id: s.id, label: s.title || s.prompt || "Untitled session", agent: s.agent || "" });
+    const choice = (s) => ({ id: s.id, label: s.title || s.prompt || "Untitled session" });
     const out = (activity || []).filter(writable).map(choice);
     const picked = agent.sessions.find((s) => s.id === attachPick);
     if (writable(picked) && !out.some((c) => c.id === picked.id)) out.unshift(choice(picked));
@@ -1968,14 +1956,14 @@ export default function App() {
   );
   // The Ask panel sits beside the code, which a phone has no room for.
   const attachTarget = useMemo(
-    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, newAgent, onAsk: !phoneApp && agents[askSettings.agent]?.available ? askAbout : null }),
-    [attachChoices, attachTo, setAttachPick, newAgent, askAbout, agents, askSettings.agent, phoneApp],
+    () => ({ choices: attachChoices, target: attachTo, onTarget: setAttachPick, onAsk: !phoneApp && agent.available ? askAbout : null }),
+    [attachChoices, attachTo, setAttachPick, askAbout, agent.available, phoneApp],
   );
   const newAsk = useCallback(async () => {
-    const { id } = await api.agentCreate(askSettings.agent, true);
+    const { id } = await api.agentCreate(true);
     setAskId(id);
     return id;
-  }, [askSettings.agent]);
+  }, []);
   // A new conversation ends the one there, whose transcript stays for the agent's resume.
   const endAsk = useCallback(
     (busy) => {
@@ -2418,8 +2406,6 @@ export default function App() {
     id: agentId,
     session: agent.sessions.find((x) => x.id === agentId),
     agents,
-    newAgent,
-    onNewAgent: setNewAgent,
     modes: agent.modes,
     root: meta?.root || "",
     view,
@@ -2484,8 +2470,6 @@ export default function App() {
         docked
         id={askId}
         agents={agents}
-        newAgent={askSettings.agent}
-        onNewAgent={() => {}}
         modes={agent.modes}
         root={meta?.root || ""}
         view={view}
@@ -2816,9 +2800,8 @@ export default function App() {
           onOneFile={phoneApp ? null : setOneFile}
           agent={{
             sessions: agent.sessions,
-            available: agent.available || !!agent.codex?.available,
-            // The limits of the agent on screen, or the one a new session starts with.
-            usage: agents[agentId ? agent.sessions.find((s) => s.id === agentId)?.agent || "" : newAgent]?.usage,
+            available: agent.available,
+            usage: agent.usage,
             activeId: agentId,
             added: attachedLive,
             asking: askingSessions,

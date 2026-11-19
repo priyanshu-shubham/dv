@@ -51,14 +51,13 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 		"available": agent.Available(),
 		"hooks":     hooks,
 		"sessions":  s.agent.Sessions(),
-		"models":    s.withAdded("", opts.Models),
+		"models":    s.withAdded(opts.Models),
 		"modes":     agentModes,
 		"mode":      opts.Mode,
 		"usage":     s.agent.Usage(),
 	}
-	if agent.CodexAvailable() {
-		c := s.agent.CodexOptions()
-		out["codex"] = map[string]any{"available": true, "models": s.withAdded("codex", c.Models), "mode": c.Mode, "usage": s.agent.CodexUsage()}
+	if codexInstalled() {
+		out["codex"] = map[string]any{"available": true, "models": codexActionModels()}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -66,28 +65,19 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 // handleAgentCommands is apart from the session list, which is asked for every
 // few seconds; the commands run to tens of kilobytes and seldom change.
 func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
-	opts := s.agent.Options()
-	if r.URL.Query().Get("agent") == "codex" {
-		opts = s.agent.CodexOptions()
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"commands": opts.Commands})
+	writeJSON(w, http.StatusOK, map[string]any{"commands": s.agent.Options().Commands})
 }
 
 func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Agent string `json:"agent"`
-		Ask   bool   `json:"ask"` // the Ask panel's, never listed
+		Ask bool `json:"ask"` // the Ask panel's, never listed
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	if req.Agent != "" && req.Agent != "codex" {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("dv runs Claude Code and Codex, not %q", req.Agent))
-		return
-	}
 	create := s.agent.Create
 	if req.Ask {
 		create = s.agent.CreateAsk
 	}
-	id, err := create(req.Agent)
+	id, err := create()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

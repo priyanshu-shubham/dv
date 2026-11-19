@@ -12,7 +12,7 @@ import (
 
 // A command the reader runs from the message box with !, as in the terminal.
 // Claude Code run headless would send it to the model as words, so dv runs it
-// itself, for Codex too, and then sends the command and what it printed as a
+// itself, and then sends the command and what it printed as a
 // message, in the form Claude Code's terminal records one.
 
 const (
@@ -53,7 +53,7 @@ func (m *Manager) Shell(id, uuid, command string) error {
 	if command == "" {
 		return errors.New("there is no command to run")
 	}
-	if !m.isCodex(id) && m.elsewhere(id) {
+	if m.elsewhere(id) {
 		return errors.New("this session is open in a terminal; dv follows it, but only the terminal can talk to it")
 	}
 	m.mu.Lock()
@@ -155,13 +155,7 @@ func (m *Manager) shellOf(id string) *Shell {
 	return nil
 }
 
-func (m *Manager) shellChanged(id string) {
-	if m.isCodex(id) {
-		m.codex.thread(id).signal()
-		return
-	}
-	m.signal(id, false)
-}
+func (m *Manager) shellChanged(id string) { m.signal(id, false) }
 
 // shellOutput is what a command run with ! printed, as one result.
 func shellOutput(text string) *Result {

@@ -1,16 +1,17 @@
 # dv
 
-A local place to review code and work with Claude Code and Codex, in the
-browser - a phone's too.
+A local place to review code and work with Claude Code, in the browser - a
+phone's too.
 
 - **Diff** - your changes, a branch, any commits or a pull request as GitHub
   shows it - nothing checked out - with comments on any line
-  that can be added to a message for Claude or Codex. Markdown takes them read
+  that can be added to a message for Claude. Markdown takes them read
   rendered as well, and any file takes one on the file itself - a picture or
   something binary included.
 - **Files** - the whole repository, or any branch or commit, to read and
   comment on.
-- **Agent** - Claude Code's and Codex's sessions beside the code: their edits
+- **Agent** - Claude Code's sessions beside the code, on Claude or on the GPT
+  models of your Codex sign-in: their edits
   show as diffs you can comment on, the comments go with your next message, and
   their permission prompts are answered in the page. A plan comes up for
   approval with its lines open to comments. A message starting with `!` runs
@@ -81,8 +82,8 @@ ARM — checks it against the release's checksums, and puts `dv` in
 another directory. On Windows, take the zip from the
 [releases page](https://github.com/priyanshu-shubham/dv/releases).
 
-dv needs `git` for the diff, and the `claude` or `codex` CLI on your PATH for
-the Agent view. `rg` is used for text search when present, with a built-in scanner as the
+dv needs `git` for the diff, and the `claude` CLI on your PATH for the Agent
+view; the `codex` CLI, signed in with ChatGPT, adds its models. `rg` is used for text search when present, with a built-in scanner as the
 fallback.
 
 To build it yourself: `make install`, with Go 1.24+, Node and pnpm.
@@ -109,8 +110,8 @@ that finishes, or wants an answer, is told of wherever you are: on another
 folder's page or on the hub's own, named by its folder.
 
 - `-host 0.0.0.0` reaches the hub from other devices on your network, where
-  **anyone who can reach the port can add folders, clone, run Claude or Codex
-  in them, and open a shell**.
+  **anyone who can reach the port can add folders, clone, run Claude in them,
+  and open a shell**.
   Over plain http from another device, browsers allow neither desktop
   notifications nor pasting a copied image; a tunnel with https gives both.
 - Clones use your own git credentials and never stop to ask for a password or a
@@ -175,8 +176,7 @@ In the repository, in `.dv/` at its root:
 - `viewed.json` — files marked viewed, per comparison
 - `prefs.json` — the file filters, unsent messages to Claude and what is added
   to them, half-answered questions
-- `agent.json` — the sessions open in dv and which are Codex's, rewinds not yet
-  sent, where you changed a session's permission mode, and the model and effort
+- `agent.json` — the sessions open in dv, rewinds not yet sent, where you changed a session's permission mode, and the model and effort
   picked for each Claude session
 - `server.json` — the address of the dv running here
 
@@ -241,7 +241,7 @@ Kotlin, Scala, C#, C, C++, Objective-C, PHP, shell, SQL, Protocol Buffers,
 Terraform and HCL, CSS, Elixir, Lua and Swift, plus Makefile targets and
 Markdown headings.
 
-**Files in replies**: dv tells Claude and Codex that a line of `![title](path)`
+**Files in replies**: dv tells Claude that a line of `![title](path)`
 shows that file in the reply - a picture, video, sound, PDF or HTML page - and
 to make a page when something comes across better interactively than as text.
 The path is absolute or from the folder. A page runs as part of dv, loads what
@@ -268,27 +268,28 @@ repository, so Claude Code behaves as always elsewhere. If dv moves, the next dv
 to start points the hooks at itself. **Turn the setting off before removing
 dv**, or the hooks are left running a binary that is not there.
 
-## Codex
+## The model gateway
 
-dv runs Codex through `codex app-server`, with your Codex config and login: one
-for every folder dv has open, started when the Agent view needs it and stopped
-a few minutes after nothing does. A new session picks Claude or Codex beside
-its model. The list has the folder's Codex sessions from Codex's own history;
-one open in a terminal is followed read-only, and its prompts stay the
-terminal's.
+The Claude Code sessions dv starts reach the model through dv itself, at its
+own address. A Claude model's requests go on to Anthropic as Claude Code sent
+them, with your own login - or to the `ANTHROPIC_BASE_URL` dv was started
+with. Sessions running in a terminal are not covered.
 
-The permission modes are made of Codex's sandbox and approvals, which cover
-commands and edits together rather than one at a time as Claude Code's do:
-**Ask before edits** keeps the sandbox read-only and asks for anything but a
-command Codex trusts, **Accept edits** lets it work inside the folder - writing
-there and running commands that stay in the sandbox, without the network - and
-asks to go beyond that, **Plan** is Codex's plan mode, and **Auto** has Codex's
-reviewer answer instead of you. Asked to go beyond its sandbox, Codex says why,
-which the request shows. A mode or model picked while Codex works takes effect
-from its next turn. A message sent while it works waits two seconds, when Esc takes it
-back, and then joins the turn. `/review` has Codex review what is uncommitted,
-or what you describe after it. Rewinding restores the conversation only: Codex
-keeps no copies of the files it changes.
+**Codex models**: with the `codex` CLI signed in with ChatGPT, the model picker
+also lists its GPT models, and a session on one is answered through that
+sign-in, in Claude Code's own tools and prompts. Codex's login stays Codex's:
+when its token is about to run out, dv has `codex app-server` refresh it. Claude
+Code doesn't know these models, so it compacts as if they had a 200k window,
+and dv shows no cost for them. **Edit the list…** in the picker hides models
+you don't use.
+
+An action can also run its prompt with the Codex CLI itself (`codex exec`), in
+a sandbox the action picks; its output shows under Actions.
+
+**Masked secrets**, in Settings › Agent, are sealed on this computer. Wherever
+one turns up in what a session sends - a file read, a command's output, your
+message - the model is sent `[[dv-secret:NAME]]` in its place, and the real
+value is put back in what it writes, so a command it runs still works.
 
 ## License
 

@@ -22,25 +22,23 @@ import (
 	"sync"
 	"time"
 
-	"dv/internal/codex"
+	"dv/internal/gateway"
 	"dv/internal/permit"
 	"dv/internal/store"
 )
 
 // Manager is the Agent view's side of the server: the sessions it lists, the
-// ones dv runs, and the transcripts open pages are following. Codex's sessions
-// are its codex side's; the rest of it is Claude Code's.
+// ones dv runs, and the transcripts open pages are following.
 type Manager struct {
 	root   string
 	broker *permit.Broker
 	saved  *store.Sessions // which are open, and rewinds still to be made real
-	codex  *codexSide
 	// Suggests says whether Claude sessions guess the next message after a
 	// turn, a setting a session takes up the next time it starts. Set once,
 	// before the first session starts.
 	Suggests func() bool
-	// Instructions is what dv adds to a session's own, Claude's or Codex's, as
-	// it starts. Set once, as Suggests is.
+	// Instructions is what dv adds to a session's own as it starts. Set once,
+	// as Suggests is.
 	Instructions func() string
 	// CloseIdle is how long an open session may go without a message before
 	// it moves to Recent; 0 is never. Set once, as Suggests is.
@@ -60,7 +58,6 @@ type Manager struct {
 	behind  map[string]bool      // transcripts for readBehind to read on
 	reading bool
 	titled  map[string]time.Time // when a title was last asked for, by session
-	agents  map[string]string    // sessions whose agent has been worked out
 	shells  map[string]*shellRun // commands run with !, by session
 	live    map[string]running
 	liveAt  time.Time
@@ -84,18 +81,18 @@ type cachedRow struct {
 
 func New(root string, broker *permit.Broker, saved *store.Sessions) *Manager {
 	m := &Manager{
-		root: root, broker: broker, saved: saved, codex: newCodexSide(root, broker, saved),
-		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{}, agents: map[string]string{},
+		root: root, broker: broker, saved: saved,
+		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{},
 		shells: map[string]*shellRun{}, scans: map[string]*earlier{}, behind: map[string]bool{}, titled: map[string]time.Time{},
 	}
-	m.codex.instructions = m.instructions
 	// A session started here but not yet sent to has no transcript, so all
 	// that says it exists is its place among the open ones.
 	if ids := saved.IDs(); len(ids) > 0 {
 		files := transcriptFiles(root)
 		for _, id := range ids {
 			if saved.Agent(id) == "codex" {
-				m.codex.thread(id)
+				// From when dv ran Codex's own sessions, which it no longer does.
+				saved.Set(id, false)
 			} else if _, ok := files[id]; !ok {
 				m.procs[id] = m.newProc(id, root, false)
 			}
@@ -112,40 +109,6 @@ func Available() bool {
 	return err == nil
 }
 
-// CodexAvailable reports whether there is a Codex to run.
-func CodexAvailable() bool { return codex.Available() }
-
-// isCodex reports whether a session is Codex's rather than Claude Code's.
-func (m *Manager) isCodex(id string) bool {
-	m.mu.Lock()
-	agent, known := m.agents[id]
-	_, claude := m.procs[id]
-	m.mu.Unlock()
-	if known {
-		return agent == "codex"
-	}
-	switch {
-	case claude:
-		return false
-	case m.saved.Agent(id) != "":
-		agent = m.saved.Agent(id)
-	default:
-		if _, ok := transcriptFiles(m.root)[id]; !ok {
-			mine, sure := m.codex.has(id)
-			if !sure {
-				return mine
-			}
-			if mine {
-				agent = "codex"
-			}
-		}
-	}
-	m.mu.Lock()
-	m.agents[id] = agent
-	m.mu.Unlock()
-	return agent == "codex"
-}
-
 // Visible reports whether a session's permission prompts belong in the page:
 // it is open in the Agent view, or dv runs it.
 func (m *Manager) Visible(session string) bool {
@@ -153,9 +116,6 @@ func (m *Manager) Visible(session string) bool {
 }
 
 func (m *Manager) runs(session string) bool {
-	if m.codex.running(session) {
-		return true
-	}
 	m.mu.Lock()
 	p := m.procs[session]
 	m.mu.Unlock()
@@ -227,16 +187,6 @@ func (m *Manager) Sessions() []Session {
 		row.Status = statusOf(p)
 		out = append(out, row)
 	}
-	for _, row := range m.codex.sessions() {
-		row.Open, row.Temporary, row.Kept = opened[row.ID] > 0, slices.Contains(temporary, row.ID), slices.Contains(kept, row.ID)
-		if row.Temporary && !row.Open && row.Running == "" {
-			continue
-		}
-		m.mu.Lock()
-		m.agents[row.ID] = "codex"
-		m.mu.Unlock()
-		out = append(out, row)
-	}
 	// Open sessions keep the order they were opened in, or two at work would
 	// trade places each time one wrote.
 	slices.SortFunc(out, func(a, b Session) int {
@@ -260,7 +210,6 @@ func (m *Manager) Sessions() []Session {
 // reader wherever in the page, or out of it, they are.
 type Activity struct {
 	ID        string    `json:"id"`
-	Agent     string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
 	Title     string    `json:"title,omitempty"`
 	Running   string    `json:"running,omitempty"`
 	Busy      bool      `json:"busy,omitempty"`
@@ -287,11 +236,8 @@ func (m *Manager) Activity() []Activity {
 	slices.Sort(ids)
 	files := transcriptFiles(m.root)
 	made := m.saved.Titles()
-	out := m.codex.activity(ids)
+	out := []Activity{}
 	for _, id := range ids {
-		if m.saved.Agent(id) == "codex" {
-			continue
-		}
 		a := Activity{ID: id}
 		a.Running, a.Busy = where(procs[id], live[id])
 		a.Shared = m.shared(id, live[id])
@@ -328,9 +274,6 @@ func (m *Manager) Activity() []Activity {
 // Title is what the session list calls a session, "" for one nothing has been
 // said in.
 func (m *Manager) Title(id string) string {
-	if m.isCodex(id) {
-		return m.codex.title(id)
-	}
 	path := transcriptFiles(m.root)[id]
 	if path == "" {
 		return ""
@@ -342,9 +285,6 @@ func (m *Manager) Title(id string) string {
 // Reply is what the agent said last in a session, whole and as written - the
 // Markdown of it - where Activity has the start of it on one line.
 func (m *Manager) Reply(id string) string {
-	if m.isCodex(id) {
-		return m.codex.reply(id)
-	}
 	path := transcriptFiles(m.root)[id]
 	if path == "" {
 		return ""
@@ -490,9 +430,6 @@ func (m *Manager) shared(id string, r running) bool {
 // other says: the one that writes after the other branches the conversation,
 // and the page shows the branch written last.
 func (m *Manager) Share(id string) error {
-	if m.isCodex(id) {
-		return errors.New("Codex lets only one process write to a session")
-	}
 	r, ok := m.running()[id]
 	if !ok {
 		return nil
@@ -508,30 +445,18 @@ func (m *Manager) Share(id string) error {
 	return nil
 }
 
-// Create starts a new session in the repository with agent, "codex" or Claude
-// Code's "". Nothing runs until the first message is sent.
-func (m *Manager) Create(agent string) (string, error) { return m.create(agent, false) }
+// Create starts a new session in the repository. Nothing runs until the first
+// message is sent.
+func (m *Manager) Create() (string, error) { return m.create(false) }
 
 // CreateAsk is Create for the Ask panel: marked before anything is told of
 // it, so it is never listed, and never open, being the panel's alone.
-func (m *Manager) CreateAsk(agent string) (string, error) { return m.create(agent, true) }
+func (m *Manager) CreateAsk() (string, error) { return m.create(true) }
 
-func (m *Manager) create(agent string, ask bool) (string, error) {
-	var id string
-	if agent == "codex" {
-		var err error
-		if id, err = m.codex.create(); err != nil {
-			return "", err
-		}
-	} else {
-		id = newUUID()
-	}
+func (m *Manager) create(ask bool) (string, error) {
+	id := newUUID()
 	m.mu.Lock()
-	if agent == "codex" {
-		m.agents[id] = "codex"
-	} else {
-		m.procs[id] = m.newProc(id, m.root, false)
-	}
+	m.procs[id] = m.newProc(id, m.root, false)
 	m.mu.Unlock()
 	if ask {
 		if err := m.saved.SetAsk(id, true); err != nil {
@@ -620,9 +545,7 @@ func (m *Manager) SetOpen(id string, open bool) error {
 			return err
 		}
 	}
-	if !open && m.isCodex(id) {
-		m.codex.thread(id).release()
-	} else if !open {
+	if !open {
 		m.mu.Lock()
 		p := m.procs[id]
 		delete(m.procs, id)
@@ -636,12 +559,8 @@ func (m *Manager) SetOpen(id string, open bool) error {
 }
 
 // Start runs a session ahead of a message, as looking at one does: stopped
-// while idle, it has no process for other sessions to send to. Codex has no
-// such messages to wait for.
+// while idle, it has no process for other sessions to send to.
 func (m *Manager) Start(id string) error {
-	if m.isCodex(id) {
-		return nil
-	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return err
@@ -792,13 +711,6 @@ func (m *Manager) send(id, message, text string, images []Image) (string, error)
 		_, err := m.saved.Set(id, true)
 		return err
 	}
-	if m.isCodex(id) {
-		if err := open(); err != nil {
-			return "", err
-		}
-		m.saved.SetAgent(id, "codex")
-		return m.codex.thread(id).send(cmp.Or(message, newUUID()), text, images)
-	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return "", err
@@ -812,9 +724,6 @@ func (m *Manager) send(id, message, text string, images []Image) (string, error)
 // Progress is how far a session has got with a message sent to it: queued
 // behind the step the agent is on, or taken up while it is still busy.
 func (m *Manager) Progress(id, message string) (queued, busy bool) {
-	if m.isCodex(id) {
-		return m.codex.thread(id).progress(message)
-	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -826,19 +735,8 @@ func (m *Manager) Progress(id, message string) (queued, busy bool) {
 	return slices.ContainsFunc(p.queued, func(q Queued) bool { return q.UUID == message }), p.busy
 }
 
-// AgentOf is who runs a session: "codex", or "" for Claude Code.
-func (m *Manager) AgentOf(id string) string {
-	if m.isCodex(id) {
-		return "codex"
-	}
-	return ""
-}
-
 // Picked is the model and effort asked for a session, "" for the agent's own.
 func (m *Manager) Picked(id string) (model, effort string) {
-	if m.isCodex(id) {
-		return m.codex.thread(id).picked()
-	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -853,9 +751,6 @@ func (m *Manager) Picked(id string) (model, effort string) {
 // Unqueue takes back a message still waiting for the step Claude is on, as Up
 // does in the terminal. It reports false once a turn has taken the message up.
 func (m *Manager) Unqueue(id, message string) (bool, error) {
-	if m.isCodex(id) {
-		return m.codex.thread(id).unqueue(message), nil
-	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -884,9 +779,6 @@ func (m *Manager) Interrupt(id string) error {
 	if m.stopShell(id) {
 		return nil
 	}
-	if m.isCodex(id) {
-		return m.codex.thread(id).interrupt()
-	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -903,9 +795,6 @@ func (m *Manager) Interrupt(id string) error {
 // agent, by its task: the call's result's Detail.Background. It takes the
 // process dv runs; one in a terminal is out of reach.
 func (m *Manager) StopTask(id, task string) error {
-	if m.isCodex(id) {
-		return errors.New("Codex's background work can only be stopped with the whole turn")
-	}
 	m.mu.Lock()
 	p := m.procs[id]
 	m.mu.Unlock()
@@ -942,15 +831,6 @@ func (m *Manager) StopTask(id, task string) error {
 // Configure sets the model, permission mode or effort, for the process running
 // now and the next one started.
 func (m *Manager) Configure(id string, model, mode, effort *string) error {
-	if m.isCodex(id) {
-		// Codex's auto review takes every approval, so edits cannot be kept
-		// for the user alone; asking before all of them is the nearer.
-		if mode != nil && *mode == AutoAskEdits {
-			asking := "default"
-			mode = &asking
-		}
-		return m.codex.thread(id).configure(model, mode, effort)
-	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return err
@@ -1028,9 +908,6 @@ func (m *Manager) ownMode(id, recorded string) string {
 // AsksEdits says whether a session is in AutoAskEdits, for its messages to
 // say so.
 func (m *Manager) AsksEdits(id string) bool {
-	if m.isCodex(id) {
-		return false
-	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return false
@@ -1084,9 +961,6 @@ func (m *Manager) Rename(id, title string) error {
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {
 		return errors.New("a session needs a name")
-	}
-	if m.isCodex(id) {
-		return m.codex.thread(id).rename(title)
 	}
 	if m.elsewhere(id) {
 		return errors.New("this session is open in a terminal; rename it there with /rename")
@@ -1167,17 +1041,6 @@ func agentName(path string) string {
 // the first prompt leaves nothing to keep, so that starts a new session, whose
 // id is returned.
 func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (string, error) {
-	if m.isCodex(id) {
-		switch {
-		case code:
-			return "", errors.New("Codex keeps no copies of the files it changes, so dv cannot restore the code")
-		case !conversation:
-			return id, nil
-		case before == "":
-			return m.Create("codex")
-		}
-		return id, m.codex.thread(id).rewind(prompt)
-	}
 	p, err := m.procFor(id)
 	if err != nil {
 		return "", err
@@ -1209,7 +1072,7 @@ func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (st
 		return id, nil
 	}
 	if before == "" {
-		return m.Create("")
+		return m.Create()
 	}
 	p.stop()
 	p.mu.Lock()
@@ -1266,9 +1129,6 @@ func failed(items []Item) bool {
 
 // items is the whole of the conversation the session is on.
 func (m *Manager) items(id string) []Item {
-	if m.isCodex(id) {
-		return m.codex.thread(id).items()
-	}
 	m.mu.Lock()
 	f := m.follows[id]
 	m.mu.Unlock()
@@ -1297,18 +1157,12 @@ func (m *Manager) items(id string) []Item {
 
 // Edit is the diff a tool call in a session made.
 func (m *Manager) Edit(id, tool string) (*EditDiff, error) {
-	if m.isCodex(id) {
-		return m.codex.edit(id, tool)
-	}
 	line, err := m.resultLine(id, tool)
 	return editOf(line, err, m.root)
 }
 
 // Output is the whole result of one of a session's tool calls.
 func (m *Manager) Output(id, tool string) (*Output, error) {
-	if m.isCodex(id) {
-		return m.codex.output(id, tool)
-	}
 	line, err := m.resultLine(id, tool)
 	if err != nil {
 		return nil, err
@@ -1318,9 +1172,6 @@ func (m *Manager) Output(id, tool string) (*Output, error) {
 
 // Image is the picture one of a session's Read calls was shown.
 func (m *Manager) Image(id, tool string) (*Image, error) {
-	if m.isCodex(id) {
-		return m.codex.image(id, tool)
-	}
 	line, err := m.resultLine(id, tool)
 	if err != nil {
 		return nil, err
@@ -1330,9 +1181,6 @@ func (m *Manager) Image(id, tool string) (*Image, error) {
 
 // PromptImage is the nth picture sent with one of a session's messages.
 func (m *Manager) PromptImage(id, message string, n int) (*Image, error) {
-	if m.isCodex(id) {
-		return m.codex.promptImage(id, message, n)
-	}
 	path, err := m.transcript(id)
 	if err != nil {
 		return nil, err
@@ -1361,9 +1209,6 @@ func (m *Manager) resultLine(id, tool string) ([]byte, error) {
 // TaskOutput is the file a call left running in the background writes its
 // output to, as its result says; Claude Code keeps these under a tasks folder.
 func (m *Manager) TaskOutput(id, tool string) (string, error) {
-	if m.isCodex(id) {
-		return "", errNoTask
-	}
 	line, err := m.resultLine(id, tool)
 	if err != nil {
 		return "", err
@@ -1409,11 +1254,6 @@ func (m *Manager) Close() {
 			p.stop()
 		}()
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		m.codex.close()
-	}()
 	wg.Wait()
 }
 
@@ -1451,7 +1291,6 @@ func (m *Manager) reap() {
 		for _, p := range idle {
 			p.stop()
 		}
-		m.codex.reap(idleFor, kept)
 	}
 }
 
@@ -1474,28 +1313,8 @@ func (m *Manager) closeIdle(now time.Time) {
 	}
 }
 
-// CodexOptions are what a Codex session starts with and can pick from.
-func (m *Manager) CodexOptions() Options { return m.codex.options() }
-
-// CodexUsage is how much of the Codex account's limits is used.
-func (m *Manager) CodexUsage() *Usage {
-	if !codex.Available() {
-		return nil
-	}
-	return m.codex.usageNow()
-}
-
-// OptionsFor is what the session's own agent offers.
-func (m *Manager) OptionsFor(id string) Options {
-	if m.isCodex(id) {
-		return m.codex.options()
-	}
-	return m.Options()
-}
-
 // Live is what a session is doing, beyond what its transcript says.
 type Live struct {
-	Agent   string `json:"agent,omitempty"`   // "codex"; "" is Claude Code
 	Found   bool   `json:"found"`             // the transcript exists yet
 	Running string `json:"running,omitempty"` // dv | terminal
 	Busy    bool   `json:"busy,omitempty"`
@@ -1518,9 +1337,6 @@ type Live struct {
 	// Since is when the turn going on began, where that is known.
 	Since string `json:"since,omitempty"`
 	Shell *Shell `json:"shell,omitempty"` // a command run with ! that has not reached the agent
-	// Pending is a model, mode or effort picked during a turn, which Codex
-	// takes from the next one.
-	Pending bool `json:"pending,omitempty"`
 	// Suggestion is the next message Claude Code guessed after the last turn.
 	Suggestion string `json:"suggestion,omitempty"`
 }
@@ -1616,10 +1432,6 @@ func (f *follow) transcript(root string) *Transcript {
 // or "" for the latest compaction. What came before a compaction is most of a
 // long session, and what Claude no longer has in front of it.
 func (m *Manager) Follow(id, from string) (*Sub, func()) {
-	if m.isCodex(id) {
-		s := &Sub{Changed: make(chan struct{}, 1), version: -1}
-		return s, m.codex.thread(id).follow(s, from == "all")
-	}
 	// Anywhere but the latest compaction needs what came before it read.
 	s, stop := m.startFollow(id, "", from != "")
 	s.from = from
@@ -1629,13 +1441,6 @@ func (m *Manager) Follow(id, from string) (*Sub, func()) {
 // FollowAgent follows the transcript of an agent a session started, by the
 // call that started it, for AgentUpdate. It is shown whole.
 func (m *Manager) FollowAgent(id, call string) (*Sub, func()) {
-	if m.isCodex(id) {
-		s := &Sub{Changed: make(chan struct{}, 1), version: -1}
-		if t := m.codex.agentThread(id, call); t != nil {
-			return s, t.follow(s, true)
-		}
-		return s, func() {}
-	}
 	return m.startFollow(id, call, true)
 }
 
@@ -1778,12 +1583,6 @@ func (m *Manager) read(f *follow) bool {
 // following it with FollowAgent last asked. Whether the agent is still at work
 // is its call's to say, in the session.
 func (m *Manager) AgentUpdate(id, call string, s *Sub) Update {
-	if m.isCodex(id) {
-		if t := m.codex.agentThread(id, call); t != nil {
-			return t.update(s)
-		}
-		return Update{}
-	}
 	m.mu.Lock()
 	f := m.follows[id+" "+call]
 	m.mu.Unlock()
@@ -1861,9 +1660,6 @@ func (m *Manager) Update(id string, s *Sub) Update {
 }
 
 func (m *Manager) update(id string, s *Sub) Update {
-	if m.isCodex(id) {
-		return m.codex.thread(id).update(s)
-	}
 	m.mu.Lock()
 	f := m.follows[id]
 	p := m.procs[id]
@@ -1917,6 +1713,11 @@ func (m *Manager) update(id string, s *Sub) Update {
 			u.Live.Context = &c
 		}
 		u.Live.Status, u.Live.Error, u.Live.Cost, u.Live.Suggestion = p.status, p.err, p.cost, p.suggestion
+		// Claude Code prices a model it doesn't know as it guesses; a Codex
+		// one is the user's subscription.
+		if strings.HasPrefix(cmp.Or(p.model, model), gateway.ModelPrefix) {
+			u.Live.Cost = 0
+		}
 		if p.busy && !p.since.IsZero() {
 			u.Live.Since = p.since.UTC().Format(time.RFC3339Nano)
 		}

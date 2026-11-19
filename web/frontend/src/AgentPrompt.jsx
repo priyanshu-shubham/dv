@@ -6,7 +6,7 @@ import { grow } from "./hunks.js";
 import { ensureLanguage, highlightLines, langReady } from "./highlight.js";
 import { useLayer } from "./Overlays.jsx";
 import { MarkdownDocument, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
-import { agentName, cx, isTyping, LRM, selectedAttr, splitPath, useCopy, usePersisted } from "./util.js";
+import { cx, isTyping, LRM, selectedAttr, splitPath, useCopy, usePersisted } from "./util.js";
 import { readPref, usePref } from "./prefs.js";
 import { AgentIcon, IconFile, IconX } from "./icons.jsx";
 import { Answers } from "./phone/Session.jsx";
@@ -39,7 +39,7 @@ export function useAgentEvents() {
   return { requests, sessions };
 }
 
-// AgentPrompt is the window Claude Code's and Codex's requests are answered in, over
+// AgentPrompt is the window Claude Code's requests are answered in, over
 // whatever the reader is doing, opened from a request's notice or the header's
 // bell. The terminal asks at the same time; whichever answers first wins, and
 // the request leaves here either way. It stays mounted while anything waits, so
@@ -65,7 +65,7 @@ export default function AgentPrompt({
   // request as a file in the review, the answers as palette rows.
   return createPortal(
     <div className="prompt-backdrop" ref={ref} hidden={!open} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <section className="modal modal-wide prompt" role="dialog" aria-modal="true" aria-label={`${agentName(req.via)} is asking`}>
+      <section className="modal modal-wide prompt" role="dialog" aria-modal="true" aria-label="Claude is asking">
         <div className="viewer-head prompt-head">
           <RequestTitle req={req} />
           <button className="prompt-session" onClick={() => onOpenSession(req.session)} title="Answer it in the session, in the Agent view">
@@ -111,9 +111,9 @@ export default function AgentPrompt({
 export function RequestTitle({ req }) {
   return (
     <>
-      <AgentIcon agent={req.via} size={14} />
+      <AgentIcon size={14} />
       <span className="prompt-title">
-        {agentName(req.via)} wants to {req.headline}
+        Claude wants to {req.headline}
       </span>
       {req.agent && (
         <span className="tag-generated" title="A subagent is asking">
@@ -270,7 +270,6 @@ export function Request({
         <Questions
           key={req.id}
           id={req.id}
-          agent={req.via}
           questions={req.input?.questions || []}
           busy={busy}
           armed={armed}
@@ -311,7 +310,7 @@ export function Request({
             <div className="prompt-list">
               <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
                 {options.map((o, i) => {
-                  const no = req.tool === "ExitPlanMode" ? "keep planning" : `stops ${agentName(req.via)}`;
+                  const no = req.tool === "ExitPlanMode" ? "keep planning" : "stops Claude";
                   const hint = optionHint(o, said, no);
                   return (
                     <button
@@ -344,7 +343,7 @@ export function Request({
                   rows={1}
                   value={note}
                   placeholder={
-                    options[sel]?.allow === false ? `Tell ${agentName(req.via)} what to do instead` : `Add a note for ${agentName(req.via)} - it goes with your answer`
+                    options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"
                   }
                   onChange={(e) => onDraft({ note: e.target.value })}
                 />
@@ -379,7 +378,7 @@ export function Request({
                 {/* In the conversation it goes without saying where Claude waits. */}
                 {(!req.dv || onLater) && (
                   <span className="also">
-                    {req.dv ? `${agentName(req.via)} is waiting in a session dv runs.` : "The terminal is asking too; the first answer counts."}
+                    {req.dv ? "Claude is waiting in a session dv runs." : "The terminal is asking too; the first answer counts."}
                   </span>
                 )}
               </span>
@@ -410,10 +409,8 @@ const NO_ANSWERS = { picked: {}, other: {}, otherOn: {}, notes: {} };
 // picking it up on another device loses nothing. rootRef is what takes the
 // focus; keysRef is handed the key handler Request calls while it has the
 // keys, which says whether it took the key.
-function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnswer }) {
-  const name = agentName(agent);
-  // Codex goes on without an answer; Claude stops.
-  const declined = agent === "codex" ? `decline to answer, and ${name} goes on without it` : `decline to answer, which stops ${name}`;
+function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
+  const declined = "decline to answer, which stops Claude";
   // The answers so far follow the request to another device; where this one is
   // among the tabs and rows stays with the browser tab.
   const [place, setPlace] = usePersisted("ask:" + id, NO_PLACE, { session: true, folder: true });
@@ -687,7 +684,7 @@ function Questions({ id, agent, questions, busy, armed, rootRef, keysRef, onAnsw
                 ref={noteRef}
                 rows={1}
                 value={notes[q.question] || ""}
-                placeholder={`Add a note for ${name} on this answer`}
+                placeholder="Add a note for Claude on this answer"
                 onFocus={() => setCursors((c) => ({ ...c, [tab]: q.options.length + 1 }))}
                 onChange={(e) => setNotes((ns) => ({ ...ns, [q.question]: e.target.value }))}
               />
@@ -1011,8 +1008,6 @@ function describe(req) {
   const input = req.input || {};
   const firstLine = (s) => (s || "").split("\n")[0];
   const p = req.previews?.[0];
-  // A Codex patch can change several files at once.
-  if (input.files?.length > 1) return { verb: "edit", target: `${input.files.length} files`, many: true };
   switch (req.tool) {
     case "Edit":
       return { verb: "edit", target: p?.path || input.file_path, path: true };

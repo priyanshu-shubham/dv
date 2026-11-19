@@ -334,7 +334,7 @@ export function ModeSwitch({ mode, modes, onMode, attached, uncommitted }) {
         className={cx(agent && "on")}
         aria-pressed={agent}
         onClick={() => onMode("agent")}
-        title={`Claude Code and Codex sessions (Shift+←/→ steps through the modes)${attached ? ` - ${attached} added to your next message` : ""}`}
+        title={`Claude Code sessions (Shift+←/→ steps through the modes)${attached ? ` - ${attached} added to your next message` : ""}`}
       >
         Agent
         {/* Keyed by the count, so each addition pulses. */}

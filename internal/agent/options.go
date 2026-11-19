@@ -66,9 +66,6 @@ type Limit struct {
 	Model    string  `json:"model,omitempty"`
 	Percent  float64 `json:"percent"`
 	ResetsAt string  `json:"resetsAt,omitempty"`
-	// Window is how long the limit's window is, in minutes, where the agent
-	// says: Codex's free plan has one of 30 days. Claude's are as named.
-	Window int64 `json:"window,omitempty"`
 }
 
 // Aliases, for when Claude Code could not be asked: each is the latest of its

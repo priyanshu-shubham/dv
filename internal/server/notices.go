@@ -115,13 +115,6 @@ func asking(waiting []Asked, session string) bool {
 	return false
 }
 
-func agentName(via string) string {
-	if via == "codex" {
-		return "Codex"
-	}
-	return "Claude"
-}
-
 func noticeID() string {
 	var b [12]byte
 	rand.Read(b[:])
@@ -130,8 +123,8 @@ func noticeID() string {
 
 func (s *Server) doneNotice(a agent.Activity) notify.Notice {
 	n := notify.Notice{
-		ID: noticeID(), Kind: notify.Done, Session: a.ID, Agent: a.Agent,
-		Title: agentName(a.Agent) + " finished", Where: a.Title, Body: a.Last,
+		ID: noticeID(), Kind: notify.Done, Session: a.ID,
+		Title: "Claude finished", Where: a.Title, Body: a.Last,
 	}
 	if reply := s.agent.Reply(a.ID); reply != "" {
 		n.Body, n.Format = clip(reply), notify.Markdown
@@ -141,8 +134,8 @@ func (s *Server) doneNotice(a agent.Activity) notify.Notice {
 
 func (s *Server) askNotice(r Asked) notify.Notice {
 	n := notify.Notice{
-		ID: r.ID, Kind: notify.Ask, Session: r.Session, Agent: r.Via, Request: r.ID,
-		Title: agentName(r.Via) + " wants to " + r.Headline, Where: r.Title,
+		ID: r.ID, Kind: notify.Ask, Session: r.Session, Request: r.ID,
+		Title: "Claude wants to " + r.Headline, Where: r.Title,
 	}
 	n.Body, n.Format = askBody(r.Request)
 	n.Body = clip(n.Body)

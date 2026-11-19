@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"dv/internal/codex"
+	"dv/internal/gateway"
 	"dv/internal/gitx"
 	"dv/internal/hub"
 	"dv/internal/logs"
@@ -112,7 +112,6 @@ func run() error {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-	codex.ClientVersion = version
 	server.Version = version
 
 	if *showVersion {
@@ -262,6 +261,9 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	mux.HandleFunc("GET /sw.js", server.HandleWorker)
 	mux.HandleFunc("GET /api/notify", server.Guarded(notices.HandleStream))
 	mux.HandleFunc("POST /api/notify/presence", server.Guarded(notices.HandlePresence))
+	mux.HandleFunc("GET /api/secrets", server.Guarded(server.HandleSecrets))
+	mux.HandleFunc("POST /api/secrets", server.Guarded(server.HandleAddSecret))
+	mux.HandleFunc("DELETE /api/secrets/{name}", server.Guarded(server.HandleRemoveSecret))
 	if tg := apps.tg; tg != nil {
 		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
 		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))
@@ -388,8 +390,12 @@ func serve(ln net.Listener, handler http.Handler, key string) error {
 		handler = server.RequireKey(handler, key, local)
 		fmt.Printf("  asking browsers for its key\n\n")
 	}
+	handler = server.Compress(handler)
+	if gw := startGateway(ln); gw != nil {
+		handler = withGateway(gw, handler)
+	}
 	httpSrv := &http.Server{
-		Handler: server.Compress(handler),
+		Handler: handler,
 		// No write timeout: a session's events stream for as long as the page is
 		// open, and a permission prompt waits on the reader. Read timeouts still
 		// bound a stuck client.
@@ -414,6 +420,39 @@ func serve(ln net.Listener, handler http.Handler, key string) error {
 		return errRestart{ln.Addr().String()}
 	}
 	return nil
+}
+
+// startGateway has the Claude Code this dv starts reach the model through it.
+// Without one they go straight to Anthropic, with no secrets masked.
+func startGateway(ln net.Listener) *gateway.Gateway {
+	if trial {
+		return nil
+	}
+	dir, err := store.ConfigDir()
+	keyDir, keyErr := store.DataDir()
+	if err = cmp.Or(err, keyErr); err != nil {
+		fmt.Fprintln(os.Stderr, "dv: warning: no model gateway, so no secrets masked or Codex models:", err)
+		return nil
+	}
+	gw, err := gateway.New(dir, keyDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "dv: warning: no model gateway, so no secrets masked or Codex models:", err)
+		return nil
+	}
+	gw.Serve(ln.Addr())
+	return gw
+}
+
+// withGateway serves the gateway outside the page's key and compression: its
+// path carries a token of its own, and a reply streams as it comes.
+func withGateway(gw *gateway.Gateway, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, gateway.Prefix) {
+			gw.ServeHTTP(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // version is stamped in by release builds (see .goreleaser.yaml).

@@ -24,7 +24,7 @@ func (t talk) List() []notify.Session {
 	var out []notify.Session
 	for _, a := range t.s.agent.Activity() {
 		out = append(out, notify.Session{
-			ID: a.ID, Title: a.Title, Agent: a.Agent, Running: a.Running,
+			ID: a.ID, Title: a.Title, Running: a.Running,
 			Busy: a.Busy, Asking: asking[a.ID], Updated: a.Updated,
 		})
 	}
@@ -75,25 +75,19 @@ type newModel map[string]struct {
 	Mode   string `json:"mode,omitempty"`
 }
 
-// Start begins a session as the page does: with the agent last picked for a
-// new one, on the model and effort last picked for that agent's, where it
-// still offers them. It starts in the mode the setting chatMode asks of one
-// begun from a chat app, or else the agent's own.
+// Start begins a session as the page does: on the model and effort last
+// picked for a new one, where they are still offered. It starts in the mode
+// the setting chatMode asks of one begun from a chat app, or else the agent's
+// own.
 func (t talk) Start(m notify.Message) (string, error) {
 	prefs := t.s.user.All()
-	var picked string
-	json.Unmarshal(prefs["newAgent"], &picked)
-	with := ""
-	if agent.CodexAvailable() && (picked == "codex" || !agent.Available()) {
-		with = "codex"
-	}
-	id, err := t.s.agent.Create(with)
+	id, err := t.s.agent.Create()
 	if err != nil {
 		return "", err
 	}
 	var last newModel
 	json.Unmarshal(prefs["newModel"], &last)
-	want := last[with]
+	want := last[""]
 	var mode *string
 	model, effort := t.s.picks(id, want.Model, want.Effort)
 	var settings struct {
@@ -117,7 +111,7 @@ func (t talk) Stop(session string) error { return t.s.agent.Interrupt(session) }
 func (t talk) Reply(session string) string { return t.s.agent.Reply(session) }
 
 func (t talk) Setup(session string) notify.Setup {
-	s := notify.Setup{Agent: t.s.agent.AgentOf(session)}
+	var s notify.Setup
 	s.Model, s.Effort = t.s.agent.Picked(session)
 	for _, m := range t.s.modelsFor(session) {
 		s.Models = append(s.Models, notify.Model{ID: m.ID, Label: m.Label, Effort: m.Effort, Efforts: m.Efforts})
@@ -137,10 +131,9 @@ func (t talk) Configure(session string, model, effort *string, asNew bool) error
 	if last == nil {
 		last = newModel{}
 	}
-	kind := t.s.agent.AgentOf(session)
-	pick := last[kind]
+	pick := last[""]
 	pick.Model, pick.Effort = t.s.agent.Picked(session)
-	last[kind] = pick
+	last[""] = pick
 	b, _ := json.Marshal(last)
 	return t.s.user.Set("newModel", b, nil)
 }

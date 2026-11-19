@@ -43,8 +43,8 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
   if (!available) {
     return (
       <div className="p-empty">
-        <h2>Neither Claude Code nor Codex is installed</h2>
-        <p>The Agent tab runs the claude or codex CLI, and neither is on the PATH of the computer dv runs on.</p>
+        <h2>Claude Code is not installed</h2>
+        <p>The Agent tab runs the claude CLI, which is not on the PATH of the computer dv runs on.</p>
       </div>
     );
   }
@@ -189,8 +189,8 @@ function SessionRow({ s, req, folder, onOpen, onHold, onSwipe, removes }) {
         {...(onHold ? hold : {})}
         {...touch}
       >
-        <span className={cx("p-lead", s.agent === "codex" ? "codex" : "claude")}>
-          <AgentIcon agent={s.agent} size={18} />
+        <span className="p-lead claude">
+          <AgentIcon size={18} />
         </span>
         <span className="p-row-body">
           <span className="p-row-top">

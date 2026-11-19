@@ -27,14 +27,13 @@ func TestAddedModels(t *testing.T) {
 		`{"model":"claude-opus-4-1","add":true}`,
 		`{"model":" my-proxy ","add":true}`,
 		`{"model":"opus","add":true}`,
-		`{"agent":"codex","model":"gpt-5.1-codex-max","add":true}`,
 		`{"model":"claude-opus-4-1","add":true}`,
 	} {
 		if c := post(body); c != http.StatusOK {
 			t.Fatalf("%s: %d", body, c)
 		}
 	}
-	for _, body := range []string{`{"model":"two words","add":true}`, `{"model":"","add":true}`, `{"agent":"gemini","model":"x","add":true}`} {
+	for _, body := range []string{`{"model":"two words","add":true}`, `{"model":"","add":true}`, `{"agent":"codex","model":"x","add":true}`} {
 		if c := post(body); c != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", body, c)
 		}
@@ -45,7 +44,7 @@ func TestAddedModels(t *testing.T) {
 		{ID: "opus", Model: "claude-opus-5-5"},
 		{ID: "sonnet", Model: "claude-sonnet-5", Efforts: []string{"low", "high"}},
 	}
-	got := s.withAdded("", offered)
+	got := s.withAdded(offered)
 	ids := []string{}
 	for _, m := range got {
 		ids = append(ids, m.ID)
@@ -60,20 +59,16 @@ func TestAddedModels(t *testing.T) {
 	if m := got[3]; !m.Added || m.Efforts != nil {
 		t.Errorf("a model of no offered kind is %+v, want no efforts", m)
 	}
-	if got := s.withAdded("", nil); got != nil {
+	if got := s.withAdded(nil); got != nil {
 		t.Errorf("before the agent has answered, listed %v", got)
-	}
-	if got := s.withAdded("codex", []agent.Model{{ID: ""}}); len(got) != 2 || got[1].ID != "gpt-5.1-codex-max" {
-		t.Errorf("Codex's list is %v", got)
 	}
 
 	post(`{"model":"my-proxy"}`)
 	post(`{"model":"claude-opus-4-1"}`)
 	post(`{"model":"opus"}`)
-	if got := s.withAdded("", offered); len(got) != len(offered) {
+	if got := s.withAdded(offered); len(got) != len(offered) {
 		t.Errorf("after taking them off, listed %v", got)
 	}
-	post(`{"agent":"codex","model":"gpt-5.1-codex-max"}`)
 	if _, ok := user.All()["addedModels"]; ok {
 		t.Error("an empty list is still kept")
 	}

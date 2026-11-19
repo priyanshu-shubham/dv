@@ -16,7 +16,6 @@ import (
 // Session is one row of the Agent view's list.
 type Session struct {
 	ID      string    `json:"id"`
-	Agent   string    `json:"agent,omitempty"` // "codex"; "" is Claude Code
 	Title   string    `json:"title"`
 	Prompt  string    `json:"prompt"` // the first thing asked, which names a session with no title
 	Cwd     string    `json:"cwd"`
@@ -33,14 +32,13 @@ type Session struct {
 	Temporary bool `json:"temporary,omitempty"`
 	// Kept is never stopped for being idle, and starts with dv.
 	Kept bool `json:"kept,omitempty"`
-	// The last thing said in it, by "you" or "claude" ("agent" for Codex).
+	// The last thing said in it, by "you" or "claude".
 	Last   string `json:"last,omitempty"`
 	LastBy string `json:"lastBy,omitempty"`
 	// How full its context is, as of the last reply the end of the file has.
 	Context *Context `json:"context,omitempty"`
 
-	// When the reader last wrote to it, if known: the end of a Claude Code
-	// transcript has it, and dv knows the Codex turns it started.
+	// When the reader last wrote to it, if the end of the transcript has it.
 	Sent time.Time `json:"sent,omitzero"`
 
 	used  int

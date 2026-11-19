@@ -80,14 +80,18 @@ func lastLines(s string, n int) string {
 	return s[i+1:]
 }
 
-// runCommand starts a's command, one run of an action at a time.
-func (s *Server) runCommand(a actionRun) error {
+// runCommand starts a's command, one run of an action at a time: argv, or
+// without it a's Command, with sh.
+func (s *Server) runCommand(a actionRun, argv ...string) error {
 	if a.ID == "" {
 		return errors.New("the action has no id")
 	}
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		return errors.New("commands run with sh, which is not on PATH")
+	if len(argv) == 0 {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			return errors.New("commands run with sh, which is not on PATH")
+		}
+		argv = []string{sh, "-e", "-c", a.Command}
 	}
 	s.actionsMu.Lock()
 	if s.commands == nil {
@@ -106,7 +110,7 @@ func (s *Server) runCommand(a actionRun) error {
 	s.ran[a.ID] = run
 	s.actionsMu.Unlock()
 
-	cmd := exec.CommandContext(ctx, sh, "-e", "-c", a.Command)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = s.repo.Root
 	cmd.Env = append(os.Environ(), "DV_REPO="+s.repo.MainRoot(), "DV_WORKTREE="+s.repo.Root, "DV_BRANCH="+s.repo.Head().Branch)
 	cmd.Stdout, cmd.Stderr = run.out, run.out

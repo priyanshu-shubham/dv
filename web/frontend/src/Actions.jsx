@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { boot } from "./boot.js";
 import { usePref } from "./prefs.js";
 import { cx } from "./util.js";
-import { Modal, modesFor, OFF_ON, SESSION_MODES, Setting, usePaletteNav } from "./Overlays.jsx";
+import { Modal, modesFor, OFF_ON, Setting, usePaletteNav } from "./Overlays.jsx";
 import { Picker } from "./Picker.jsx";
 import {
   AgentIcon, IconArrowDown, IconAsk, IconBack, IconBolt, IconBranch, IconCheck, IconComment, IconEdit, IconEye, IconFile, IconGauge, IconKeyboard,
@@ -77,14 +77,15 @@ export function describe(a, info) {
   if (a.builtin) return "Built in · only when it fast-forwards";
   if (a.kind === "command") return "Runs " + a.command.trim().split("\n")[0];
   if (a.where === "current") return a.draft ? "Current session · into its message box" : "Current session";
-  const model = modelsFor(a, info).find((m) => m.id === a.model);
+  // No model picked is the default one, which Claude Code's list names under "".
+  const model = modelsFor(a, info).find((m) => m.id === (a.model || ""));
   return [
-    a.temporary ? "New temporary session" : "New session",
+    a.agent === "codex" ? "Runs with codex exec" : a.temporary ? "New temporary session" : "New session",
     a.agent === "codex" ? "Codex" : "Claude",
-    a.model && (a.modelLabel || model?.label || a.model),
+    a.model ? a.modelLabel || model?.label || a.model : model?.label,
     a.effort,
-    a.mode && SESSION_MODES.find(([id]) => id === a.mode)?.[1],
-    a.close && "closes when done",
+    a.mode && modesFor(a.agent).find(([id]) => id === a.mode)?.[1],
+    a.agent !== "codex" && a.close && "closes when done",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -331,8 +332,8 @@ export function CommandOutput({ id, onClose }) {
 }
 
 // modeFor is the mode a start keeps on moving to agent: one it has no way to
-// do becomes Ask before edits, as the server would take it.
-const modeFor = (agent, mode) => (modesFor(agent).some(([id]) => id === mode) ? mode : "default");
+// do becomes the most careful it has.
+const modeFor = (agent, mode) => (modesFor(agent).some(([id]) => id === mode) ? mode : agent === "codex" ? "" : "default");
 
 // The Ask panel's conversation starts as Settings say, not as the last pick:
 // Ask before edits, so a question cannot change the code under review.
@@ -350,7 +351,8 @@ const NO_ASK = {};
 // useAskSettings is { agent, model, effort, mode, prompts }, and its setter.
 export function useAskSettings() {
   const [ask, setAsk] = usePref("user", "ask", NO_ASK);
-  return [useMemo(() => ({ ...ASK_START, prompts: ASK_PROMPTS, ...ask }), [ask]), setAsk];
+  // agent is kept from when Ask could run Codex, which it no longer does.
+  return [useMemo(() => ({ ...ASK_START, prompts: ASK_PROMPTS, ...ask, agent: "" }), [ask]), setAsk];
 }
 
 // AskSettings is Settings' Ask tab.
@@ -374,9 +376,6 @@ export function AskSettings() {
         Ask answers questions about the code you are reading in the side panel, without leaving it: pick lines or a file and use <IconAsk size={11} />{" "}
         beside Send. New questions join the same conversation, which stays out of the session list, and each repository keeps its own until you start a new one.
       </div>
-      {info?.codex && (
-        <Setting label="Agent" value={ask.agent} onPick={(agent) => edit({ agent, model: "", effort: "", mode: modeFor(agent, ask.mode) })} choices={[["", "Claude"], ["codex", "Codex"]]} />
-      )}
       <div className="settings-row">
         <div className="settings-text">
           <div>Model</div>
@@ -553,7 +552,13 @@ function ActionForm({ action, info, onSave, onCancel }) {
       {!command && a.where === "new" && (
         <>
           {info?.codex && (
-            <Setting label="Agent" value={a.agent} onPick={(agent) => edit({ agent, model: "", effort: "", modelLabel: "", mode: modeFor(agent, a.mode) })} choices={[["", "Claude"], ["codex", "Codex"]]} />
+            <Setting
+              label="Runs with"
+              note={a.agent === "codex" ? "codex exec, in this folder: its output shows under Actions, and a notice says when it is done." : ""}
+              value={a.agent}
+              onPick={(agent) => edit({ agent, model: "", effort: "", modelLabel: "", mode: modeFor(agent, a.mode) })}
+              choices={[["", "Claude Code"], ["codex", "Codex CLI"]]}
+            />
           )}
           <div className="settings-row">
             <div className="settings-text">
@@ -569,15 +574,19 @@ function ActionForm({ action, info, onSave, onCancel }) {
           {efforts.length > 0 && (
             <Setting label="Effort" value={a.effort} onPick={(effort) => edit({ effort })} choices={[["", "Usual"], ...efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])]} />
           )}
-          <Setting label="Mode" value={a.mode} onPick={(mode) => edit({ mode })} choices={modesFor(a.agent)} />
-          <Setting label="Temporary" note="Once closed, it leaves the session list." value={a.temporary} onPick={(temporary) => edit({ temporary })} choices={OFF_ON} />
-          <Setting
-            label="When it is done"
-            note="Closing stops the session. One that ends on an error, or that you interrupt, is left open."
-            value={a.close}
-            onPick={(close) => edit({ close })}
-            choices={[[false, "Keep it"], [true, "Close it"]]}
-          />
+          <Setting label={a.agent === "codex" ? "Sandbox" : "Mode"} value={a.mode} onPick={(mode) => edit({ mode })} choices={modesFor(a.agent)} />
+          {a.agent !== "codex" && (
+            <>
+              <Setting label="Temporary" note="Once closed, it leaves the session list." value={a.temporary} onPick={(temporary) => edit({ temporary })} choices={OFF_ON} />
+              <Setting
+                label="When it is done"
+                note="Closing stops the session. One that ends on an error, or that you interrupt, is left open."
+                value={a.close}
+                onPick={(close) => edit({ close })}
+                choices={[[false, "Keep it"], [true, "Close it"]]}
+              />
+            </>
+          )}
         </>
       )}
       <div className="action-form-foot">

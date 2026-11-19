@@ -17,10 +17,10 @@ export function useRoom(open, ref) {
   return open && room;
 }
 
-// Picker is a menu of choices, as the composer has for the agent and its mode.
-// pending marks a pick that waits for the next turn. gear, { id, title, panel },
-// puts a settings button on that choice, which turns the menu to the panel.
-export function Picker({ label, title, choices, value, pending, onPick, gear }) {
+// Picker is a menu of choices, as the composer has for the permission mode.
+// gear, { id, title, panel }, puts a settings button on that choice, which
+// turns the menu to the panel.
+export function Picker({ label, title, choices, value, onPick, gear }) {
   const [open, setOpen] = useState(false);
   const [setting, setSetting] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
@@ -29,7 +29,6 @@ export function Picker({ label, title, choices, value, pending, onPick, gear }) 
     <div className="model-menu" ref={ref}>
       <button className="mini" onClick={() => (setOpen((o) => !o), setSetting(false))} title={title}>
         {label}
-        {pending && <span className="composer-effort">next turn</span>}
         <IconChevronDown size={10} />
       </button>
       {open && (

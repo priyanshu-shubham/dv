@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dv/internal/gateway"
 	"dv/internal/permit"
 	"dv/internal/store"
 )
@@ -195,6 +196,7 @@ func (p *proc) startLocked(name string) error {
 	// a session driven this way, and rewinding the code has nothing to go back
 	// to. The second has it say when a turn is over.
 	cmd.Env = append(os.Environ(), "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1")
+	cmd.Env = append(cmd.Env, gateway.Env()...)
 	ownGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

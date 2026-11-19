@@ -120,10 +120,9 @@ export const PHONE_APP = `${PHONE}, ${TOUCH} and (max-height: 500px)`;
 export const PHONE_FOLDER_KEY = "dv:phone-folder";
 
 // limitWindow names a plan's usage limit, short and in full, by its window's
-// length in minutes: the agent's where it says (Codex's free plan has one of
-// 30 days), else `minutes`, the one its place in the plan has.
+// length in minutes.
 export function limitWindow(limit, minutes) {
-  const m = limit.window || minutes;
+  const m = minutes;
   if (m < 1440) {
     const h = Math.round(m / 60);
     return [`${h}h`, h === 5 ? "This five-hour window" : `This ${h}-hour window`];
@@ -342,8 +341,6 @@ export const statusLetter = (f) => (f.untracked ? "U" : f.status);
 // this mark pins the paragraph direction back to LTR.
 export const LRM = "\u200e";
 
-// agentName names the agent a session, request or activity is with: "codex",
-// or Claude's "".
 // plainText is Markdown flattened to a line of what it says, for a preview of
 // a reply: its words without the marks, headings, list bullets, quote bars,
 // table rules and fences, a link as its text. The server has made it one line
@@ -365,6 +362,7 @@ export const plainText = (s) =>
     .replace(/\s{2,}/g, " ")
     .trim();
 
+// agentName names who runs an action's prompt: "codex" for `codex exec`, else Claude.
 export const agentName = (agent) => (agent === "codex" ? "Codex" : "Claude");
 
 // Only followed in dv: another process has it open and dv was not let in too.
@@ -372,12 +370,10 @@ export const heldElsewhere = (s) => s?.running === "terminal" && !s.shared;
 
 // byLastSent orders open sessions the last written to first. By their last
 // activity instead, those at work would trade places as they go. Without the
-// time, as for a Codex session not written to since dv started, the session's
-// last activity stands in.
+// time, the session's last activity stands in.
 export const byLastSent = (a, b) => Date.parse(b.sent || b.updated) - Date.parse(a.sent || a.updated);
 
-// workingLabel says which agents are at work in a folder, from its hub status.
-export const workingLabel = (open) => (open.codex && open.claude ? "Claude and Codex are working" : `${open.codex ? "Codex" : "Claude"} is working`);
+export const workingLabel = () => "Claude is working";
 
 // splitPath separates a path into its directory and file name so the sidebar
 // can dim the directory.

@@ -38,7 +38,6 @@ const (
 
 // Setup is what a session runs on, and what else it could.
 type Setup struct {
-	Agent  string // "codex"; "" is Claude Code
 	Model  string // an ID of Models'; "" is the agent's own
 	Effort string // "" is the model's own
 	Models []Model
@@ -56,7 +55,6 @@ type Session struct {
 	Folder  string // its slug in a hub
 	Place   string // the folder's name
 	Title   string
-	Agent   string // "codex"; "" is Claude Code
 	Running string // "dv", "terminal", or "" when nothing runs it
 	Busy    bool
 	Asking  bool // waiting on the reader

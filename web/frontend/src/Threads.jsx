@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, Markdown } from "./links.js";
-import { agentName, cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
+import { cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
 import { AgentIcon, IconAsk, IconCheck, IconChevronDown, IconNewSession, IconReply, IconSpark, IconUndo } from "./icons.jsx";
 import { useBack } from "./phone/back.js";
 
@@ -167,8 +167,8 @@ function Thread({ thread, onAction, onAttach, compact, ticked, onTick }) {
 }
 
 // AttachTarget is the sessions code can be added to, and the one it goes to:
-// { choices: [{ id, label, agent }], target, onTarget, newAgent }, target ""
-// being a new session when there is none to choose, run by newAgent.
+// { choices: [{ id, label }], target, onTarget }, target "" being a new
+// session when there is none to choose.
 export const AttachTarget = createContext(null);
 
 // AttachButton sends code to a session's message box, in the Agent view, and
@@ -197,7 +197,7 @@ export function AttachButton({ className, onClick, what, instead, ask }) {
   }, [open]);
   const to = t?.choices.find((c) => c.id === t.target);
   const send = `Send ${what ? what + " " : ""}to a session's message box`;
-  const title = t ? `${send.replace("a session's", "the")} of ${agentName(to ? to.agent : t.newAgent)}${instead ? ", in place of what is there" : ""}, in ${to ? to.label : "a new session"}` : send;
+  const title = t ? `${send.replace("a session's", "the")} of Claude${instead ? ", in place of what is there" : ""}, in ${to ? to.label : "a new session"}` : send;
   return (
     <span className={cx("attach-split", className)} ref={ref}>
       {/* It goes to the box, not to the agent: you write the rest and send it there. */}
@@ -260,11 +260,10 @@ export function AttachButton({ className, onClick, what, instead, ask }) {
               setOpen(false);
               onClick("");
             }}
-            title={`Send to a new ${agentName(t.newAgent)} session, and go to it`}
+            title="Send to a new session, and go to it"
           >
             <IconNewSession size={14} />
             <span className="branch-name ui">New session</span>
-            <span className="branch-hint">{agentName(t.newAgent)}</span>
           </button>
         </div>,
           document.body,

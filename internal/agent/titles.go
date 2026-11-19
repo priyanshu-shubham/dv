@@ -12,12 +12,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"dv/internal/gateway"
 	"dv/internal/store"
 )
 
 // Claude Code's terminal titles a session it starts, but not one it is driven
-// headless, as dv drives them, nor one it resumes; Codex titles only in its
-// own terminal. dv names the rest from the conversation with one small request
+// headless, as dv drives them, nor one it resumes. dv names the rest from the
+// conversation with one small request
 // apiece, kept in its own store.
 
 // titling holds one title being made at a time, across every folder dv serves.
@@ -106,6 +107,7 @@ func claudeTitle(gist string) (string, error) {
 		"--output-format", "json")
 	cmd.Dir = os.TempDir()
 	cmd.Env = append(os.Environ(), "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1")
+	cmd.Env = append(cmd.Env, gateway.Env()...)
 	cmd.Stdin = strings.NewReader("<session>\n" + gist + "\n</session>")
 	out, err := cmd.Output()
 	var r struct {

@@ -111,7 +111,6 @@ var kept = map[string]string{
 	"localSettings":   ".claude/settings.local.json",
 	"projectSettings": ".claude/settings.json",
 	"userSettings":    "~/.claude/settings.json",
-	"codexRules":      "Codex's rules",
 }
 
 // offer is the option the terminal shows for one of Claude Code's
