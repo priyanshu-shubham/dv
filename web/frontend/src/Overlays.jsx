@@ -1061,7 +1061,7 @@ export function SettingsOverlay({
     ["diff", "Diff", IconSplit, phone ? "Context and wrapping" : "Layout, context and wrapping"],
     ["notifications", "Notifications", IconBell, "This phone, Telegram, Google Chat"],
     ["agent", "Agent", IconSpark, "Prompts, suggestions, titles"],
-    ["secrets", "Secrets", IconLock, secretCount ? `${secretCount} masked · asking · .env files` : "Masking, asking, .env files"],
+    ["secrets", "Secrets", IconLock, secretCount ? `${secretCount} masked · Gemini key · asking · .env files` : "Masking, Gemini key, asking, .env files"],
     ...(terminal ? [["terminal", "Terminal", IconShell, "Copying and typing"]] : []),
     ...(ask ? [["ask", "Ask", IconAsk, "The Ask panel's prompts"]] : []),
     ...(actions ? [["actions", "Actions", IconBolt, "Commands and prompts to run"]] : []),
@@ -1694,6 +1694,9 @@ function Secrets({ settings, onChange }) {
         </div>
       ))}
 
+      <div className="settings-heading">Gemini</div>
+      <GeminiKey secrets={list} />
+
       <div className="settings-heading">Asking</div>
       <Setting
         label="Ask before sending what looks like a secret"
@@ -1768,6 +1771,48 @@ function Secrets({ settings, onChange }) {
         ))}
       {editing && <MaskSecret name={editing.name} onClose={() => setEditing(null)} />}
     </>
+  );
+}
+
+// GeminiKey says whether the gateway has a Gemini API key to answer gemini/
+// models with, and what Google made of it. The key is a masked secret like
+// any other; its models are listed a moment after it is saved.
+function GeminiKey({ secrets }) {
+  const [st, setSt] = useState(null);
+  const [adding, setAdding] = useState(false);
+  useEffect(() => {
+    let tries = 0;
+    let timer;
+    const ask = () =>
+      api.gemini().then(
+        (s) => {
+          setSt(s);
+          if (s.key && !s.models && !s.error && ++tries < 8) timer = setTimeout(ask, 1500);
+        },
+        () => {},
+      );
+    ask();
+    return () => clearTimeout(timer);
+  }, [secrets]);
+  if (!st) return null;
+  let note = "A key from Google AI Studio, saved as GEMINI_API_KEY, puts Gemini's models in the model picker. Their requests go to Google's Gemini API with it, billed to the key's project.";
+  if (st.error) note = st.error;
+  else if (st.key) note = `${st.models ? `${st.models} models in the model picker` : "Listing its models…"}${st.key === "env" ? ", from GEMINI_API_KEY in dv's environment" : ""}.`;
+  return (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>Gemini API key</div>
+        <div className={cx("settings-note", st.error && "prompt-error")}>{note}</div>
+      </div>
+      {st.key !== "saved" && (
+        <span className="settings-actions">
+          <button className="btn" onClick={() => setAdding(true)}>
+            Add key
+          </button>
+        </span>
+      )}
+      {adding && <MaskSecret suggested="GEMINI_API_KEY" onClose={() => setAdding(false)} />}
+    </div>
   );
 }
 

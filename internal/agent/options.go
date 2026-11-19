@@ -430,10 +430,10 @@ func settingsAt(root string) time.Time {
 // window every model has, compacted as far short of its end. Until Claude Code
 // has been asked, it is not known at all.
 func windowFor(model string, o Options) Context {
-	// Told it by dv (gateway.Env), Claude Code compacts a Codex model 33k
-	// short of its window, as it does its own.
+	// Told it by dv (gateway.Env), Claude Code compacts a Codex or Gemini
+	// model 33k short of its window, as it does its own.
 	if gw := gateway.Active(); gw != nil {
-		if w := gw.CodexWindow(model); w > 0 {
+		if w := gw.Window(model); w > 0 {
 			return Context{Max: w, Compact: w - 33_000}
 		}
 	}

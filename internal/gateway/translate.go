@@ -123,16 +123,29 @@ var (
 	billingLine = regexp.MustCompile(`^x-anthropic-billing-header:(\s*[A-Za-z_]+=[^;\s]*;)*\s*`)
 )
 
-// toolNames maps a tool's name to one OpenAI takes, and back.
-type toolNames struct{ back map[string]string }
+// toolNames maps a tool's name to one OpenAI takes, and back. With letter,
+// for Gemini, a name starts with a letter or _ as well: Google turns the
+// whole request away over an MCP tool whose server's id starts with a digit.
+type toolNames struct {
+	back   map[string]string
+	letter bool
+}
+
+func startsWord(name string) bool {
+	c := name[0]
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
 
 func (t *toolNames) out(name string) string {
-	if functionName.MatchString(name) {
+	if functionName.MatchString(name) && (!t.letter || startsWord(name)) {
 		return name
 	}
 	sum := sha256.Sum256([]byte(name))
 	clean := notInName.ReplaceAllString(name, "_")
 	short := clean[:min(len(clean), 50)] + "_" + hex.EncodeToString(sum[:])[:8]
+	if t.letter && !startsWord(short) {
+		short = "t_" + short
+	}
 	if t.back == nil {
 		t.back = map[string]string{}
 	}
@@ -141,6 +154,14 @@ func (t *toolNames) out(name string) string {
 }
 
 func (t *toolNames) in(name string) string {
+	if t.letter {
+		// Gemini now and then names a call in its own tools' namespace.
+		for _, sep := range []string{":", "."} {
+			if rest, ok := strings.CutPrefix(name, "default_api"+sep); ok && rest != "" {
+				name = rest
+			}
+		}
+	}
 	if n, ok := t.back[name]; ok {
 		return n
 	}
@@ -418,6 +439,10 @@ func paired(input []map[string]any) []map[string]any {
 // Claude; a line ahead of it says otherwise. It is the same on every request,
 // so it stays in the cached prefix.
 func instructions(system json.RawMessage, slug string) string {
+	return instructionsAs(system, slug+", an OpenAI model")
+}
+
+func instructionsAs(system json.RawMessage, who string) string {
 	var parts []string
 	for _, b := range blocks(system) {
 		if b.Type != "text" {
@@ -427,7 +452,7 @@ func instructions(system json.RawMessage, slug string) string {
 			parts = append(parts, t)
 		}
 	}
-	head := "You are " + slug + ", an OpenAI model, working as the model behind Claude Code. What follows was written for Claude; where it names the model you are, it means you. Use the tools as described."
+	head := "You are " + who + ", working as the model behind Claude Code. What follows was written for Claude; where it names the model you are, it means you. Use the tools as described."
 	return head + "\n\n" + strings.Join(parts, "\n\n")
 }
 
@@ -522,10 +547,10 @@ func withoutReasoning(payload map[string]any) map[string]any {
 	return payload
 }
 
-// stripCodexReasoning drops Codex's reasoning from a request going to
-// Anthropic, which would refuse its signatures: a session moved from a Codex
-// model to Claude.
-func stripCodexReasoning(body []byte) []byte {
+// stripGatewayThinking drops the thinking a Codex or Gemini model did from
+// a request going to Anthropic, which would refuse its signatures: a session
+// moved from one of them to Claude.
+func stripGatewayThinking(body []byte) []byte {
 	var req map[string]json.RawMessage
 	if json.Unmarshal(body, &req) != nil {
 		return body
@@ -541,7 +566,7 @@ func stripCodexReasoning(body []byte) []byte {
 		}
 		kept := bs[:0]
 		for _, b := range bs {
-			if sig, _ := b["signature"].(string); b["type"] == "thinking" && strings.HasPrefix(sig, reasoningSig) {
+			if sig, _ := b["signature"].(string); b["type"] == "thinking" && (strings.HasPrefix(sig, reasoningSig) || strings.HasPrefix(sig, thoughtSig)) {
 				continue
 			}
 			kept = append(kept, b)

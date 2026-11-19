@@ -139,14 +139,18 @@ func (s *codexStream) begin(id string) error {
 		return nil
 	}
 	s.start = true
-	return s.out.send(newEvent("message_start", map[string]any{
+	return s.out.send(messageStart("msg_"+id, s.model))
+}
+
+func messageStart(id, model string) event {
+	return newEvent("message_start", map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
-			"id": "msg_" + id, "type": "message", "role": "assistant", "model": s.model,
-			"content": []any{}, "stop_reason": nil, "stop_sequence": nil,
+			"id": id, "type": "message", "role": "assistant", "model": model,
+			"content": []any{}, "stop_sequence": nil, "stop_reason": nil,
 			"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
 		},
-	}))
+	})
 }
 
 func (s *codexStream) added(at int, raw json.RawMessage) error {
@@ -246,22 +250,13 @@ func (s *codexStream) search(id, query string, sources []struct {
 		return err
 	}
 	use := "srvtoolu_" + strings.TrimPrefix(id, "ws_")
-	q, _ := json.Marshal(map[string]string{"query": query})
 	results := []map[string]any{}
 	for _, src := range sources {
 		if src.URL != "" {
 			results = append(results, map[string]any{"type": "web_search_result", "url": src.URL, "title": cmp.Or(src.Title, src.URL)})
 		}
 	}
-	evs := []event{
-		newEvent("content_block_start", map[string]any{"type": "content_block_start", "index": s.next,
-			"content_block": map[string]any{"type": "server_tool_use", "id": use, "name": "web_search", "input": map[string]any{}}}),
-		deltaEvent(s.next, "input_json_delta", string(q)),
-		newEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": s.next}),
-		newEvent("content_block_start", map[string]any{"type": "content_block_start", "index": s.next + 1,
-			"content_block": map[string]any{"type": "web_search_tool_result", "tool_use_id": use, "content": results}}),
-		newEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": s.next + 1}),
-	}
+	evs := searchEvents(s.next, use, query, results)
 	s.next += 2
 	for _, ev := range evs {
 		if err := s.out.send(ev); err != nil {
@@ -269,6 +264,20 @@ func (s *codexStream) search(id, query string, sources []struct {
 		}
 	}
 	return nil
+}
+
+// searchEvents are a web search's two blocks, from index at.
+func searchEvents(at int, use, query string, results []map[string]any) []event {
+	q, _ := json.Marshal(map[string]string{"query": query})
+	return []event{
+		newEvent("content_block_start", map[string]any{"type": "content_block_start", "index": at,
+			"content_block": map[string]any{"type": "server_tool_use", "id": use, "name": "web_search", "input": map[string]any{}}}),
+		deltaEvent(at, "input_json_delta", string(q)),
+		newEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": at}),
+		newEvent("content_block_start", map[string]any{"type": "content_block_start", "index": at + 1,
+			"content_block": map[string]any{"type": "web_search_tool_result", "tool_use_id": use, "content": results}}),
+		newEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": at + 1}),
+	}
 }
 
 func (s *codexStream) finish(reason string, u *codexUsage) error {
@@ -293,21 +302,27 @@ func (s *codexStream) finish(reason string, u *codexUsage) error {
 			"output_tokens":               u.Output,
 		}
 	}
+	return messageEnd(s.out, reason, usage, s.judge, s.calls)
+}
+
+// messageEnd ends a reply, with the verdicts on its calls where judge, for
+// auto mode, is given.
+func messageEnd(out sink, reason string, usage map[string]any, judge func([]toolCall) map[string]any, calls []toolCall) error {
 	delta := map[string]any{"stop_reason": reason, "stop_sequence": nil}
-	if s.judge != nil {
+	if judge != nil {
 		delta["safeguard_results"] = []any{map[string]any{
 			"type":   "dangerous_tool_use",
-			"status": map[string]any{"type": "available", "tool_uses": s.judge(s.calls)},
+			"status": map[string]any{"type": "available", "tool_uses": judge(calls)},
 		}}
 	}
-	if err := s.out.send(newEvent("message_delta", map[string]any{
+	if err := out.send(newEvent("message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": delta,
 		"usage": usage,
 	})); err != nil {
 		return err
 	}
-	return s.out.send(newEvent("message_stop", map[string]any{"type": "message_stop"}))
+	return out.send(newEvent("message_stop", map[string]any{"type": "message_stop"}))
 }
 
 func (s *codexStream) fail(e apiError) error {

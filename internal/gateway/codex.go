@@ -50,7 +50,7 @@ type codexUpstream struct {
 	refresh sync.Mutex
 
 	mu         sync.Mutex
-	models     []CodexModel
+	models     []Model
 	modelsAt   time.Time
 	modelsErr  error
 	asking     bool
@@ -62,8 +62,9 @@ type turnState struct {
 	at    time.Time
 }
 
-// CodexModel is a model the Codex sign-in offers.
-type CodexModel struct {
+// Model is a model the gateway serves other than Claude: one the Codex
+// sign-in offers, or the Gemini API key.
+type Model struct {
 	Slug    string
 	Label   string
 	Window  int
@@ -238,7 +239,7 @@ func archName() string {
 }
 
 // Models are those the sign-in offers, asked again every few minutes.
-func (c *codexUpstream) Models(ctx context.Context) ([]CodexModel, error) {
+func (c *codexUpstream) Models(ctx context.Context) ([]Model, error) {
 	c.mu.Lock()
 	if time.Since(c.modelsAt) < 10*time.Minute {
 		defer c.mu.Unlock()
@@ -258,7 +259,7 @@ func (c *codexUpstream) Models(ctx context.Context) ([]CodexModel, error) {
 
 // knownModels are the models last heard of, without waiting: a list gone
 // stale is asked for again behind it.
-func (c *codexUpstream) knownModels() []CodexModel {
+func (c *codexUpstream) knownModels() []Model {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modelsAt) >= 10*time.Minute && !c.asking {
@@ -275,7 +276,7 @@ func (c *codexUpstream) knownModels() []CodexModel {
 	return c.models
 }
 
-func (c *codexUpstream) fetchModels(ctx context.Context) ([]CodexModel, error) {
+func (c *codexUpstream) fetchModels(ctx context.Context) ([]Model, error) {
 	tok, acct, err := c.auth(ctx, false)
 	if err != nil {
 		return nil, err
@@ -297,12 +298,12 @@ func (c *codexUpstream) fetchModels(ctx context.Context) ([]CodexModel, error) {
 		return nil, err
 	}
 	slices.SortStableFunc(list.Models, func(a, b listedModel) int { return a.Priority - b.Priority })
-	var out []CodexModel
+	var out []Model
 	for _, m := range list.Models {
 		if m.Visibility != "list" {
 			continue
 		}
-		cm := CodexModel{Slug: m.Slug, Label: m.Display, Window: m.Window, Default: m.Default}
+		cm := Model{Slug: m.Slug, Label: m.Display, Window: m.Window, Default: m.Default}
 		for _, l := range m.Levels {
 			cm.Levels = append(cm.Levels, l.Effort)
 			if slices.Contains(claudeEfforts, l.Effort) {
@@ -419,20 +420,8 @@ func (c *codexUpstream) serve(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 
-	var out sink
-	var col *collector
-	var held *heldStream
-	if req.Stream {
-		held = newHeldStream(w)
-		out = held
-	} else {
-		col = &collector{}
-		out = col
-	}
-	if m.active() {
-		out = &unmasking{m: m, next: out, held: map[int]*heldDelta{}}
-	}
-	s := &codexStream{model: req.Model, names: names, out: out, blocks: map[int]*openBlock{}}
+	out := newReply(w, req.Stream, m)
+	s := &codexStream{model: req.Model, names: names, out: out.out, blocks: map[int]*openBlock{}}
 	for _, sg := range req.Safeguards {
 		if sg.Type == "dangerous_tool_use" {
 			levels := c.levelsOf(r.Context(), slug)
@@ -440,26 +429,21 @@ func (c *codexUpstream) serve(w http.ResponseWriter, r *http.Request, body []byt
 		}
 	}
 	s.run(resp.Body)
-	if held != nil {
-		held.close()
-		return
-	}
-	if col.failed != nil {
-		col.failed.write(w)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(col.message())
+	out.close()
 }
 
 // estimateTokens is about how many tokens a request is, for count_tokens:
 // its words and schemas, not the bytes of its pictures.
 func estimateTokens(payload map[string]any) int {
 	b, _ := json.Marshal(payload)
-	return len(dataURL.ReplaceAll(b, nil))/4 + 85*bytes.Count(b, []byte(`"input_image"`))
+	pictures := bytes.Count(b, []byte(`"input_image"`)) + bytes.Count(b, []byte(`"type":"image"`))
+	return len(rawData.ReplaceAll(dataURL.ReplaceAll(b, nil), nil))/4 + 85*pictures
 }
 
-var dataURL = regexp.MustCompile(`data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]+`)
+var (
+	dataURL = regexp.MustCompile(`data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]+`)
+	rawData = regexp.MustCompile(`"data":"[A-Za-z0-9+/=]{64,}"`)
+)
 
 // post sends a request, with Codex's sign-in refreshed and the request sent
 // again on a 401, and without its replayed reasoning where the backend can't

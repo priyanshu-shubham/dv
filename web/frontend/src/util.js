@@ -377,7 +377,7 @@ export const workingLabel = () => "Claude is working";
 
 // modelSource is where a model on the picker comes from, for its editor: ""
 // for Claude Code's own.
-export const modelSource = (m) => (m.id.startsWith("codex/") ? "Codex" : m.added ? "Added" : "");
+export const modelSource = (m) => (m.id.startsWith("codex/") ? "Codex" : m.id.startsWith("gemini/") ? "Gemini" : m.added ? "Added" : "");
 
 // inOrder is items as order (ids) arranges them. One order doesn't name - a
 // model released since it was set - keeps its place after the item it

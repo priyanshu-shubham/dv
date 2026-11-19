@@ -13,10 +13,10 @@ import (
 // Claude Code's auto mode asks the API to judge each action a reply takes
 // (safeguards, with the dangerous-tool-use beta), and reads the verdicts on
 // the reply's last message_delta (safeguard_results). Anthropic judges a
-// Claude model's; a Codex model's are judged here, by a Codex model, so a
-// session on one keeps auto mode whatever Claude Code's version or
-// telemetry. Where judging fails, a call is "unavailable", which Claude
-// Code doesn't take as allowed.
+// Claude model's; a Codex or Gemini model's are judged here, by a model of
+// its own kind, so a session on one keeps auto mode whatever Claude Code's
+// version or telemetry. Where judging fails, a call is "unavailable", which
+// Claude Code doesn't take as allowed.
 
 type safeguard struct {
 	Type    string          `json:"type"`
@@ -43,11 +43,25 @@ Ordinary development work - reading and editing files in the project, running it
 // judge has a Codex model decide which of calls auto mode should stop, as
 // safeguard_results' tool_uses has them.
 func (c *codexUpstream) judge(ctx context.Context, slug string, levels []string, sg safeguard, req *anthropicRequest, calls []toolCall) map[string]any {
+	return judged(ctx, sg, req, calls, func(ctx context.Context, ask string) (string, error) {
+		return c.verdicts(ctx, slug, levels, ask)
+	})
+}
+
+// judged has decide answer the judge's question about calls, and words its
+// verdicts as safeguard_results' tool_uses has them.
+func judged(ctx context.Context, sg safeguard, req *anthropicRequest, calls []toolCall, decide func(ctx context.Context, ask string) (string, error)) map[string]any {
 	out := map[string]any{}
 	if len(calls) == 0 {
 		return out
 	}
-	verdicts, err := c.verdicts(ctx, slug, levels, sg, req, calls)
+	ctx, cancel := context.WithTimeout(ctx, judgeTimeout)
+	defer cancel()
+	text, err := decide(ctx, judgeAsk(sg, req, calls))
+	var verdicts map[string]verdict
+	if err == nil {
+		verdicts, err = readVerdicts(text)
+	}
 	for _, call := range calls {
 		v, ok := verdicts[call.ID]
 		switch {
@@ -72,9 +86,7 @@ type verdict struct {
 	Reason  string `json:"reason"`
 }
 
-func (c *codexUpstream) verdicts(ctx context.Context, slug string, levels []string, sg safeguard, req *anthropicRequest, calls []toolCall) (map[string]verdict, error) {
-	ctx, cancel := context.WithTimeout(ctx, judgeTimeout)
-	defer cancel()
+func judgeAsk(sg safeguard, req *anthropicRequest, calls []toolCall) string {
 	var ask strings.Builder
 	fmt.Fprintf(&ask, "Context of the session (Claude Code's own account of it):\n%s\n\n", clip(string(sg.Context), 6000))
 	ask.WriteString("What the user asked, most recent last:\n")
@@ -85,18 +97,38 @@ func (c *codexUpstream) verdicts(ctx context.Context, slug string, levels []stri
 	for _, call := range calls {
 		fmt.Fprintf(&ask, "- id %s: %s %s\n", call.ID, call.Name, clip(call.Input, 3000))
 	}
+	return ask.String()
+}
+
+var verdictSchema = map[string]any{
+	"type": "object", "additionalProperties": false, "required": []string{"verdicts"},
+	"properties": map[string]any{"verdicts": map[string]any{"type": "array", "items": map[string]any{
+		"type": "object", "additionalProperties": false, "required": []string{"id", "flagged", "reason"},
+		"properties": map[string]any{"id": map[string]any{"type": "string"}, "flagged": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}},
+	}}},
+}
+
+func readVerdicts(text string) (map[string]verdict, error) {
+	var got struct {
+		Verdicts []verdict `json:"verdicts"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		return nil, fmt.Errorf("its answer didn't read: %w", err)
+	}
+	out := map[string]verdict{}
+	for _, v := range got.Verdicts {
+		out[v.ID] = v
+	}
+	return out, nil
+}
+
+func (c *codexUpstream) verdicts(ctx context.Context, slug string, levels []string, ask string) (string, error) {
 	effort := lowestEffort(levels)
 	payload := map[string]any{
 		"model": slug,
-		"input": []map[string]any{developerMessage(judgeInstructions), {"type": "message", "role": "user", "content": []map[string]any{{"type": "input_text", "text": ask.String()}}}},
+		"input": []map[string]any{developerMessage(judgeInstructions), {"type": "message", "role": "user", "content": []map[string]any{{"type": "input_text", "text": ask}}}},
 		"store": false, "stream": true,
-		"text": map[string]any{"format": map[string]any{"type": "json_schema", "name": "verdicts", "strict": true, "schema": map[string]any{
-			"type": "object", "additionalProperties": false, "required": []string{"verdicts"},
-			"properties": map[string]any{"verdicts": map[string]any{"type": "array", "items": map[string]any{
-				"type": "object", "additionalProperties": false, "required": []string{"id", "flagged", "reason"},
-				"properties": map[string]any{"id": map[string]any{"type": "string"}, "flagged": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}},
-			}}},
-		}}},
+		"text":             map[string]any{"format": map[string]any{"type": "json_schema", "name": "verdicts", "strict": true, "schema": verdictSchema}},
 		"prompt_cache_key": "dv-auto-mode-judge",
 	}
 	if effort != "" {
@@ -104,12 +136,12 @@ func (c *codexUpstream) verdicts(ctx context.Context, slug string, levels []stri
 	}
 	resp, err := c.post(ctx, payload, "dv-auto-mode-judge", false)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
+		return "", fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var text strings.Builder
 	readSSE(resp.Body, func(ev event) error {
@@ -122,17 +154,7 @@ func (c *codexUpstream) verdicts(ctx context.Context, slug string, levels []stri
 		}
 		return nil
 	})
-	var got struct {
-		Verdicts []verdict `json:"verdicts"`
-	}
-	if err := json.Unmarshal([]byte(text.String()), &got); err != nil {
-		return nil, fmt.Errorf("its answer didn't read: %w", err)
-	}
-	out := map[string]verdict{}
-	for _, v := range got.Verdicts {
-		out[v.ID] = v
-	}
-	return out, nil
+	return text.String(), nil
 }
 
 // userAsks are the last n things the user said in req, without the

@@ -17,6 +17,16 @@ import (
 
 var errNoGateway = errors.New("dv's model gateway is not running, so it masks nothing")
 
+// HandleGemini says whether there is a Gemini API key, and what it offers.
+func HandleGemini(w http.ResponseWriter, r *http.Request) {
+	gw := gateway.Active()
+	if gw == nil {
+		writeErr(w, http.StatusServiceUnavailable, errNoGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, gw.Gemini())
+}
+
 // HandleSecrets lists the secrets masked in what sessions send a model.
 func HandleSecrets(w http.ResponseWriter, r *http.Request) {
 	gw := gateway.Active()

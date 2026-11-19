@@ -279,6 +279,7 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	mux.HandleFunc("GET /api/secrets/exemptions", server.Guarded(server.HandleExemptions))
 	mux.HandleFunc("DELETE /api/secrets/allowed/{key}", server.Guarded(server.HandleForgetAllowed))
 	mux.HandleFunc("DELETE /api/secrets/unasked/{id}", server.Guarded(server.HandleAskAgain))
+	mux.HandleFunc("GET /api/gemini", server.Guarded(server.HandleGemini))
 	if tg := apps.tg; tg != nil {
 		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
 		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))

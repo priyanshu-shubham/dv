@@ -1,11 +1,13 @@
 // Package gateway is what the Claude Code sessions dv starts reach the model
 // through. It masks the user's secrets on the way out and puts them back in
 // the reply, sends a Claude model's requests on to Anthropic as they came,
-// and answers a Codex model's (codex/…) through the user's ChatGPT sign-in.
+// answers a Codex model's (codex/…) through the user's ChatGPT sign-in, and
+// a Gemini model's (gemini/…) with the user's Gemini API key.
 package gateway
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -18,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +39,7 @@ type Gateway struct {
 	client    *http.Client
 	mask      masker
 	codex     *codexUpstream
+	gemini    *geminiUpstream
 
 	keyDir, path string
 	mu           sync.Mutex
@@ -73,6 +77,7 @@ func New(configDir, keyDir string) (*Gateway, error) {
 		keyDir:    keyDir,
 		path:      filepath.Join(configDir, "secrets.json"),
 	}
+	g.gemini = newGeminiUpstream(g.geminiKey)
 	if err := g.load(); err != nil {
 		return nil, err
 	}
@@ -94,6 +99,7 @@ func (g *Gateway) Serve(addr net.Addr) {
 	active.Store(g)
 	// Known before a session starts, for the window it is told (Env).
 	g.codex.knownModels()
+	g.gemini.knownModels()
 }
 
 // Env is what a Claude Code dv starts on model runs with to go through the
@@ -112,15 +118,15 @@ func Env(model string) []string {
 
 // unknownWindow is the window Claude Code is told a model it doesn't know
 // has - it takes 200k otherwise, and leaves its own models' as they are. A
-// process has the one: the Codex model it starts on's, else the smallest a
-// Codex model has, so one moved to later never goes past its end; one
-// larger still compacts, worded so when the backend refuses the length.
+// process has the one: the Codex or Gemini model it starts on's, else the
+// smallest one of them has, so one moved to later never goes past its end;
+// one larger still compacts, worded so when the backend refuses the length.
 func (g *Gateway) unknownWindow(model string) int {
-	if w := g.CodexWindow(model); w > 0 {
+	if w := g.Window(model); w > 0 {
 		return w
 	}
 	least := 0
-	for _, m := range g.CodexModels() {
+	for _, m := range slices.Concat(g.CodexModels(), g.GeminiModels()) {
 		if m.Window > 0 && (least == 0 || m.Window < least) {
 			least = m.Window
 		}
@@ -155,12 +161,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Model string `json:"model"`
 	}
 	json.Unmarshal(body, &head)
-	if strings.HasPrefix(head.Model, ModelPrefix) {
+	switch {
+	case strings.HasPrefix(head.Model, ModelPrefix):
 		g.codex.serve(w, r, body, &g.mask)
 		return
+	case strings.HasPrefix(head.Model, GeminiPrefix):
+		g.gemini.serve(w, r, body, &g.mask)
+		return
 	}
-	if bytes.Contains(body, []byte(reasoningSig)) {
-		body = stripCodexReasoning(body)
+	if bytes.Contains(body, []byte(reasoningSig)) || bytes.Contains(body, []byte(thoughtSig)) {
+		body = stripGatewayThinking(body)
 	}
 	g.forward(w, r, rest, body)
 }
@@ -246,18 +256,66 @@ func copyFlushing(w http.ResponseWriter, r io.Reader) {
 
 // CodexModels are the models the user's Codex sign-in offers, none without
 // one or before the list has come.
-func (g *Gateway) CodexModels() []CodexModel { return g.codex.knownModels() }
+func (g *Gateway) CodexModels() []Model { return g.codex.knownModels() }
 
-// CodexWindow is the context window of a Codex model, 0 for another.
-func (g *Gateway) CodexWindow(model string) int {
-	slug, ok := strings.CutPrefix(model, ModelPrefix)
-	if !ok {
-		return 0
+// GeminiModels are the models the user's Gemini API key offers, none
+// without one or before the list has come.
+func (g *Gateway) GeminiModels() []Model { return g.gemini.knownModels() }
+
+// GeminiStatus is what Settings says of the Gemini API key: where it is
+// from ("saved", "env", none ""), how many models it offers, and why it
+// offers none where its models couldn't be listed - the key refused, most
+// often.
+type GeminiStatus struct {
+	Key    string `json:"key"`
+	Models int    `json:"models"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (g *Gateway) Gemini() GeminiStatus {
+	var st GeminiStatus
+	if saved := g.saved.Load(); saved != nil && (*saved)[GeminiKeyName] != "" {
+		st.Key = "saved"
+	} else if g.geminiKey() != "" {
+		st.Key = "env"
 	}
-	for _, m := range g.CodexModels() {
+	st.Models = len(g.GeminiModels())
+	if err := g.gemini.failed(); err != nil {
+		st.Error = err.Error()
+	}
+	return st
+}
+
+// Window is the context window of a Codex or Gemini model, 0 for another.
+func (g *Gateway) Window(model string) int {
+	var list []Model
+	slug, ok := strings.CutPrefix(model, ModelPrefix)
+	if ok {
+		list = g.CodexModels()
+	} else if slug, ok = strings.CutPrefix(model, GeminiPrefix); ok {
+		list = g.GeminiModels()
+	}
+	for _, m := range list {
 		if m.Slug == slug {
 			return m.Window
 		}
 	}
 	return 0
+}
+
+// Served says model is one the gateway answers itself, which Claude Code
+// knows nothing of: neither its price nor its window.
+func Served(model string) bool {
+	return strings.HasPrefix(model, ModelPrefix) || strings.HasPrefix(model, GeminiPrefix)
+}
+
+// geminiKey is the Gemini API key: the secret the user saved as
+// GEMINI_API_KEY, else dv's own environment's.
+func (g *Gateway) geminiKey() string {
+	if saved := g.saved.Load(); saved != nil {
+		if k := (*saved)[GeminiKeyName]; k != "" {
+			return k
+		}
+	}
+	return cmp.Or(os.Getenv(GeminiKeyName), os.Getenv("GOOGLE_API_KEY"))
 }

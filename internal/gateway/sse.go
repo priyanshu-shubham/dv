@@ -155,6 +155,44 @@ func (h *heldStream) close() {
 	}
 }
 
+// reply is where a reply translated into Anthropic's shape goes: held as a
+// stream, or gathered into one message for a client that asked for none,
+// the secrets put back in on the way.
+type reply struct {
+	w    http.ResponseWriter
+	out  sink
+	held *heldStream
+	col  *collector
+}
+
+func newReply(w http.ResponseWriter, stream bool, m *masker) *reply {
+	r := &reply{w: w}
+	if stream {
+		r.held = newHeldStream(w)
+		r.out = r.held
+	} else {
+		r.col = &collector{}
+		r.out = r.col
+	}
+	if m.active() {
+		r.out = &unmasking{m: m, next: r.out, held: map[int]*heldDelta{}}
+	}
+	return r
+}
+
+func (r *reply) close() {
+	if r.held != nil {
+		r.held.close()
+		return
+	}
+	if r.col.failed != nil {
+		r.col.failed.write(r.w)
+		return
+	}
+	r.w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(r.w).Encode(r.col.message())
+}
+
 // readSSE calls fn with each event of r, until r ends or fn fails.
 func readSSE(r io.Reader, fn func(event) error) error {
 	sc := bufio.NewScanner(r)

@@ -551,7 +551,7 @@ func TestExemptsOfOld(t *testing.T) {
 func TestStripCodexReasoning(t *testing.T) {
 	sig := encodeReasoning(reasoningItem{ID: "rs_1", Encrypted: "enc"})
 	body := `{"model":"claude-opus-5-5","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"` + sig + `"},{"type":"text","text":"done"}]}]}`
-	got := string(stripCodexReasoning([]byte(body)))
+	got := string(stripGatewayThinking([]byte(body)))
 	if strings.Contains(got, reasoningSig) || !strings.Contains(got, `"done"`) {
 		t.Fatalf("got %s", got)
 	}
