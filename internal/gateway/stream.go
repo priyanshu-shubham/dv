@@ -18,13 +18,18 @@ type codexStream struct {
 	tools  bool
 	start  bool
 	ended  bool
+	calls  []toolCall
+	// judge, where auto mode asked for it, has the reply's calls judged for
+	// its last message_delta (safeguard.go).
+	judge func([]toolCall) map[string]any
 }
 
 type openBlock struct {
-	index   int
-	kind    string
-	args    strings.Builder // a function call's arguments, as streamed
-	summary []string
+	index    int
+	kind     string
+	id, name string
+	args     strings.Builder // a function call's arguments, as streamed
+	summary  []string
 }
 
 type codexUsage struct {
@@ -167,7 +172,7 @@ func (s *codexStream) added(at int, raw json.RawMessage) error {
 	if err := s.begin(""); err != nil {
 		return err
 	}
-	b := &openBlock{index: s.next, kind: kind}
+	b := &openBlock{index: s.next, kind: kind, id: item.CallID, name: s.names.in(item.Name)}
 	s.next++
 	s.blocks[at] = b
 	return s.out.send(newEvent("content_block_start", map[string]any{"type": "content_block_start", "index": b.index, "content_block": start}))
@@ -214,15 +219,19 @@ func (s *codexStream) done(at int, raw json.RawMessage) error {
 	case "tool_use":
 		// The done item's arguments are whole where a delta went missing.
 		streamed := b.args.String()
+		args := streamed
 		if rest, ok := strings.CutPrefix(item.Arguments, streamed); ok && rest != "" {
+			args = item.Arguments
 			if err := s.out.send(deltaEvent(b.index, "input_json_delta", rest)); err != nil {
 				return err
 			}
 		} else if streamed == "" {
+			args = "{}"
 			if err := s.out.send(deltaEvent(b.index, "input_json_delta", "{}")); err != nil {
 				return err
 			}
 		}
+		s.calls = append(s.calls, toolCall{ID: b.id, Name: b.name, Input: args})
 	}
 	return s.out.send(newEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": b.index}))
 }
@@ -284,9 +293,16 @@ func (s *codexStream) finish(reason string, u *codexUsage) error {
 			"output_tokens":               u.Output,
 		}
 	}
+	delta := map[string]any{"stop_reason": reason, "stop_sequence": nil}
+	if s.judge != nil {
+		delta["safeguard_results"] = []any{map[string]any{
+			"type":   "dangerous_tool_use",
+			"status": map[string]any{"type": "available", "tool_uses": s.judge(s.calls)},
+		}}
+	}
 	if err := s.out.send(newEvent("message_delta", map[string]any{
 		"type":  "message_delta",
-		"delta": map[string]any{"stop_reason": reason, "stop_sequence": nil},
+		"delta": delta,
 		"usage": usage,
 	})); err != nil {
 		return err

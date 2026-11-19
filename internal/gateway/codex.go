@@ -433,6 +433,12 @@ func (c *codexUpstream) serve(w http.ResponseWriter, r *http.Request, body []byt
 		out = &unmasking{m: m, next: out, held: map[int]*heldDelta{}}
 	}
 	s := &codexStream{model: req.Model, names: names, out: out, blocks: map[int]*openBlock{}}
+	for _, sg := range req.Safeguards {
+		if sg.Type == "dangerous_tool_use" {
+			levels := c.levelsOf(r.Context(), slug)
+			s.judge = func(calls []toolCall) map[string]any { return c.judge(r.Context(), slug, levels, sg, &req, calls) }
+		}
+	}
 	s.run(resp.Body)
 	if held != nil {
 		held.close()

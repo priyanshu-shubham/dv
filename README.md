@@ -278,10 +278,12 @@ with. Sessions running in a terminal are not covered.
 **Codex models**: with the `codex` CLI signed in with ChatGPT, the model picker
 also lists its GPT models, and a session on one is answered through that
 sign-in, in Claude Code's own tools and prompts. Codex's login stays Codex's:
-when its token is about to run out, dv has `codex app-server` refresh it. Claude
-Code doesn't know these models, so it compacts as if they had a 200k window,
-and dv shows no cost for them. **Edit the list…** in the picker hides models
-you don't use.
+when its token is about to run out, dv has `codex app-server` refresh it. dv
+tells Claude Code each model's real context window, and shows no cost for them.
+In auto mode, where Anthropic would judge a Claude model's actions, a Codex
+model judges a Codex model's, so nothing from those sessions goes to Anthropic;
+an action it can't judge is left to you. **Edit the list…** in the picker hides
+models you don't use.
 
 An action can also run its prompt with the Codex CLI itself (`codex exec`), in
 a sandbox the action picks; its output shows under Actions.

@@ -25,6 +25,7 @@ type anthropicRequest struct {
 	OutputConfig *outputConfig `json:"output_config"`
 	Stream       bool          `json:"stream"`
 	Speed        string        `json:"speed"`
+	Safeguards   []safeguard   `json:"safeguards"`
 	Metadata     *struct {
 		UserID string `json:"user_id"`
 	} `json:"metadata"`
