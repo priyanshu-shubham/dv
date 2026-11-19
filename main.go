@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"dv/internal/agent"
 	"dv/internal/gateway"
 	"dv/internal/gitx"
 	"dv/internal/hub"
@@ -113,6 +114,7 @@ func run() error {
 	}
 	flag.Parse()
 	server.Version = version
+	agent.ClientVersion = version
 
 	if *showVersion {
 		fmt.Println("dv " + version)
@@ -270,6 +272,10 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	mux.HandleFunc("POST /api/secrets/allow", server.Guarded(server.HandleAllowSecrets))
 	mux.HandleFunc("GET /api/secrets/held", server.Guarded(server.HandleHeldSecrets))
 	mux.HandleFunc("POST /api/secrets/held/{id}", server.Guarded(server.HandleAnswerHeld))
+	mux.HandleFunc("GET /api/secrets/held/{id}/{i}", server.Guarded(server.HandleHeldValue))
+	mux.HandleFunc("GET /api/secrets/exemptions", server.Guarded(server.HandleExemptions))
+	mux.HandleFunc("DELETE /api/secrets/allowed/{key}", server.Guarded(server.HandleForgetAllowed))
+	mux.HandleFunc("DELETE /api/secrets/unasked/{id}", server.Guarded(server.HandleAskAgain))
 	if tg := apps.tg; tg != nil {
 		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
 		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))

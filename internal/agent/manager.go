@@ -155,6 +155,9 @@ func (m *Manager) Sessions() []Session {
 		row.Running, row.Busy = where(procs[id], live[id])
 		row.Shared = m.shared(id, live[id])
 		row.Temporary, row.Kept = slices.Contains(temporary, id), slices.Contains(kept, id)
+		if gw := gateway.Active(); gw != nil {
+			row.Unasked = !gw.Asking(id)
+		}
 		if row.Temporary && !row.Open && row.Running == "" {
 			delete(procs, id)
 			continue

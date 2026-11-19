@@ -18,6 +18,7 @@ import { say, useOpenIn } from "./Notices.jsx";
 import { Picker, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
 import {
+  agentName,
   attr,
   byLastSent,
   modelGroups,
@@ -46,7 +47,7 @@ import {
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
+  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
   IconTemporary,
   IconTrash,
   IconUndo, IconX,
@@ -425,8 +426,10 @@ async function pasteImages() {
   return files;
 }
 
-// AddImages is the box's +: a file, or on a phone that can, what was copied.
-function AddImages({ onFiles, onPaste, onMask }) {
+// AddImages is the box's +: a file, or on a phone that can, what was copied;
+// a secret to mask, and whether this session asks about ones it isn't told of
+// (asking: { on, set }).
+function AddImages({ onFiles, onPaste, onMask, asking }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
   const pick = (fn) => () => (setOpen(false), fn());
@@ -450,6 +453,17 @@ function AddImages({ onFiles, onPaste, onMask }) {
               <span className="model-name">Mask a secret…</span>
               <span className="model-note">Models are sent a placeholder in its place</span>
             </button>
+          )}
+          {asking && (
+            <div className="model-editor-row menu-switch">
+              <span className="model-editor-text" onClick={() => asking.set(!asking.on)}>
+                <span className="model-name">Ask about secrets in this session</span>
+                <span className="model-note">
+                  {asking.on ? "What looks like a secret waits for you to mask it or send it" : "Off: what looks like a secret is sent as is"}
+                </span>
+              </span>
+              <Switch on={asking.on} label="Ask about secrets in this session" onChange={asking.set} />
+            </div>
           )}
         </div>
       )}
@@ -630,8 +644,30 @@ export default function AgentView({
     if (slashed.length || !hash) return slashed;
     const q = hash[1].toUpperCase();
     const hits = [...secretList.filter((s) => s.name.startsWith(q)), ...secretList.filter((s) => !s.name.startsWith(q) && s.name.includes(q))];
-    return [...hits.map((s) => ({ name: s.name, secret: s })), { name: "#new", newSecret: true }];
+    return [...hits.map((s) => ({ name: s.name, secret: s })), { name: "#new", newSecret: true, as: q }];
   }, [draft, unsuggested, commands, hash, secretList]);
+  // Behind the box, each #NAME of a masked secret drawn as a chip: the box
+  // can't draw one, and the name it holds is what the message is sent with.
+  const mirrorRef = useRef(null);
+  const mirror = useMemo(() => {
+    if (!draft.includes("#")) return null;
+    const out = [];
+    let at = 0;
+    for (const m of draft.matchAll(/#([A-Za-z0-9_]+)/g)) {
+      if ((m.index > 0 && !/\s/.test(draft[m.index - 1])) || !secretList.some((s) => s.name === m[1])) continue;
+      out.push(draft.slice(at, m.index), <mark key={m.index}>{m[0]}</mark>);
+      at = m.index + m[0].length;
+    }
+    // The space keeps a last empty line as tall as the box's.
+    return out.length ? [...out, draft.slice(at) + " "] : null;
+  }, [draft, secretList]);
+  useLayoutEffect(() => {
+    const m = mirrorRef.current;
+    const el = inputRef.current;
+    if (!m || !el) return;
+    Object.assign(m.style, { top: `${el.offsetTop}px`, left: `${el.offsetLeft}px`, width: `${el.clientWidth}px`, height: `${el.clientHeight}px` });
+    m.scrollTop = el.scrollTop;
+  });
   useEffect(() => setPick(0), [draft]);
   // Pictures to go with the next message, by session like the draft: { key, mediaType, data }.
   const [imagesBy, setImagesBy] = useState({});
@@ -1693,14 +1729,22 @@ export default function AgentView({
   useEffect(() => {
     menuRef.current?.children[pick]?.scrollIntoView({ block: "nearest" });
   }, [pick]);
+  // putSecret has #name in the box where the # being written was, from start.
+  const putSecret = (name, start, end) => {
+    const put = `#${name} `;
+    setDraft((d) => d.slice(0, start) + put + d.slice(end));
+    setCaret(start + put.length);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(start + put.length, start + put.length);
+    });
+  };
   const complete = (c) => {
     if (c.secret || c.newSecret) {
       const start = caret - hash[0].length + (hash[0].startsWith("#") ? 0 : 1);
-      const put = c.secret ? `#${c.name} ` : "";
-      setDraft(draft.slice(0, start) + put + draft.slice(caret));
-      setCaret(start + put.length);
-      requestAnimationFrame(() => inputRef.current?.setSelectionRange(start + put.length, start + put.length));
-      if (c.newSecret) setMasking({});
+      // A new one is named as written so far, and put in the box once masked.
+      if (c.newSecret) setMasking({ name: c.as, put: (name) => putSecret(name, start, start + hash[0].trimStart().length) });
+      else putSecret(c.name, start, caret);
     } else setDraft(`/${c.name} `);
     inputRef.current?.focus();
   };
@@ -1730,7 +1774,7 @@ export default function AgentView({
               <span className="model-note">{c.secret.from ? `From ${c.secret.from}` : "The model is sent a placeholder; commands it runs get the value"}</span>
             </>
           ) : c.newSecret ? (
-            <span className="model-name">Mask a new secret…</span>
+            <span className="model-name">{c.as ? `Mask a new secret as #${c.as}…` : "Mask a new secret…"}</span>
           ) : (
             <>
               <span className="model-name">
@@ -1822,10 +1866,16 @@ export default function AgentView({
       >
         {commandMenu}
         {attachedRow}
+        {mirror && (
+          <div className="composer-mirror" aria-hidden ref={mirrorRef}>
+            {mirror}
+          </div>
+        )}
         <textarea
           ref={inputRef}
           value={draft}
           rows={blank ? 2 : 1}
+          onScroll={(e) => mirrorRef.current && (mirrorRef.current.scrollTop = e.target.scrollTop)}
           placeholder={busy ? `Add to what ${name} is doing` : blank ? (task ? `Ask ${name} anything` : `Ask ${name} to do something in this repository`) : `Reply to ${name}`}
           onChange={(e) => {
             setDraft(e.target.value);
@@ -1843,7 +1893,8 @@ export default function AgentView({
                 setPick((p) => (p + (e.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length);
                 return;
               }
-              if ((e.key === "Tab" && !e.shiftKey) || (e.key === "Enter" && !e.shiftKey && draft !== `/${c.name}`)) {
+              // A # that names no secret is left as written: Enter goes on to send.
+              if ((e.key === "Tab" && !e.shiftKey) || (e.key === "Enter" && !e.shiftKey && draft !== `/${c.name}` && !c.newSecret)) {
                 e.preventDefault();
                 complete(c);
                 return;
@@ -1874,6 +1925,11 @@ export default function AgentView({
             onFiles={() => fileRef.current.click()}
             onPaste={() => pasteImages().then((files) => (files.length ? addFiles(files) : setError("There is no image to paste."))).catch((e) => setError(e.message))}
             onMask={() => setMasking({})}
+            asking={
+              id && !readOnly && userSettings.askLooseSecrets !== false
+                ? { on: !session?.unasked, set: (on) => api.agentSecretsAsking(id, on).then(onChanged, (e) => setError(e.message)) }
+                : null
+            }
           />
           <input
             ref={fileRef}
@@ -2423,7 +2479,7 @@ export default function AgentView({
       )}
 
       {phoneSheets}
-      {masking && <MaskSecret picked={masking.picked} onClose={() => setMasking(null)} />}
+      {masking && <MaskSecret picked={masking.picked} suggested={masking.name} onMasked={masking.put} onClose={() => setMasking(null)} />}
       {loose && (
         <LooseSecrets
           note="Your message isn't sent yet."
@@ -4631,6 +4687,7 @@ export function SessionList({
   const sibling = ({ f }) => !!repoRoot && f.repoRoot === repoRoot;
   const siblings = awayShown.filter(sibling);
   const others = awayShown.filter((a) => !sibling(a));
+  const plans = (usage || []).filter((u) => u.limits);
 
   // Another folder's: opened, it takes the page to that folder. A worktree of
   // this repository is named by its branch, which is what tells them apart.
@@ -4794,24 +4851,34 @@ export function SessionList({
           {sessions.length} session{sessions.length === 1 ? "" : "s"}
         </span>
         <span className="spacer" />
-        {usage && <PlanLimit limit={usage.session} minutes={5 * 60} />}
-        {usage && <PlanLimit limit={usage.week} minutes={7 * 24 * 60} />}
-        {usage?.models?.map((l) => (
-          <PlanLimit key={l.model} limit={l} minutes={7 * 24 * 60} />
-        ))}
+        {plans.length > 0 && (
+          <span className="plan-usage">
+            {plans.map((u) => (
+              <span key={u.agent} className="plan-usage-row">
+                {(plans.length > 1 || u.agent) && <AgentIcon agent={u.agent} size={12} />}
+                <PlanLimit agent={u.agent} limit={u.limits.session} minutes={5 * 60} />
+                <PlanLimit agent={u.agent} limit={u.limits.week} minutes={7 * 24 * 60} />
+                {u.limits.models?.map((l) => (
+                  <PlanLimit key={l.model} agent={u.agent} limit={l} minutes={7 * 24 * 60} />
+                ))}
+              </span>
+            ))}
+          </span>
+        )}
       </div>
     </>
   );
 }
 
 // PlanLimit is how much of one of a plan's usage limits is spent.
-function PlanLimit({ limit, minutes }) {
+function PlanLimit({ agent, limit, minutes }) {
   if (!limit) return null;
   let [label, of] = limitWindow(limit, minutes);
   if (limit.model) [label, of] = [limit.model, `${limit.model}, ${of.toLowerCase()}`];
   const pct = Math.min(100, limit.percent);
   const when = limit.resetsAt && resetsWhen(limit.resetsAt);
-  const whose = limit.model ? `its own limit, apart from the plan's` : "the plan's usage";
+  const plan = `the ${agentName(agent)} plan's`;
+  const whose = limit.model ? `its own limit, apart from ${plan}` : `${plan} usage`;
   return (
     <span className={cx("plan-limit", pct >= 90 ? "high" : pct >= 75 && "warn")} title={`${of}: ${Math.round(limit.percent)}% of ${whose}${when ? `, resets ${when}` : ""}`}>
       {/* Elements, not bare text: with the bar hidden, text would run together. */}

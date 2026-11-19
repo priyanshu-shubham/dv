@@ -2510,7 +2510,7 @@ export default function App() {
   const overlays = (
     <>
       <SecretHover />
-      <HeldSecrets />
+      <HeldSecrets sessions={agent.sessions} />
       {windowed.length > 0 && (
         <AgentPrompt
           requests={windowed}
@@ -2804,7 +2804,10 @@ export default function App() {
           agent={{
             sessions: agent.sessions,
             available: agent.available,
-            usage: agent.usage,
+            usage: [
+              { agent: "", limits: agent.usage },
+              { agent: "codex", limits: agent.codex?.usage },
+            ],
             activeId: agentId,
             added: attachedLive,
             asking: askingSessions,

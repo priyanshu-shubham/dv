@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -35,6 +36,12 @@ func Watch(dirs func() []string, on, ask func() bool) {
 // envMin is the shortest value taken for a secret: "true", "3000" and
 // "localhost" are settings, not secrets.
 const envMin = 8
+
+// plainWords is a setting written in words - development, localhost,
+// eu-central - which masked would only blank the word wherever the model
+// reads it. Each word is one case, or capitalised: a token of random
+// letters mixes them.
+var plainWords = regexp.MustCompile(`^(?:[a-z]+|[A-Z][a-z]*|[A-Z]+)(?:[-_.](?:[a-z]+|[A-Z][a-z]*|[A-Z]+))*$`)
 
 type envSecret struct {
 	name, value, from string
@@ -124,7 +131,7 @@ func readEnv(path string) []envSecret {
 		} else if i := strings.Index(value, " #"); i >= 0 {
 			value = strings.TrimSpace(value[:i])
 		}
-		if len(value) >= envMin && !strings.ContainsAny(value, " \t") {
+		if len(value) >= envMin && !strings.ContainsAny(value, " \t") && !plainWords.MatchString(value) {
 			out = append(out, envSecret{strings.ToUpper(key), value, from})
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"dv/internal/agent"
+	"dv/internal/gateway"
 )
 
 // choice is one entry in a picker.
@@ -57,7 +59,7 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 		"usage":     s.agent.Usage(),
 	}
 	if codexInstalled() {
-		out["codex"] = map[string]any{"available": true, "models": codexActionModels()}
+		out["codex"] = map[string]any{"available": true, "models": codexActionModels(), "usage": agent.CodexUsage()}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -180,6 +182,39 @@ func (s *Server) handleAgentKeep(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.agent.SetKept(id, req.Keep); err != nil {
 		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleAgentSecretsAsking has the gateway hold what the session sends that
+// looks like a secret, for the user to say, or let it go: { on }.
+func (s *Server) handleAgentSecretsAsking(w http.ResponseWriter, r *http.Request) {
+	id, ok := session(w, r)
+	if !ok {
+		return
+	}
+	gw := gateway.Active()
+	if gw == nil {
+		writeErr(w, http.StatusServiceUnavailable, errNoGateway)
+		return
+	}
+	var req struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	// Settings lists it in every folder, where only this one's knows its title.
+	label := filepath.Base(s.repo.Root)
+	for _, row := range s.agent.Sessions() {
+		if row.ID == id {
+			label = cmp.Or(row.Title, row.Prompt, "New session") + " · " + label
+		}
+	}
+	if err := gw.SetAsking(id, req.On, label); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

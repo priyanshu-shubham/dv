@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,10 +27,12 @@ import (
 const holdFor = 5 * time.Minute
 
 // Held is a request waiting on the user, as the page is shown it: a glimpse
-// of each finding, never its value, and a name to mask it by.
+// of each finding, a name to mask it by, and where it is sent from. The
+// values themselves are asked for one at a time (HeldValue).
 type Held struct {
 	ID      string    `json:"id"`
 	Session string    `json:"session,omitempty"`
+	Cwd     string    `json:"cwd,omitempty"`
 	At      time.Time `json:"at"`
 	Found   []Finding `json:"found"`
 	values  []string
@@ -39,14 +42,101 @@ type Held struct {
 type Finding struct {
 	Preview string `json:"preview"`
 	Name    string `json:"name"`
+	// Where it is in the request - "What Read gave back" - and what of:
+	// the file, the command.
+	Where  string `json:"where,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	// The rest of its line, either side.
+	Before string `json:"before,omitempty"`
+	After  string `json:"after,omitempty"`
 }
 
 type holds struct {
 	mu      sync.Mutex
 	waiting []*Held
-	allowed map[string]bool // sha-256 of values the user let go as they are
+	allowed map[string]Exempt // by the sha-256 of a value the user let go as it is
 	loaded  bool
+	quiet   map[string]Exempt // by the id of a session the user said not to ask about
 }
+
+// Exempt is a value let go as it is, or a session not asked about, as
+// Settings lists them to undo. A value is kept by its hash and a glimpse.
+type Exempt struct {
+	Key     string    `json:"key"`
+	Preview string    `json:"preview,omitempty"`
+	Label   string    `json:"label,omitempty"` // a session's title and folder
+	At      time.Time `json:"at,omitzero"`
+}
+
+// StopAsking stops holding what the session of held request id sends.
+func (g *Gateway) StopAsking(id, label string) error {
+	g.held.mu.Lock()
+	i := slices.IndexFunc(g.held.waiting, func(h *Held) bool { return h.ID == id })
+	session := ""
+	if i >= 0 {
+		session = g.held.waiting[i].Session
+	}
+	g.held.mu.Unlock()
+	if session == "" {
+		return nil
+	}
+	return g.SetAsking(session, false, label)
+}
+
+// Asking is whether what a session sends is held over what looks like a secret.
+func (g *Gateway) Asking(session string) bool {
+	g.held.mu.Lock()
+	defer g.held.mu.Unlock()
+	g.loadAllowedLocked()
+	_, quiet := g.held.quiet[session]
+	return !quiet
+}
+
+// SetAsking has a session's requests held over what looks like a secret, or
+// not, from now on.
+func (g *Gateway) SetAsking(session string, on bool, label string) error {
+	g.held.mu.Lock()
+	defer g.held.mu.Unlock()
+	g.loadAllowedLocked()
+	if on {
+		delete(g.held.quiet, session)
+	} else {
+		g.held.quiet[session] = Exempt{Key: session, Label: label, At: time.Now()}
+	}
+	return writeExempts(g.quietPath(), g.held.quiet)
+}
+
+// Exemptions are the values let go as they are and the sessions not asked
+// about, the latest first.
+func (g *Gateway) Exemptions() (allowed, unasked []Exempt) {
+	g.held.mu.Lock()
+	defer g.held.mu.Unlock()
+	g.loadAllowedLocked()
+	return newestFirst(g.held.allowed), newestFirst(g.held.quiet)
+}
+
+// Forget has a value let go as it is asked about again, by its hash.
+func (g *Gateway) Forget(key string) error {
+	g.held.mu.Lock()
+	defer g.held.mu.Unlock()
+	g.loadAllowedLocked()
+	delete(g.held.allowed, key)
+	return g.saveAllowedLocked()
+}
+
+func newestFirst(set map[string]Exempt) []Exempt {
+	out := make([]Exempt, 0, len(set))
+	out = slices.AppendSeq(out, maps.Values(set))
+	slices.SortFunc(out, func(a, b Exempt) int {
+		if c := b.At.Compare(a.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Key, b.Key)
+	})
+	return out
+}
+
+func (g *Gateway) quietPath() string { return filepath.Join(filepath.Dir(g.path), "unasked-sessions.json") }
 
 // HeldNow are the requests waiting on the user, oldest first.
 func (g *Gateway) HeldNow() []Held {
@@ -57,6 +147,19 @@ func (g *Gateway) HeldNow() []Held {
 		out = append(out, *h)
 	}
 	return out
+}
+
+// HeldValue is one of a held request's findings in full, for the user to
+// see before they say.
+func (g *Gateway) HeldValue(id string, i int) (string, bool) {
+	g.held.mu.Lock()
+	defer g.held.mu.Unlock()
+	for _, h := range g.held.waiting {
+		if h.ID == id && i >= 0 && i < len(h.values) {
+			return h.values[i], true
+		}
+	}
+	return "", false
 }
 
 // Answer says what to do with a held request's findings: a name for each to
@@ -107,7 +210,8 @@ func (g *Gateway) settle(values, names []string) error {
 	defer g.held.mu.Unlock()
 	g.loadAllowedLocked()
 	for _, v := range allow {
-		g.held.allowed[digest(v)] = true
+		d := digest(v)
+		g.held.allowed[d] = Exempt{Key: d, Preview: preview(v), At: time.Now()}
 	}
 	return g.saveAllowedLocked()
 }
@@ -124,23 +228,39 @@ func (g *Gateway) loadAllowedLocked() {
 		return
 	}
 	g.held.loaded = true
-	g.held.allowed = map[string]bool{}
-	var list []string
-	if b, err := os.ReadFile(g.allowedPath()); err == nil && json.Unmarshal(b, &list) == nil {
-		for _, d := range list {
-			g.held.allowed[d] = true
-		}
-	}
+	g.held.allowed = readExempts(g.allowedPath())
+	g.held.quiet = readExempts(g.quietPath())
 }
 
 func (g *Gateway) saveAllowedLocked() error {
-	list := make([]string, 0, len(g.held.allowed))
-	for d := range g.held.allowed {
-		list = append(list, d)
+	return writeExempts(g.allowedPath(), g.held.allowed)
+}
+
+func readExempts(path string) map[string]Exempt {
+	set := map[string]Exempt{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return set
 	}
-	slices.Sort(list)
-	b, _ := json.Marshal(list)
-	return secret.WritePrivate(g.allowedPath(), b, true)
+	var list []Exempt
+	if json.Unmarshal(b, &list) != nil {
+		// Through v0.39, the hashes alone.
+		list = nil
+		var keys []string
+		json.Unmarshal(b, &keys)
+		for _, k := range keys {
+			list = append(list, Exempt{Key: k})
+		}
+	}
+	for _, e := range list {
+		set[e.Key] = e
+	}
+	return set
+}
+
+func writeExempts(path string, set map[string]Exempt) error {
+	b, _ := json.Marshal(newestFirst(set))
+	return secret.WritePrivate(path, b, true)
 }
 
 // hold waits, where body holds what looks like a secret the user hasn't
@@ -148,6 +268,9 @@ func (g *Gateway) saveAllowedLocked() error {
 func (g *Gateway) hold(ctx context.Context, body []byte, session string) {
 	src := envSource.Load()
 	if src == nil || src.ask == nil || !src.ask() {
+		return
+	}
+	if !g.Asking(session) {
 		return
 	}
 	text := sentText(body)
@@ -161,7 +284,8 @@ func (g *Gateway) hold(ctx context.Context, body []byte, session string) {
 		g.held.mu.Unlock()
 		return
 	}
-	h := &Held{ID: newHeldID(), Session: session, At: time.Now(), values: found, answer: make(chan []string)}
+	cwd, parts := requestParts(body)
+	h := &Held{ID: newHeldID(), Session: session, Cwd: cwd, At: time.Now(), values: found, answer: make(chan []string)}
 	taken := map[string]bool{}
 	for _, v := range found {
 		base := nameFor(text, v)
@@ -170,7 +294,8 @@ func (g *Gateway) hold(ctx context.Context, body []byte, session string) {
 			name = fmt.Sprintf("%s_%d", base, n)
 		}
 		taken[name] = true
-		h.Found = append(h.Found, Finding{preview(v), name})
+		where, detail, before, after := locate(parts, v)
+		h.Found = append(h.Found, Finding{preview(v), name, where, detail, before, after})
 	}
 	g.held.waiting = append(g.held.waiting, h)
 	g.held.mu.Unlock()

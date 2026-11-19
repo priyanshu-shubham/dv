@@ -7,12 +7,12 @@ import { CONTEXT_LINES, PRChip } from "./Header.jsx";
 import { DiffBody } from "./FileDiff.jsx";
 import { plainDiff } from "./hunks.js";
 import { blockAt } from "./markdown.js";
-import { cx, isMac, isTyping, LRM, modKey, openFolderSession, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
+import { cx, isMac, isTyping, LRM, modKey, openFolderSession, relTime, statusLabel, useCopy, useDebounced, useMedia } from "./util.js";
 import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } from "./highlight.js";
 import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import {
-  IconAsk, IconBack, IconBell, IconBolt, IconFile, IconGauge, IconPalette, IconRefresh, IconSearch, IconServer, IconShell, IconSpark, IconSplit, IconSymbol, IconX,
+  IconAsk, IconBack, IconBell, IconBolt, IconFile, IconGauge, IconLock, IconPalette, IconRefresh, IconSearch, IconServer, IconShell, IconSpark, IconSplit, IconSymbol, IconX,
 } from "./icons.jsx";
 import { MachineSetting } from "./Machine.jsx";
 import { tabIconJPEG, tabIconURL } from "./favicon.js";
@@ -1049,31 +1049,55 @@ export function SettingsOverlay({
   update,
   actions,
   ask,
-  tab: opening = "appearance",
+  tab: opening,
 }) {
-  const [tab, setTab] = useState(opening);
-  // On a phone the tabs are a row scrolled sideways, which keeps the open one in it.
-  const tabsRef = useRef(null);
-  useEffect(() => {
-    tabsRef.current.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [tab]);
+  // A phone opens on the list of sections, as Android's Settings does; each
+  // is a page of its own, which Back leaves for the list.
+  const [tab, setTab] = useState(opening || (phoneApp ? null : "appearance"));
+  const secretCount = useSecrets().length;
+  // [id, name, icon, what the phone's list says is in it]
   const tabs = [
-    ["appearance", "Appearance", IconPalette],
-    ["diff", "Diff", IconSplit],
-    ["notifications", "Notifications", IconBell],
-    ["agent", "Agent", IconSpark],
-    ...(terminal ? [["terminal", "Terminal", IconShell]] : []),
-    ...(ask ? [["ask", "Ask", IconAsk]] : []),
-    ...(actions ? [["actions", "Actions", IconBolt]] : []),
-    ["server", "Server", IconServer],
-    ["monitor", "Monitor", IconGauge],
+    ["appearance", "Appearance", IconPalette, "Theme, colours and fonts"],
+    ["diff", "Diff", IconSplit, phone ? "Context and wrapping" : "Layout, context and wrapping"],
+    ["notifications", "Notifications", IconBell, "This phone, Telegram, Google Chat"],
+    ["agent", "Agent", IconSpark, "Prompts, suggestions, titles"],
+    ["secrets", "Secrets", IconLock, secretCount ? `${secretCount} masked · asking · .env files` : "Masking, asking, .env files"],
+    ...(terminal ? [["terminal", "Terminal", IconShell, "Copying and typing"]] : []),
+    ...(ask ? [["ask", "Ask", IconAsk, "The Ask panel's prompts"]] : []),
+    ...(actions ? [["actions", "Actions", IconBolt, "Commands and prompts to run"]] : []),
+    ["server", "Server", IconServer, update ? `dv v${update.latest} is out` : "Version and restart"],
+    ["monitor", "Monitor", IconGauge, "This computer, and dv's logs"],
   ];
+  if (phoneApp) {
+    const open = tabs.find(([id]) => id === tab);
+    return (
+      <Modal onClose={onClose} onBack={open ? () => setTab(null) : undefined} centred className="settings">
+        <SessionBar title={open ? open[1] : "Settings"} onBack={open ? () => setTab(null) : onClose} menu={[]} />
+        {open ? (
+          <div className="settings-body">{section()}</div>
+        ) : (
+          <div className="settings-list">
+            {tabs.map(([id, name, Icon, about]) => (
+              <button key={id} className={cx("settings-list-row", id === "server" && update && "has-update")} onClick={() => setTab(id)}>
+                <span className="settings-list-icon">
+                  <Icon size={20} />
+                </span>
+                <span className="settings-list-text">
+                  <span>{name}</span>
+                  <span>{about}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
+    );
+  }
   return (
     <Modal onClose={onClose} centred className="settings">
-      {phoneApp && <SessionBar title="Settings" onBack={onClose} menu={[]} />}
       <nav className="settings-tabs">
-        {!phoneApp && <div className="settings-title">Settings</div>}
-        <span className="seg" role="tablist" ref={tabsRef}>
+        <div className="settings-title">Settings</div>
+        <span className="seg" role="tablist">
           {tabs.map(([id, name, Icon]) => {
             // The Settings button's dot, on the tab the update is in.
             const dot = id === "server" && update;
@@ -1093,12 +1117,17 @@ export function SettingsOverlay({
           })}
         </span>
       </nav>
-      {!phoneApp && (
-        <button className="ghost settings-close" onClick={onClose} title="Close (Esc)">
-          <IconX size={14} />
-        </button>
-      )}
-      <div className="settings-body">
+      <button className="ghost settings-close" onClick={onClose} title="Close (Esc)">
+        <IconX size={14} />
+      </button>
+      <div className="settings-body">{section()}</div>
+    </Modal>
+  );
+
+  // The open tab's settings, the same on a computer and a phone.
+  function section() {
+    return (
+      <>
         {tab === "appearance" && <AppearanceSettings theme={theme} onTheme={onTheme} settings={settings} onChange={onChange} phoneApp={phoneApp} />}
         {tab === "diff" && (
           <>
@@ -1213,9 +1242,9 @@ export function SettingsOverlay({
               onPick={(on) => onChange({ addedTemporary: on })}
               choices={OFF_ON}
             />
-            <Secrets settings={settings} onChange={onChange} />
           </>
         )}
+        {tab === "secrets" && <Secrets settings={settings} onChange={onChange} />}
         {tab === "terminal" && (
           <>
             <Setting
@@ -1248,9 +1277,9 @@ export function SettingsOverlay({
             <Logs />
           </>
         )}
-      </div>
-    </Modal>
-  );
+      </>
+    );
+  }
 }
 
 const LOG_LINES = 2000;
@@ -1611,42 +1640,31 @@ function Secrets({ settings, onChange }) {
   const list = useSecrets();
   const [editing, setEditing] = useState(null); // { name } to change, {} to add
   const [said, setSaid] = useState(null);
+  const [exempt, setExempt] = useState({ allowed: [], unasked: [] });
+  const [allAllowed, setAllAllowed] = useState(false);
+  const heard = (e) => setExempt({ allowed: e.allowed || [], unasked: e.unasked || [] });
+  useEffect(() => {
+    api.secretExemptions().then(heard, () => {});
+  }, []);
   const remove = (name) =>
     confirm(`Stop masking ${name}, and forget it?`) &&
     api.secretRemove(name).then(reloadSecrets, (e) => setSaid(e.message));
+  const undo = (call) => call.then(heard, (e) => setSaid(e.message));
   const saved = list.filter((s) => !s.from);
-  const fromEnv = list.filter((s) => s.from);
+  const files = new Map();
+  for (const s of list) if (s.from) files.set(s.from, [...(files.get(s.from) || []), s]);
   const envOn = settings.maskEnvFiles !== false;
-  const row = (s) => (
-    <div className="settings-row" key={s.name}>
-      <div className="settings-text">
-        <div>{s.name}</div>
-        <div className="settings-note">
-          <span className="secret-chip">{s.preview}</span>
-          {s.from && <span className="secret-from">from {s.from}</span>}
-        </div>
-      </div>
-      {!s.from && (
-        <span className="settings-actions">
-          <button className="btn" onClick={() => setEditing({ name: s.name })}>
-            Change
-          </button>
-          <button className="btn" onClick={() => remove(s.name)}>
-            Remove
-          </button>
-        </span>
-      )}
-    </div>
-  );
+  const asking = settings.askLooseSecrets !== false;
+  const allowed = allAllowed ? exempt.allowed : exempt.allowed.slice(0, 5);
   return (
     <>
-      <div className="settings-heading">Masked secrets</div>
+      <div className="settings-heading">Masked</div>
       <div className="settings-row">
         <div className="settings-text">
           <div>Secrets kept from models</div>
           <div className={cx("settings-note", said && "prompt-error")}>
             {said ||
-              "Wherever one turns up in what a session dv started sends - a file read, a command's output, your message - the model is sent a placeholder instead, and what it writes back has the value again. The page shows it as a chip; hover one to see it. Also from + in the message box, # in a message, or Mask on selected text. Sessions started in a terminal aren't covered."}
+              "Wherever one turns up in what a session dv started sends - a file read, a command's output, your message - the model is sent a placeholder instead, and what it writes back has the value again. Also from + in the message box, # in a message, or Mask on selected text. Sessions started in a terminal aren't covered."}
           </div>
         </div>
         <span className="settings-actions">
@@ -1655,22 +1673,99 @@ function Secrets({ settings, onChange }) {
           </button>
         </span>
       </div>
-      {saved.map(row)}
+      {saved.map((s) => (
+        <div className="settings-row compact" key={s.name}>
+          <div className="settings-text">
+            <div className="secret-name">{s.name}</div>
+            <div className="settings-note">
+              <span className="secret-chip" data-secret={s.name} tabIndex={0}>
+                {s.preview}
+              </span>
+            </div>
+          </div>
+          <span className="settings-actions">
+            <button className="btn" onClick={() => setEditing({ name: s.name })}>
+              Change
+            </button>
+            <button className="btn" onClick={() => remove(s.name)}>
+              Remove
+            </button>
+          </span>
+        </div>
+      ))}
+
+      <div className="settings-heading">Asking</div>
       <Setting
         label="Ask before sending what looks like a secret"
-        note="A key's shape, or a long random token, not masked yet - in your message, a file read, a command's output. The session waits for you to mask it or send it as is, and each is asked about once; unanswered for five minutes, it is masked."
-        value={settings.askLooseSecrets !== false}
+        note="A key's shape, or a long random token, not masked yet - in your message, a file read, a command's output. The session waits for you to mask it or send it as is; unanswered for five minutes, it is masked. A session can be left out from + in its message box."
+        value={asking}
         onPick={(on) => onChange({ askLooseSecrets: on ? undefined : false })}
         choices={OFF_ON}
       />
+      {asking &&
+        allowed.map((a) => (
+          <div className="settings-row compact" key={a.key}>
+            <div className="settings-text">
+              <div>
+                <span className="secret-chip">{a.preview || "••••••"}</span>
+              </div>
+              <div className="settings-note">Sent as is{a.at && ` ${relTime(a.at)}`}, so not asked about again</div>
+            </div>
+            <span className="settings-actions">
+              <button className="btn" onClick={() => undo(api.secretForget(a.key))} title="Ask about it the next time it is sent">
+                Forget
+              </button>
+            </span>
+          </div>
+        ))}
+      {asking && exempt.allowed.length > allowed.length && (
+        <div className="settings-row">
+          <button className="link" onClick={() => setAllAllowed(true)}>
+            Show all {exempt.allowed.length} sent as is
+          </button>
+        </div>
+      )}
+      {asking &&
+        exempt.unasked.map((u) => (
+          <div className="settings-row compact" key={u.key}>
+            <div className="settings-text">
+              <div>{u.label || "A session"}</div>
+              <div className="settings-note">Not asked about{u.at && ` since ${relTime(u.at)}`}: what looks like a secret goes as is</div>
+            </div>
+            <span className="settings-actions">
+              <button className="btn" onClick={() => undo(api.secretAskAgain(u.key))}>
+                Ask again
+              </button>
+            </span>
+          </div>
+        ))}
+
+      <div className="settings-heading">.env files</div>
       <Setting
         label="Mask the values in .env files"
-        note="Each value of 8 or more characters in a .env file at the top of an open folder, as the file stands now. .env.example and the like are left alone."
+        note="Each value of 8 or more characters in a .env file at the top of an open folder, as the file stands now, but for plain words such as development or localhost. .env.example and the like are left alone."
         value={envOn}
         onPick={(on) => (onChange({ maskEnvFiles: on ? undefined : false }), setTimeout(reloadSecrets, 2500))}
         choices={OFF_ON}
       />
-      {envOn && fromEnv.map(row)}
+      {envOn &&
+        [...files].map(([file, found]) => (
+          <div className="settings-row" key={file}>
+            <div className="settings-text">
+              <div className="secret-name">{file}</div>
+              <div className="env-secrets">
+                {found.map((s) => (
+                  <span key={s.name} className="env-secret">
+                    {s.name}
+                    <span className="secret-chip" data-secret={s.name} tabIndex={0}>
+                      {s.preview}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
       {editing && <MaskSecret name={editing.name} onClose={() => setEditing(null)} />}
     </>
   );

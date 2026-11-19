@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"dv/internal/gateway"
@@ -79,6 +80,61 @@ func HandleHeldSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, held)
 }
 
+// HandleHeldValue is one finding of a held request in full, which the user
+// asked to see.
+func HandleHeldValue(w http.ResponseWriter, r *http.Request) {
+	gw := gateway.Active()
+	if gw == nil {
+		writeErr(w, http.StatusServiceUnavailable, errNoGateway)
+		return
+	}
+	i, _ := strconv.Atoi(r.PathValue("i"))
+	v, ok := gw.HeldValue(r.PathValue("id"), i)
+	if !ok {
+		writeErr(w, http.StatusNotFound, errors.New("it is no longer waiting"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"value": v})
+}
+
+// HandleExemptions are what Settings lists to undo: the values let go as they
+// are, and the sessions not asked about.
+func HandleExemptions(w http.ResponseWriter, r *http.Request) {
+	allowed, unasked := []gateway.Exempt{}, []gateway.Exempt{}
+	if gw := gateway.Active(); gw != nil {
+		allowed, unasked = gw.Exemptions()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"allowed": allowed, "unasked": unasked})
+}
+
+// HandleForgetAllowed has a value let go as it is asked about again.
+func HandleForgetAllowed(w http.ResponseWriter, r *http.Request) {
+	gw := gateway.Active()
+	if gw == nil {
+		writeErr(w, http.StatusServiceUnavailable, errNoGateway)
+		return
+	}
+	if err := gw.Forget(r.PathValue("key")); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	HandleExemptions(w, r)
+}
+
+// HandleAskAgain has a session's requests held over secrets again.
+func HandleAskAgain(w http.ResponseWriter, r *http.Request) {
+	gw := gateway.Active()
+	if gw == nil {
+		writeErr(w, http.StatusServiceUnavailable, errNoGateway)
+		return
+	}
+	if err := gw.SetAsking(r.PathValue("id"), true, ""); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	HandleExemptions(w, r)
+}
+
 // HandleAnswerHeld settles a held request: { names }, one per finding, ""
 // to let that one go as it is.
 func HandleAnswerHeld(w http.ResponseWriter, r *http.Request) {
@@ -89,10 +145,18 @@ func HandleAnswerHeld(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Names []string `json:"names"`
+		Quiet bool     `json:"quiet"` // the session isn't asked about again
+		Label string   `json:"label"` // what Settings names that session by
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
+	}
+	if req.Quiet {
+		if err := gw.StopAsking(r.PathValue("id"), req.Label); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	if err := gw.Answer(r.PathValue("id"), req.Names); err != nil {
 		writeErr(w, http.StatusBadRequest, err)

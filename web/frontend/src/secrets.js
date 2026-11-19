@@ -74,18 +74,22 @@ export const maskable = (text) => text.length >= 6 && text.length <= 512 && !/\s
 
 const previewOf = (name) => list.find((s) => s.name === name)?.preview || "••••••";
 
+// Only a masked secret's placeholder is drawn as a chip: one with another
+// name is text that says it, as dv's own source and docs do.
+const masked = (name) => list.some((s) => s.name === name);
+
 const escape = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 const chipHTML = (name) => `<span class="secret-chip" data-secret="${name}" tabindex="0">${escape(previewOf(name))}</span>`;
 
 // secretsInHTML draws the placeholders in HTML the page renders as is.
-export const secretsInHTML = (html) => (html.includes("[[dv-secret:") ? html.replace(SECRET, (_, name) => chipHTML(name)) : html);
+export const secretsInHTML = (html) => (html.includes("[[dv-secret:") ? html.replace(SECRET, (whole, name) => (masked(name) ? chipHTML(name) : whole)) : html);
 
 // A highlighter could split a placeholder's brackets into tokens of their
 // own, so code takes a word in its place while highlighted.
 const WORD = /__dvsecret__([A-Za-z0-9_]+?)__dvsecret__/g;
 export const secretsAsWords = (code) => (code.includes("[[dv-secret:") ? code.replace(SECRET, "__dvsecret__$1__dvsecret__") : code);
-export const secretWordsInHTML = (html) => (html.includes("__dvsecret__") ? html.replace(WORD, (_, name) => chipHTML(name)) : html);
+export const secretWordsInHTML = (html) => (html.includes("__dvsecret__") ? html.replace(WORD, (_, name) => (masked(name) ? chipHTML(name) : `[[dv-secret:${name}]]`)) : html);
 
 // secretsInText is plain text with its placeholders as chips, for React.
 export function secretsInText(text, wrap = (s) => s) {
@@ -93,6 +97,7 @@ export function secretsInText(text, wrap = (s) => s) {
   const out = [];
   let at = 0;
   for (const m of text.matchAll(SECRET)) {
+    if (!masked(m[1])) continue;
     if (m.index > at) out.push(wrap(text.slice(at, m.index), at));
     out.push(createElement("span", { key: "s" + m.index, className: "secret-chip", "data-secret": m[1], tabIndex: 0 }, previewOf(m[1])));
     at = m.index + m[0].length;

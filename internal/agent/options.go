@@ -67,6 +67,9 @@ type Limit struct {
 	Model    string  `json:"model,omitempty"`
 	Percent  float64 `json:"percent"`
 	ResetsAt string  `json:"resetsAt,omitempty"`
+	// Window is its length in minutes, where the plan says: Claude's don't, and
+	// Codex's free plan has one limit of 30 days.
+	Window int64 `json:"window,omitempty"`
 }
 
 // Aliases, for when Claude Code could not be asked: each is the latest of its

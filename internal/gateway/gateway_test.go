@@ -293,7 +293,8 @@ func TestCodexStore(t *testing.T) {
 
 func TestEnvFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, ".env.local"), []byte("# keys\nexport API_KEY=\"sk-live-0123456789\"\nPORT=3000\nDEBUG=true\nDB_URL=postgres://u:pw@db/app # main\nSHARED=saved-value-1234\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, ".env.local"), []byte("# keys\nexport API_KEY=\"sk-live-0123456789\"\nPORT=3000\nDEBUG=true\nDB_URL=postgres://u:pw@db/app # main\nSHARED=saved-value-1234\n"+
+		"ENV=development\nHOST=localhost\nREGION=eu-central\nLEVEL=Information\nTOKEN=qXbRtzKmWpLv\n"), 0o600)
 	os.WriteFile(filepath.Join(dir, ".env.example"), []byte("API_KEY=put-your-key-here\n"), 0o600)
 	g := &Gateway{}
 	saved := map[string]string{"MINE": "saved-value-1234"}
@@ -305,7 +306,7 @@ func TestEnvFiles(t *testing.T) {
 	for name, v := range g.mask.byName {
 		got[name] = v
 	}
-	want := map[string]string{"MINE": "saved-value-1234", "API_KEY": "sk-live-0123456789", "DB_URL": "postgres://u:pw@db/app"}
+	want := map[string]string{"MINE": "saved-value-1234", "API_KEY": "sk-live-0123456789", "DB_URL": "postgres://u:pw@db/app", "TOKEN": "qXbRtzKmWpLv"}
 	if len(got) != len(want) {
 		t.Fatalf("masked %v, want %v", got, want)
 	}
@@ -340,7 +341,9 @@ func TestHold(t *testing.T) {
 	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
 	Watch(func() []string { return nil }, func() bool { return false }, func() bool { return true })
 	defer Watch(func() []string { return nil }, func() bool { return false }, nil)
-	body := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","content":"TOKEN=x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA"},{"type":"image","source":{"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"}}]}]}`)
+	body := []byte(`{"system":[{"type":"text","text":"Primary working directory: /w/app\n"}],"messages":[` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/w/app/.env.local"}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"PORT=3000\nTOKEN=x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA # prod\n"},{"type":"image","source":{"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"}}]}]}`)
 	done := make(chan struct{})
 	go func() { g.hold(t.Context(), body, "s"); close(done) }()
 	var held []Held
@@ -351,6 +354,12 @@ func TestHold(t *testing.T) {
 	if len(held) != 1 || len(held[0].Found) != 1 || held[0].Found[0].Preview != "x9Kq••••1QeA" || held[0].Found[0].Name != "TOKEN" {
 		t.Fatalf("held %+v", held)
 	}
+	if f := held[0].Found[0]; held[0].Cwd != "/w/app" || f.Where != "What Read gave back" || f.Detail != "/w/app/.env.local" || f.Before != "TOKEN=" || f.After != " # prod" {
+		t.Fatalf("where %q: %+v", held[0].Cwd, f)
+	}
+	if v, ok := g.HeldValue(held[0].ID, 0); !ok || v != "x9Kq2LmZ7vRt4WbN8cHy3JpF6sDg1QeA" {
+		t.Fatalf("value %q", v)
+	}
 	if err := g.Answer(held[0].ID, []string{""}); err != nil {
 		t.Fatal(err)
 	}
@@ -358,6 +367,46 @@ func TestHold(t *testing.T) {
 	// Let go once, it goes from then on without asking.
 	if found := g.Unmasked(sentText(body)); len(found) != 0 {
 		t.Errorf("asked again about %v", found)
+	}
+
+	other := []byte(`{"messages":[{"role":"user","content":"KEY=Zq81mXv0Lp4TnR7wYc2BsD9fHj6KgUe3"}]}`)
+	if err := g.SetAsking("s", false, "Fix the build · app"); err != nil {
+		t.Fatal(err)
+	}
+	g.hold(t.Context(), other, "s")
+	if len(g.HeldNow()) != 0 || g.Asking("s") || !g.Asking("t") {
+		t.Fatal("a session told not to ask was held")
+	}
+
+	// Both lists outlast dv, for Settings to undo.
+	again := &Gateway{path: g.path, keyDir: dir}
+	allowed, unasked := again.Exemptions()
+	if len(allowed) != 1 || allowed[0].Preview != "x9Kq••••1QeA" || len(unasked) != 1 || unasked[0].Label != "Fix the build · app" {
+		t.Fatalf("allowed %+v, unasked %+v", allowed, unasked)
+	}
+	if err := again.Forget(allowed[0].Key); err != nil {
+		t.Fatal(err)
+	}
+	if found := again.Unmasked(sentText(body)); len(found) != 1 {
+		t.Errorf("forgotten, yet not asked about: %v", found)
+	}
+}
+
+func TestNoExemptsIsAnEmptyList(t *testing.T) {
+	dir := t.TempDir()
+	g := &Gateway{path: filepath.Join(dir, "secrets.json"), keyDir: dir}
+	allowed, unasked := g.Exemptions()
+	b, _ := json.Marshal(map[string]any{"allowed": allowed, "unasked": unasked})
+	if string(b) != `{"allowed":[],"unasked":[]}` {
+		t.Fatalf("%s", b)
+	}
+}
+
+func TestExemptsOfOld(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "allowed-secrets.json")
+	os.WriteFile(path, []byte(`["abc","def"]`), 0o600)
+	if set := readExempts(path); len(set) != 2 || set["abc"].Key != "abc" {
+		t.Fatalf("%+v", set)
 	}
 }
 

@@ -32,6 +32,8 @@ type Session struct {
 	Temporary bool `json:"temporary,omitempty"`
 	// Kept is never stopped for being idle, and starts with dv.
 	Kept bool `json:"kept,omitempty"`
+	// Unasked sends what looks like a secret without holding it for the user.
+	Unasked bool `json:"unasked,omitempty"`
 	// The last thing said in it, by "you" or "claude".
 	Last   string `json:"last,omitempty"`
 	LastBy string `json:"lastBy,omitempty"`

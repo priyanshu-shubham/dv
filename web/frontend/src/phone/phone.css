@@ -173,7 +173,8 @@ html.phone ::-webkit-scrollbar {
 .p-title:not(:disabled):active,
 .p-nav-item:active .p-nav-ind,
 .p-tile:active,
-.p-limits:active {
+.p-limits:active,
+.settings-list-row:active {
   background-image: linear-gradient(var(--bg-active), var(--bg-active));
 }
 
@@ -2202,9 +2203,9 @@ html.phone .modal.photo {
   font-size: 14px;
 }
 
-/* Settings is a screen of its own, as Android's are: the app's bar, its
-   sections a row of chips under it, each setting its words over its choices,
-   and one kind of field and two of button on every tab. */
+/* Settings is a screen of its own, as Android's are: the app's bar over a list
+   of its sections, each a page with its words over its choices, and one kind
+   of field and two of button on every page. */
 html.phone .backdrop:has(> .modal.settings) {
   align-items: stretch;
   padding: 0;
@@ -2233,40 +2234,99 @@ html.phone .backdrop.centred > .modal.page-view {
   animation: none;
 }
 
-html.phone .settings-tabs {
-  padding: 4px 16px 8px;
-}
-
-html.phone .settings-tabs > .seg {
+html.phone .settings-list {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 8px;
-  padding: 0;
-  overflow-x: auto;
-  background: none;
-  scrollbar-width: none;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 0 calc(16px + env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
 
-html.phone .settings-tabs > .seg > button {
+html.phone .settings-list-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 24px 8px 16px;
+  border-radius: 0;
+  text-align: left;
+}
+
+html.phone .settings-list-icon {
+  display: grid;
   flex: none;
-  height: 32px;
-  padding: 0 14px;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px var(--border-strong);
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+html.phone .settings-list-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+html.phone .settings-list-text > :first-child {
+  color: var(--fg);
+  font-size: 16px;
+}
+
+html.phone .settings-list-text > :last-child {
+  overflow: hidden;
   color: var(--fg-2);
   font-size: 14px;
-  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-html.phone .settings-tabs > .seg > button.on {
-  background: var(--m-tonal);
-  box-shadow: none;
-  color: var(--m-on-tonal);
+html.phone .settings-list-row.has-update .settings-list-text > :last-child {
+  color: var(--accent);
 }
 
 html.phone .settings-body {
   gap: 24px;
+  min-height: 0;
   padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+/* A section's parts are titled in the accent, in words, as Android's are. */
+html.phone .settings-heading {
+  margin-bottom: -12px;
+  padding: 8px 0 0;
+  color: var(--accent);
+  font: 500 14px / 20px var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+html.phone .settings-heading:first-child {
+  padding-top: 0;
+}
+
+/* A row about one thing - a secret, a session - keeps its few buttons beside
+   it, as text buttons, rather than a row of outlined ones under each. */
+html.phone .settings-row.compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+html.phone .settings-row.compact > .settings-text {
+  flex: 1;
+  min-width: 0;
+}
+
+html.phone .settings-body .settings-row.compact .btn {
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  color: var(--accent);
 }
 
 html.phone .settings-row {

@@ -1,17 +1,21 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
-import { IconX } from "./icons.jsx";
+import { IconEye, IconX } from "./icons.jsx";
 import { say } from "./Notices.jsx";
 import { Modal } from "./Overlays.jsx";
 import { glimpse, guessName, reloadSecrets, useSecrets } from "./secrets.js";
-import { copyText } from "./util.js";
+import { copyText, cx } from "./util.js";
 
 // LooseSecrets asks about what looks like a secret and isn't masked, before
 // it goes to a model: items [{ preview, name }], each masked under a name
-// the reader can change (onMask), or all let go as they are (onAllow).
-export function LooseSecrets({ title, note, items, onMask, onAllow, onClose }) {
+// the reader can change (onMask), or all let go as they are (onAllow). A
+// request the gateway holds also says where it comes from (from, and each
+// item's where and line), shows a value on asking (valueOf), and can stop
+// the asking for its session (both answers then get quiet = true).
+export function LooseSecrets({ title, from, note, items, valueOf, onMask, onAllow, onClose }) {
   const [names, setNames] = useState(() => items.map((it) => it.name));
+  const [quiet, setQuiet] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const act = (fn) => async () => {
@@ -23,6 +27,7 @@ export function LooseSecrets({ title, note, items, onMask, onAllow, onClose }) {
       setBusy(false);
     }
   };
+  const rename = (i) => (e) => setNames((ns) => ns.map((n, j) => (j === i ? e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") : n)));
   return (
     <Modal onClose={onClose} centred className="mask-secret">
       <div className="help-head">
@@ -33,39 +38,84 @@ export function LooseSecrets({ title, note, items, onMask, onAllow, onClose }) {
         </button>
       </div>
       <div className="mask-secret-body">
+        {from && <div className="held-from">{from}</div>}
         <div className="settings-note">
           {note} Masked, the model is sent a placeholder in its place from now on, and commands it runs still get the value. Sent as is, dv won't ask about it again.
         </div>
-        <dl className="mask-secret-seen">
-          {items.map((it, i) => (
-            <Fragment key={i}>
-              <dt>
-                <span className="secret-chip">{it.preview}</span>
-              </dt>
-              <dd>
-                <input
-                  value={names[i]}
-                  spellCheck={false}
-                  onChange={(e) => setNames((ns) => ns.map((n, j) => (j === i ? e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") : n)))}
-                />
-              </dd>
-            </Fragment>
-          ))}
-        </dl>
+        {valueOf ? (
+          items.map((it, i) => <HeldFinding key={i} item={it} valueOf={() => valueOf(i)} name={names[i]} onName={rename(i)} />)
+        ) : (
+          <dl className="mask-secret-seen">
+            {items.map((it, i) => (
+              <Fragment key={i}>
+                <dt>
+                  <span className="secret-chip">{it.preview}</span>
+                </dt>
+                <dd>
+                  <input value={names[i]} spellCheck={false} onChange={rename(i)} />
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
+        )}
         {error && <div className="settings-note prompt-error">{error}</div>}
+        {valueOf && (
+          <label className="check">
+            <input type="checkbox" className="tick" checked={quiet} onChange={(e) => setQuiet(e.target.checked)} />
+            Don't ask again in this session
+          </label>
+        )}
         <div className="action-form-foot">
           <button className="mini" onClick={onClose}>
             {onAllow.later ? "Later" : "Cancel"}
           </button>
-          <button className="btn" disabled={busy} onClick={act(onAllow)}>
+          <button className="btn" disabled={busy} onClick={act(() => onAllow(quiet))}>
             Send as is
           </button>
-          <button className="primary" autoFocus disabled={busy || names.some((n) => !n)} onClick={act(() => onMask(names))}>
+          <button className="primary" autoFocus disabled={busy || names.some((n) => !n)} onClick={act(() => onMask(names, quiet))}>
             Mask and send
           </button>
         </div>
       </div>
     </Modal>
+  );
+}
+
+// HeldFinding is one thing a held request would send: where in it, the line
+// it is on with the value shown on asking, and the name to mask it as.
+function HeldFinding({ item, valueOf, name, onName }) {
+  const [value, setValue] = useState(null);
+  const [shown, setShown] = useState(false);
+  const toggle = async () => {
+    try {
+      if (value === null) setValue(await valueOf());
+      setShown((s) => !s);
+    } catch (e) {
+      say(e.message);
+    }
+  };
+  return (
+    <div className="held-finding">
+      {item.where && (
+        <div className="held-where" title={item.detail ? `${item.where}: ${item.detail}` : item.where}>
+          {item.where}
+          {item.detail && <code>{item.detail}</code>}
+        </div>
+      )}
+      <div className="held-line">
+        {/* Cut from its start, which is further from the value. */}
+        <span className="held-around before">
+          <span dir="ltr">{item.before}</span>
+        </span>
+        <span className={cx("secret-chip", shown && "shown")}>{shown ? value : item.preview}</span>
+        <span className="held-around after">{item.after}</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={toggle} title={shown ? "Hide the value" : "Show the value"}>
+          <IconEye size={13} />
+        </button>
+      </div>
+      <input value={name} spellCheck={false} onChange={onName} aria-label="Mask it as" />
+    </div>
   );
 }
 
@@ -84,7 +134,7 @@ export function looseItems(values, names = []) {
 // HeldSecrets asks about what a session is about to send that looks like a
 // secret, which the gateway holds until it is told; one put off comes back
 // once nothing else is asked.
-export function HeldSecrets() {
+export function HeldSecrets({ sessions = [] }) {
   const [held, setHeld] = useState([]);
   const [later, setLater] = useState(() => new Set());
   useEffect(() => {
@@ -99,19 +149,25 @@ export function HeldSecrets() {
   }, []);
   const h = held.find((x) => !later.has(x.id));
   if (!h) return null;
-  const answer = async (names) => {
-    await api.secretAnswer(h.id, names);
+  const answer = async (names, quiet) => {
+    await api.secretAnswer(h.id, names, quiet, from);
     if (names.some(Boolean)) await reloadSecrets();
     setHeld((all) => all.filter((x) => x.id !== h.id));
   };
-  const allow = () => answer(h.found.map(() => ""));
+  const allow = (quiet) => answer(h.found.map(() => ""), quiet);
   allow.later = true;
+  // Its title where the session is one of this folder's; else the folder it works in.
+  const s = h.session && sessions.find((x) => x.id === h.session);
+  const folder = h.cwd?.split(/[\\/]/).filter(Boolean).pop();
+  const from = [s && (s.title || s.prompt || "New session"), folder].filter(Boolean).join(" · ");
   return (
     <LooseSecrets
       key={h.id}
       title="A session is about to send what looks like a secret"
+      from={from}
       note="It waits for you; unanswered for five minutes, it is masked."
       items={h.found}
+      valueOf={async (i) => (await api.secretHeldValue(h.id, i)).value}
       onMask={answer}
       onAllow={allow}
       onClose={() => setLater((s) => new Set(s).add(h.id))}
@@ -121,10 +177,11 @@ export function HeldSecrets() {
 
 // MaskSecret masks a secret from the next request on: one picked out of the
 // conversation (picked), one pasted in, or a new value for one already
-// masked (name).
-export function MaskSecret({ picked = "", name: fixed = "", onClose }) {
+// masked (name). suggested is a name written for a new one; onMasked hears
+// the name it was masked as.
+export function MaskSecret({ picked = "", name: fixed = "", suggested = "", onMasked, onClose }) {
   const [value, setValue] = useState(picked);
-  const [name, setName] = useState(() => fixed || (picked ? guessName(picked) : ""));
+  const [name, setName] = useState(() => fixed || suggested || (picked ? guessName(picked) : ""));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const ready = name && value.trim() && !busy;
@@ -134,6 +191,7 @@ export function MaskSecret({ picked = "", name: fixed = "", onClose }) {
       await api.secretAdd(name, value);
       await reloadSecrets();
       say(fixed ? `${name} changed` : `Masked as ${name}`);
+      onMasked?.(name);
       onClose();
     } catch (e) {
       setError(e.message);
@@ -164,7 +222,7 @@ export function MaskSecret({ picked = "", name: fixed = "", onClose }) {
             spellCheck={false}
             placeholder={fixed ? "Its new value" : "The secret"}
             onChange={(e) => {
-              if (!fixed && (!name || name === guessName(value.trim()))) setName(guessName(e.target.value.trim()));
+              if (!fixed && !suggested && (!name || name === guessName(value.trim()))) setName(guessName(e.target.value.trim()));
               setValue(e.target.value);
               setError("");
             }}
@@ -220,7 +278,8 @@ export function SecretHover() {
 
   useEffect(() => {
     const show = (e) => {
-      const chip = e.target.closest?.(".secret-chip");
+      // A chip with no name is a glimpse of one not masked yet, as the held request's.
+      const chip = e.target.closest?.(".secret-chip[data-secret]");
       if (!chip) return;
       clearTimeout(leave.current);
       const r = chip.getBoundingClientRect();
@@ -244,9 +303,17 @@ export function SecretHover() {
     };
   }, []);
 
+  const known = at && secrets.find((s) => s.name === at.name);
+  // The list is the page's since it was asked: a .env read since, as of a
+  // folder opened later, isn't in it yet.
+  const [rechecked, setRechecked] = useState("");
+  useEffect(() => {
+    if (!at || known || rechecked === at.name) return;
+    reloadSecrets().then(() => setRechecked(at.name));
+  }, [at, known, rechecked]);
+
   if (changing) return <MaskSecret name={changing} onClose={() => (values.current.delete(changing), setChanging(""))} />;
   if (!at) return null;
-  const known = secrets.find((s) => s.name === at.name);
   const shown = at.chip.classList.contains("shown");
   const valueOf = async () => {
     if (!values.current.has(at.name)) values.current.set(at.name, (await api.secretValue(at.name)).value);
@@ -271,7 +338,7 @@ export function SecretHover() {
     <div className="model-list secret-hover" style={{ top: at.top, left: at.left }}>
       <div className="menu-label">{at.name}</div>
       {!known ? (
-        <div className="secret-hover-note">No longer among the masked secrets.</div>
+        <div className="secret-hover-note">{rechecked === at.name ? "No longer among the masked secrets." : "Looking it up…"}</div>
       ) : (
         <>
           <button onClick={toggle}>

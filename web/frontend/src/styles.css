@@ -2335,6 +2335,7 @@ textarea.pad:focus {
   width: 14px;
   height: 14px;
   margin: 0;
+  padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   background: var(--bg-input);
@@ -6445,6 +6446,26 @@ body.resizing * {
   font-family: var(--font-mono);
 }
 
+:root .modal.settings .settings-row .settings-text > div.secret-name:first-child {
+  font: var(--fs-sm) var(--font-mono);
+}
+
+/* A .env file's values: each name with its glimpse, as many to a line as fit. */
+.env-secrets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 6px;
+}
+
+.env-secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-2);
+  font: var(--fs-xs) var(--font-mono);
+}
+
 .model-list.secret-hover {
   position: fixed;
   right: auto;
@@ -6475,8 +6496,75 @@ body.resizing * {
   padding: 0 20px 18px;
 }
 
-.mask-secret-body input {
+.mask-secret-body input:not(.tick) {
   width: 100%;
+}
+
+.held-from {
+  margin-top: -6px;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+/* One thing a held request would send: where, its line, the name to mask it as. */
+.held-finding {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  background: var(--bg-active);
+}
+
+.held-where {
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.held-where code {
+  margin-left: 6px;
+  color: var(--fg-2);
+}
+
+.held-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  font: var(--fs-xs) var(--font-mono);
+}
+
+.held-around {
+  overflow: hidden;
+  color: var(--fg-3);
+  white-space: pre;
+}
+
+.held-around.before {
+  flex: 0 1 auto;
+  direction: rtl;
+}
+
+.held-around.after {
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+}
+
+.held-line .secret-chip {
+  flex: none;
+  max-width: 100%;
+}
+
+.held-line .secret-chip.shown {
+  flex: 0 1 auto;
+}
+
+.held-line > .ghost {
+  flex: none;
+  padding: 2px 4px;
 }
 
 .mask-secret-body input:not([type="password"]) {
@@ -6625,8 +6713,9 @@ body.resizing * {
 }
 
 /* Not the menu's own full-width rows. */
-.model-list .model-editor .switch {
+.model-list button.switch {
   display: block;
+  flex: none;
   width: 34px;
   padding: 0;
   margin-left: 0;
@@ -6634,8 +6723,13 @@ body.resizing * {
   background: var(--bg-active);
 }
 
-.model-list .model-editor .switch.on {
+.model-list button.switch.on {
   background: var(--accent-fill);
+}
+
+/* The + menu's switch says what on and off do, which takes a line or two. */
+.model-list .menu-switch .model-note {
+  white-space: normal;
 }
 
 .model-list .model-editor-back,
@@ -7091,6 +7185,34 @@ button.ghost.agent-context {
 
 .plan-limit + .plan-limit {
   margin-left: 4px;
+}
+
+.plan-usage {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  min-width: 0;
+}
+
+.plan-usage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.plan-usage-row > .agent-icon {
+  flex: none;
+  color: var(--fg-3);
+}
+
+/* Claude's and Codex's limits each take a row. */
+.sidebar-foot:has(.plan-usage-row + .plan-usage-row) {
+  height: auto;
+  min-height: var(--foot-h);
+  padding-block: 5px;
 }
 
 /* A narrow sidebar keeps the usage on one line: the bars give way down to a
@@ -8686,6 +8808,30 @@ button.ghost.agent-context {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Under the box's text, a masked secret's #NAME as a chip. Only colour and
+   rings: anything with width would move the text off the box's. */
+.composer-mirror {
+  position: absolute;
+  overflow: hidden;
+  padding: 2px 0;
+  color: transparent;
+  font: var(--fs-md) / 1.5 var(--font-ui);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+.composer-mirror mark {
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  box-shadow: 0 0 0 1px var(--border), 0 0 0 2px var(--bg-active);
+  color: transparent;
+}
+
+.composer-mirror + textarea {
+  position: relative;
 }
 
 .agent-composer textarea,

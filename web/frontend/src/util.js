@@ -120,9 +120,9 @@ export const PHONE_APP = `${PHONE}, ${TOUCH} and (max-height: 500px)`;
 export const PHONE_FOLDER_KEY = "dv:phone-folder";
 
 // limitWindow names a plan's usage limit, short and in full, by its window's
-// length in minutes.
+// length in minutes: the plan's where it says, else the one its place stands for.
 export function limitWindow(limit, minutes) {
-  const m = minutes;
+  const m = limit.window || minutes;
   if (m < 1440) {
     const h = Math.round(m / 60);
     return [`${h}h`, h === 5 ? "This five-hour window" : `This ${h}-hour window`];

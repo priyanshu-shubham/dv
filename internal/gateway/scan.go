@@ -46,7 +46,10 @@ func (g *Gateway) Unmasked(text string) []string {
 	g.held.mu.Lock()
 	defer g.held.mu.Unlock()
 	g.loadAllowedLocked()
-	return slices.DeleteFunc(out, func(v string) bool { return g.held.allowed[digest(v)] })
+	return slices.DeleteFunc(out, func(v string) bool {
+		_, ok := g.held.allowed[digest(v)]
+		return ok
+	})
 }
 
 // digestBefore is the start of a Subresource Integrity hash, base64 that

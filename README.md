@@ -293,12 +293,16 @@ session sends - a file read, a command's output, your message - the model is
 sent `[[dv-secret:NAME]]` in its place, and the real value is put back in what
 it writes, so a command it runs still works. The page shows each as a chip with
 a glimpse of the value; hover one to see it, copy it or change it. Add one from
-**+** in the message box, **Mask** on selected text, or Settings › Agent, and
+**+** in the message box, **Mask** on selected text, or Settings › Secrets, and
 use one in a message with `#NAME`. The values in an open folder's `.env` files
-are masked as they stand. Text that looks like a secret - a key's shape, a long
-random token - and isn't masked holds the request while dv asks whether to mask
-it or send it as is; each is asked about once, and one left unanswered for five
-minutes is masked. Both are on by default, in Settings › Agent.
+are masked as they stand, but for plain words such as `development`. Text that
+looks like a secret - a key's shape, a long random token - and isn't masked
+holds the request while dv asks whether to mask it or send it as is, showing
+where it is - the file read, the command - and the line around it; each is
+asked about once, and one left unanswered for five minutes is masked. A session
+can be left out of the asking from **+** in its message box. Both are on by
+default, and what was sent as is or left out can be undone, in Settings ›
+Secrets.
 
 ## License
 

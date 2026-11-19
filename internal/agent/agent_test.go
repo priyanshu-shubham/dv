@@ -1038,6 +1038,25 @@ func TestTheListLeadsWithTheModelTheSettingsStartOn(t *testing.T) {
 	}
 }
 
+func TestCodexUsageIsThePlansWindows(t *testing.T) {
+	plus := `{"limitId":"codex","limitName":null,"primary":{"usedPercent":3,"windowDurationMins":300,"resetsAt":1795104523},"secondary":{"usedPercent":1,"windowDurationMins":10080,"resetsAt":1795691323}}`
+	spark := `{"limitId":"spark","limitName":"Spark","primary":{"usedPercent":20,"windowDurationMins":300},"secondary":{"usedPercent":40,"windowDurationMins":10080}}`
+	u := codexUsageFrom(json.RawMessage(`{"rateLimits":` + plus + `,"rateLimitsByLimitId":{"codex":` + plus + `,"spark":` + spark + `}}`))
+	if u == nil || u.Session.Percent != 3 || u.Session.Window != 300 || u.Week.Percent != 1 || u.Week.ResetsAt != "2026-11-26T11:08:43Z" {
+		t.Fatalf("usage %+v", u)
+	}
+	if len(u.Models) != 1 || *u.Models[0] != (Limit{Model: "Spark", Percent: 40, Window: 10080}) {
+		t.Fatalf("a model's own limit: %+v", u.Models)
+	}
+	free := codexUsageFrom(json.RawMessage(`{"rateLimits":{"limitId":"codex","primary":{"usedPercent":12,"windowDurationMins":43200}}}`))
+	if free == nil || free.Session != nil || free.Week.Window != 43200 {
+		t.Fatalf("the free plan's one limit: %+v", free)
+	}
+	if codexUsageFrom(json.RawMessage(`{"rateLimits":null}`)) != nil {
+		t.Fatal("no limits, yet usage")
+	}
+}
+
 func TestUsageIsThePlansWindows(t *testing.T) {
 	u := usageFrom(json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":4,"resets_at":"2026-09-16T22:00:00Z"},"seven_day":{"utilization":6.5,"resets_at":"2026-09-23T11:00:00Z"},"seven_day_opus":null}}`))
 	if u == nil || u.Session.Percent != 4 || u.Week.Percent != 6.5 || u.Week.ResetsAt != "2026-09-23T11:00:00Z" {

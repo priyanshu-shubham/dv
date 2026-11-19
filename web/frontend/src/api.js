@@ -314,6 +314,8 @@ export const api = {
   agentRemove: (id) => req(`/api/agent/sessions/${id}/remove`, { method: "POST", body: "{}" }),
   // A kept session is never stopped for being idle, and starts with dv.
   agentKeep: (id, keep) => req(`/api/agent/sessions/${id}/keep`, { method: "POST", body: JSON.stringify({ keep }) }),
+  // on: what the session sends that looks like a secret waits for the user
+  agentSecretsAsking: (id, on) => req(`/api/agent/sessions/${id}/secrets-asking`, { method: "POST", body: JSON.stringify({ on }) }),
   // Lets dv talk to a session a terminal has open, until it closes there or here.
   agentShare: (id) => req(`/api/agent/sessions/${id}/share`, { method: "POST", body: "{}" }),
 
@@ -425,9 +427,15 @@ export const api = {
   // secretScan: { found }, what in text looks like a secret and isn't masked
   secretScan: (text) => req("/api/secrets/scan", { method: "POST", body: JSON.stringify({ text }) }, ""),
   secretAllow: (values) => req("/api/secrets/allow", { method: "POST", body: JSON.stringify({ values }) }, ""),
-  // secretsHeld: [{ id, session, found: [{ preview, name }] }], requests waiting over what looks like a secret
+  // secretsHeld: [{ id, session, cwd, found: [{ preview, name, where, detail, before, after }] }], requests waiting over what looks like a secret
   secretsHeld: () => req("/api/secrets/held", {}, ""),
-  secretAnswer: (id, names) => req(`/api/secrets/held/${id}`, { method: "POST", body: JSON.stringify({ names }) }, ""),
+  secretHeldValue: (id, i) => req(`/api/secrets/held/${id}/${i}`, {}, ""),
+  // quiet: the session is not asked about again; label names it in Settings
+  secretAnswer: (id, names, quiet = false, label = "") => req(`/api/secrets/held/${id}`, { method: "POST", body: JSON.stringify({ names, quiet, label }) }, ""),
+  // { allowed: [{ key, preview, at }], unasked: [{ key, label, at }] }: values sent as is, sessions not asked
+  secretExemptions: () => req("/api/secrets/exemptions", {}, ""),
+  secretForget: (key) => req(`/api/secrets/allowed/${key}`, { method: "DELETE" }, ""),
+  secretAskAgain: (session) => req(`/api/secrets/unasked/${session}`, { method: "DELETE" }, ""),
   secretAdd: (name, value) => req("/api/secrets", { method: "POST", body: JSON.stringify({ name, value }) }, ""),
   secretRemove: (name) => req(`/api/secrets/${encodeURIComponent(name)}`, { method: "DELETE" }, ""),
   telegramSetUp: (token) => req("/api/notify/telegram", { method: "POST", body: JSON.stringify({ token, origin: location.origin }) }, ""),
