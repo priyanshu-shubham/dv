@@ -5324,8 +5324,10 @@ mark {
   font-style: italic;
 }
 
+/* minmax: a line that won't wrap, as a model's note, would widen the column past the page. */
 .settings-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: calc(8px * var(--space) * var(--space));
   padding: calc(8px * var(--space)) calc(14px * var(--space)) calc(16px * var(--space));
   overflow-y: auto;
@@ -6753,7 +6755,7 @@ body.resizing * {
   border-radius: var(--r-lg);
 }
 
-.model-list .model-editor-grip {
+.model-editor .model-editor-grip {
   display: grid;
   flex: none;
   place-items: center;
@@ -6765,8 +6767,8 @@ body.resizing * {
   touch-action: none;
 }
 
-.model-list .model-editor-grip:hover,
-.model-list .model-editor-grip:focus-visible {
+.model-editor .model-editor-grip:hover,
+.model-editor .model-editor-grip:focus-visible {
   background: none;
   color: var(--fg-2);
 }

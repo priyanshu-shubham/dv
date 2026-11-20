@@ -417,9 +417,42 @@ export function useReorder(ids, onOrder) {
   const dragRef = useRef(null);
   dragRef.current = drag;
   const rows = useRef(new Map());
+  // A row held near the edge of what scrolls it scrolls on, while the finger
+  // or pointer stays still: a list longer than the screen is otherwise stuck.
+  const edge = useRef(null); // { box, y, frame }
+  const stopEdge = () => {
+    cancelAnimationFrame(edge.current?.frame);
+    edge.current = null;
+  };
+  useEffect(() => stopEdge, []);
   const move = (order, id, to) => {
     const rest = order.filter((x) => x !== id);
     return [...rest.slice(0, to), id, ...rest.slice(to)];
+  };
+  const place = (id, y) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const rest = d.order.filter((x) => x !== id);
+    let to = rest.findIndex((x) => {
+      const r = rows.current.get(x)?.getBoundingClientRect();
+      return r && y < r.top + r.height / 2;
+    });
+    if (to < 0) to = rest.length;
+    const order = move(d.order, id, to);
+    if (order.join("\n") !== d.order.join("\n")) setDrag({ id, order });
+  };
+  const scrollEdge = (id) => {
+    const a = edge.current;
+    if (!a) return;
+    const r = a.box.getBoundingClientRect();
+    const near = 48;
+    const by = a.y < r.top + near ? a.y - r.top - near : a.y > r.bottom - near ? a.y - r.bottom + near : 0;
+    if (by) {
+      const was = a.box.scrollTop;
+      a.box.scrollTop += Math.round(by / 4);
+      if (a.box.scrollTop !== was) place(id, a.y);
+    }
+    a.frame = requestAnimationFrame(() => scrollEdge(id));
   };
   const grip = (id) => ({
     onPointerDown: (e) => {
@@ -427,25 +460,25 @@ export function useReorder(ids, onOrder) {
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
       setDrag({ id, order: ids });
+      let box = e.currentTarget.parentElement;
+      while (box && !(box.scrollHeight > box.clientHeight && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+      stopEdge();
+      if (box) {
+        edge.current = { box, y: e.clientY };
+        scrollEdge(id);
+      }
     },
     onPointerMove: (e) => {
-      const d = dragRef.current;
-      if (!d) return;
-      const rest = d.order.filter((x) => x !== id);
-      let to = rest.findIndex((x) => {
-        const r = rows.current.get(x)?.getBoundingClientRect();
-        return r && e.clientY < r.top + r.height / 2;
-      });
-      if (to < 0) to = rest.length;
-      const order = move(d.order, id, to);
-      if (order.join("\n") !== d.order.join("\n")) setDrag({ id, order });
+      if (edge.current) edge.current.y = e.clientY;
+      place(id, e.clientY);
     },
     onPointerUp: () => {
+      stopEdge();
       const d = dragRef.current;
       setDrag(null);
       if (d && d.order.join("\n") !== ids.join("\n")) onOrder(d.order);
     },
-    onPointerCancel: () => setDrag(null),
+    onPointerCancel: () => (stopEdge(), setDrag(null)),
     onKeyDown: (e) => {
       const step = e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0;
       const to = ids.indexOf(id) + step;

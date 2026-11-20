@@ -2471,9 +2471,11 @@ html.phone .ask-prompt-row .ghost {
   border-radius: 50%;
 }
 
+/* anywhere: an endpoint's error carries a URL with nowhere to break. */
 html.phone .settings-note {
   font-size: 13.5px;
   color: var(--fg-2);
+  overflow-wrap: anywhere;
 }
 
 html.phone .settings-note.error {
@@ -2508,6 +2510,171 @@ html.phone .settings-row > .seg > button + button {
 html.phone .settings-row > .seg > button.on {
   background: var(--m-tonal);
   color: var(--m-on-tonal);
+}
+
+/* The model picker's list as an Android list. The handle takes the finger,
+   or the page would scroll rather than the row move; there's no hover to
+   show a row's delete. */
+html.phone .model-editor-head {
+  padding: 0 0 4px;
+}
+
+html.phone .model-editor-title {
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html.phone .model-editor-count {
+  color: var(--fg-2);
+  font-size: 14px;
+}
+
+html.phone .model-editor-list {
+  margin: 0 -12px;
+  padding: 0;
+}
+
+html.phone .model-editor-row {
+  gap: 4px;
+  min-height: 64px;
+  padding: 4px 12px 4px 0;
+  border-radius: 12px;
+}
+
+html.phone .model-editor-row:hover {
+  background: none;
+}
+
+html.phone .model-editor-row.dragging {
+  background: var(--m-high);
+  box-shadow: none;
+}
+
+html.phone .model-editor .model-editor-grip {
+  width: 44px;
+  height: 48px;
+  color: var(--fg-3);
+  touch-action: none;
+}
+
+html.phone .model-editor-grip > svg {
+  width: 16px;
+  height: 16px;
+}
+
+html.phone .model-editor-text .model-name {
+  font-size: 16px;
+}
+
+html.phone .model-editor-text .model-note {
+  color: var(--fg-2);
+  font-size: 14px;
+  white-space: normal;
+}
+
+html.phone .model-editor-drop {
+  width: 40px;
+  height: 40px;
+  opacity: 1;
+}
+
+html.phone .model-editor-row > .switch {
+  margin-left: 8px;
+}
+
+html.phone .model-editor-add {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+html.phone .model-editor-add > svg {
+  display: none;
+}
+
+html.phone .settings-body .model-editor-add input {
+  min-width: 0;
+  font-size: 14px;
+}
+
+/* Adding a provider: each field's name over it, Android's outlined fields,
+   its choices as chips, which wrap where a segmented row would not fit. */
+html.phone .provider-form .mask-secret-body {
+  gap: 12px;
+  padding: 0 24px 20px;
+}
+
+html.phone .provider-field {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+html.phone .provider-field > span:first-child {
+  width: 100%;
+  color: var(--fg);
+  font-size: 14px;
+}
+
+html.phone .provider-form input {
+  height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  font-size: 15px;
+}
+
+html.phone .provider-form input:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+html.phone .provider-field + .settings-note {
+  margin: -6px 0 0;
+}
+
+html.phone .provider-form .seg {
+  gap: 8px;
+  padding: 0;
+  background: none;
+}
+
+html.phone .provider-form .seg > button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 14px;
+}
+
+html.phone .provider-form .seg > button.on {
+  border-color: transparent;
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+html.phone .provider-form .action-form-foot {
+  padding-top: 8px;
+}
+
+html.phone .provider-form .action-form-foot > button {
+  height: 40px;
+  padding: 0 24px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html.phone .provider-form .action-form-foot > .primary {
+  background: var(--m-tonal);
+  color: var(--m-on-tonal);
+}
+
+html.phone .provider-form .action-form-foot > .primary:disabled {
+  background: var(--bg-active);
+  color: var(--fg-4);
 }
 
 /* ---- Notices, as Android's snackbars ---- */
