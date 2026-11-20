@@ -40,6 +40,7 @@ type Gateway struct {
 	mask      masker
 	codex     *codexUpstream
 	gemini    *geminiUpstream
+	prices    *priceList
 
 	keyDir, path string
 	mu           sync.Mutex
@@ -74,6 +75,7 @@ func New(configDir, keyDir string) (*Gateway, error) {
 		anthropic: au,
 		client:    &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()},
 		codex:     newCodexUpstream(),
+		prices:    newPriceList(filepath.Join(configDir, "prices.json")),
 		keyDir:    keyDir,
 		path:      filepath.Join(configDir, "secrets.json"),
 	}
@@ -100,6 +102,7 @@ func (g *Gateway) Serve(addr net.Addr) {
 	// Known before a session starts, for the window it is told (Env).
 	g.codex.knownModels()
 	g.gemini.knownModels()
+	g.prices.current()
 }
 
 // Env is what a Claude Code dv starts on model runs with to go through the

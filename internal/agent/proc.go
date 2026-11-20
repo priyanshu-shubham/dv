@@ -102,6 +102,7 @@ type proc struct {
 	status      string
 	err         string
 	cost        float64
+	usage       map[string]gateway.ModelUsage
 	blocks      []*Block
 	msg         string // the API message streaming now
 	replies     map[string]chan reply
@@ -114,7 +115,7 @@ type proc struct {
 	// Turn ends still to keep the model in force at, after a /model: two,
 	// as one sent while Claude works may only be taken up at the second.
 	modelCmd int
-	apiErr      string // the API error Claude Code last said, which its transcript holds
+	apiErr   string // the API error Claude Code last said, which its transcript holds
 
 	wmu sync.Mutex // one write to stdin at a time
 }
@@ -480,22 +481,23 @@ func (p *proc) read(stdout io.Reader, done chan struct{}) {
 }
 
 type message struct {
-	Type      string          `json:"type"`
-	Subtype   string          `json:"subtype"`
-	Parent    string          `json:"parent_tool_use_id"`
-	Model     string          `json:"model"`
-	Mode      string          `json:"permissionMode"`
-	Status    string          `json:"status"`
-	State     string          `json:"state"`
-	IsError   bool            `json:"is_error"`
-	APIError  bool            `json:"is_api_error_message"`
-	Result    string          `json:"result"`
-	Errors    []string        `json:"errors"`
-	Cost      float64         `json:"total_cost_usd"`
-	Suggest   string          `json:"suggestion"` // a prompt_suggestion's
-	Command   string          `json:"command_uuid"`
-	RequestID string          `json:"request_id"`
-	Request   json.RawMessage `json:"request"`
+	Type      string                        `json:"type"`
+	Subtype   string                        `json:"subtype"`
+	Parent    string                        `json:"parent_tool_use_id"`
+	Model     string                        `json:"model"`
+	Mode      string                        `json:"permissionMode"`
+	Status    string                        `json:"status"`
+	State     string                        `json:"state"`
+	IsError   bool                          `json:"is_error"`
+	APIError  bool                          `json:"is_api_error_message"`
+	Result    string                        `json:"result"`
+	Errors    []string                      `json:"errors"`
+	Cost      float64                       `json:"total_cost_usd"`
+	Usage     map[string]gateway.ModelUsage `json:"modelUsage"`
+	Suggest   string                        `json:"suggestion"` // a prompt_suggestion's
+	Command   string                        `json:"command_uuid"`
+	RequestID string                        `json:"request_id"`
+	Request   json.RawMessage               `json:"request"`
 	// On a change of model Claude Code made itself: its notice, which is
 	// Raw as other messages carry content of other shapes, and the models.
 	Notice   json.RawMessage `json:"content"`
@@ -624,7 +626,7 @@ func (p *proc) handle(line []byte) {
 		if !p.busy {
 			p.queued, p.lastUsed = nil, time.Now()
 		}
-		p.status, p.cost = "", m.Cost
+		p.status, p.cost, p.usage = "", m.Cost, m.Usage
 		if m.Subtype == "error_during_execution" {
 			// Interrupted: what streamed is not coming to the transcript.
 			p.blocks = nil

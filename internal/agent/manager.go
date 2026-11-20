@@ -1715,11 +1715,9 @@ func (m *Manager) update(id string, s *Sub) Update {
 			}
 			u.Live.Context = &c
 		}
-		u.Live.Status, u.Live.Error, u.Live.Cost, u.Live.Suggestion = p.status, p.err, p.cost, p.suggestion
-		// Claude Code prices a model it doesn't know as it guesses: a Codex
-		// one is the user's subscription, a Gemini one billed by Google.
-		if gateway.Served(cmp.Or(p.model, model)) {
-			u.Live.Cost = 0
+		u.Live.Status, u.Live.Error, u.Live.Suggestion = p.status, p.err, p.suggestion
+		if cost, ok := gateway.SessionCost(p.cost, p.usage); ok {
+			u.Live.Cost = cost
 		}
 		if p.busy && !p.since.IsZero() {
 			u.Live.Since = p.since.UTC().Format(time.RFC3339Nano)
