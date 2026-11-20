@@ -3074,6 +3074,8 @@ const Item = memo(function Item(props) {
       return <ModelChange item={item} />;
     case "peer":
       return <PeerMessage item={item} />;
+    case "report":
+      return <AgentReport item={item} />;
     case "tool":
       // Folded into the run's first call, but still one child per item: the
       // view finds items by their place among the conversation's children.
@@ -3105,6 +3107,27 @@ function PeerMessage({ item }) {
     <div className="agent-peer">
       <div className="agent-peer-from">Message from {item.from || "another session"}</div>
       <Markdown md={md} text={item.text} className="markdown agent-text" />
+    </div>
+  );
+}
+
+// AgentReport is what an agent left running came back with: its words, not
+// yours, under the task it was given, with the way into its conversation.
+function AgentReport({ item }) {
+  const openCall = useContext(OpenCall);
+  return (
+    <div className="agent-peer agent-report">
+      <div className="agent-peer-from">
+        <span>{item.from ? `Report · ${item.from}` : "An agent's report"}</span>
+        {openCall && item.toolId && (
+          <button className="link" onClick={() => openCall(item.toolId)} title="The agent's own conversation">
+            Conversation
+          </button>
+        )}
+      </div>
+      <Folded>
+        <Markdown md={md} text={item.text} className="markdown agent-text" />
+      </Folded>
     </div>
   );
 }
@@ -4071,7 +4094,9 @@ function ToolBody({ item, session, root, onOpenFile }) {
       ) : tool === "ExitPlanMode" && input.plan ? (
         <Markdown md={md} text={input.plan} className="markdown agent-plan" />
       ) : (tool === "Agent" || tool === "Task") && input.prompt ? (
-        <Markdown md={md} text={input.prompt} className="markdown agent-page" />
+        <Folded className="agent-folded-prompt">
+          <Markdown md={md} text={input.prompt} className="markdown agent-page" />
+        </Folded>
       ) : tool === "SendMessage" && typeof input.message === "string" ? (
         <Markdown md={md} text={input.message} className="markdown agent-page" />
       ) : (
@@ -4135,9 +4160,42 @@ function Output({ tool, input, out, failed, root, onOpenFile }) {
   }
   if (!out.text) return null;
   if (!failed && (tool === "Agent" || tool === "Task")) {
-    return <Markdown md={md} text={out.text} className="markdown agent-page" />;
+    return (
+      <Folded>
+        <Markdown md={md} text={out.text} className="markdown agent-page" />
+      </Folded>
+    );
   }
   return <Lines className={cx("agent-result", failed && "error")} text={out.text} />;
+}
+
+// Folded shows the start of a long page, fading out, until asked for the rest,
+// which then reads with the conversation instead of scrolling in a box of its own.
+function Folded({ className, children }) {
+  const ref = useRef(null);
+  const [all, setAll] = useState(false);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || all) return;
+    const measure = () => setCut(el.scrollHeight > el.clientHeight + 1);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el.firstElementChild || el);
+    measure();
+    return () => ro.disconnect();
+  }, [all]);
+  return (
+    <div className={cx("agent-folded", className, !all && "folded", cut && !all && "cut")}>
+      <div className="agent-folded-body" ref={ref}>
+        {children}
+      </div>
+      {cut && !all && (
+        <button className="link agent-more" onClick={() => setAll(true)}>
+          Show all
+        </button>
+      )}
+    </div>
+  );
 }
 
 const hostOf = (url) => {

@@ -113,7 +113,7 @@ func outputFrom(line []byte, root, id string) (*Output, error) {
 		out.Text = ""
 	case r.NumFiles != nil && r.Mode == "content":
 		if r.Content != nil {
-			out.Found, out.Text = matches(*r.Content, where), ""
+			out.Found, out.Text = matches(string(*r.Content), where), ""
 		}
 	case r.NumFiles != nil:
 		for _, f := range r.Filenames {

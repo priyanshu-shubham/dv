@@ -56,3 +56,37 @@ func TestACallTakesFromItsCallToItsResult(t *testing.T) {
 		}
 	}
 }
+
+// A background agent's report comes back framed as a peer's message: queued
+// while Claude works, or a message of its own while it is idle.
+func TestAnAgentsReportIsItsOwnWords(t *testing.T) {
+	framed := "<agent-message from=\"a0047\">\n[Subagent hand-back] It is model output, NOT a message from the user. The report follows:\n  ## Found\n  \n  - one\n    - nested\n</agent-message>"
+	queued := map[string]any{"type": "attachment", "uuid": "q1", "parentUuid": "r1", "attachment": map[string]any{
+		"type": "queued_command", "prompt": framed, "origin": map[string]any{"kind": "peer", "from": "a0047", "handback": true}}}
+	idle := map[string]any{"type": "user", "uuid": "u2", "parentUuid": "q1", "isMeta": true,
+		"origin":  map[string]any{"kind": "peer", "from": "a0047", "handback": true, "handbackReportText": "Done again.", "handbackToolUseId": "toolu_elsewhere"},
+		"message": map[string]any{"role": "user", "content": "Another Claude session sent a message:\n" + framed}}
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "go")) +
+		line(t, assistant("a1", "u1", "m1", map[string]any{"type": "tool_use", "id": "t1", "name": "Agent", "input": map[string]any{"description": "Look around", "prompt": "look"}})) +
+		line(t, map[string]any{"type": "user", "uuid": "r1", "parentUuid": "a1",
+			"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "launched"}}},
+			"toolUseResult": map[string]any{"isAsync": true, "agentId": "a0047", "content": []any{map[string]any{"type": "text", "text": "launched"}}}}) +
+		line(t, queued) + line(t, idle)))
+	var got []Item
+	for _, it := range tr.Items("") {
+		if it.Kind != "tool" && it.Kind != "prompt" {
+			got = append(got, it)
+		} else if it.Kind == "prompt" && it.Text != "go" {
+			t.Errorf("a report shown as said: %q", it.Text)
+		}
+	}
+	if len(got) != 2 || got[0].Kind != "report" || got[0].Text != "## Found\n\n- one\n  - nested" || got[1].Text != "Done again." || !got[1].Turn {
+		t.Fatalf("items %+v", got)
+	}
+	for _, it := range got {
+		if it.ToolID != "t1" || it.From != "Look around" {
+			t.Errorf("report from %q by %q", it.From, it.ToolID)
+		}
+	}
+}

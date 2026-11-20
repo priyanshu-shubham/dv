@@ -3988,6 +3988,12 @@ button.note-label:hover {
   font-size: var(--fs-xs);
 }
 
+.markdown hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
 /* A card of its own, whatever ground the Markdown is on: the Agent view's is
    the page's, which a block in that shade vanished into. */
 .markdown pre {
@@ -8261,10 +8267,25 @@ button.agent-working.held:hover {
   background: var(--bg-panel);
 }
 
+/* The log's gap is too slight to tell two cards of one shade apart. */
+.agent-peer + .agent-peer {
+  margin-top: 6px;
+}
+
 .agent-peer-from {
   margin-bottom: 4px;
   color: var(--fg-3);
   font-size: var(--fs-xs);
+}
+
+.agent-report .agent-peer-from {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-report .agent-more {
+  padding: 6px 0 0;
 }
 
 .agent-task-output {
@@ -8721,6 +8742,32 @@ button.agent-working.held:hover {
 
 .agent-plan {
   padding: 10px 14px;
+}
+
+.agent-folded .agent-page {
+  max-height: none;
+  overflow: visible;
+}
+
+.agent-folded.folded > .agent-folded-body {
+  max-height: 140px;
+  overflow: hidden;
+}
+
+.agent-folded-prompt.folded > .agent-folded-body {
+  max-height: 96px;
+}
+
+.agent-folded.cut > .agent-folded-body {
+  mask-image: linear-gradient(to bottom, #000 65%, transparent);
+}
+
+.agent-tool-body .agent-folded > .agent-more {
+  padding-left: 14px;
+}
+
+.agent-folded-prompt + .agent-folded {
+  border-top: 1px solid var(--border);
 }
 
 .agent-todos {

@@ -19,7 +19,7 @@ import (
 // Item is one thing in a conversation as the page draws it.
 type Item struct {
 	Key  string `json:"key"`
-	Kind string `json:"kind"` // prompt | command | output | text | thinking | tool | note | compact | mode | model | peer
+	Kind string `json:"kind"` // prompt | command | output | text | thinking | tool | note | compact | mode | model | peer | report
 	At   string `json:"at,omitempty"`
 	Text string `json:"text,omitempty"`
 
@@ -51,7 +51,8 @@ type Item struct {
 	Compacted *Compacted `json:"compacted,omitempty"`
 
 	// On a change of mode, whose Text is the new one; on a peer's message, the
-	// session that sent it. On a change of model, the models, and as Text
+	// session that sent it; on an agent's report, the task it was given, and
+	// as ToolID the call that started it. On a change of model, the models, and as Text
 	// Claude Code's notice of why, when dv caught it.
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
@@ -152,6 +153,7 @@ type Transcript struct {
 	started map[string]string // background task id -> tool_use id
 	resumed map[string]string // Agent call -> the SendMessage that last resumed it
 	calls   map[string]string // when each call still without a result was made
+	asked   map[string]string // Agent call -> the task its line names
 	// Compaction boundaries by the entry the conversation had reached. Claude
 	// Code carries on from that entry in a chain that goes around the boundary,
 	// so it is placed by where it falls in the file.
@@ -233,7 +235,7 @@ func tail(data []byte) (int, string) {
 func newTranscript(root string) *Transcript {
 	return &Transcript{
 		root: root, entries: map[string]*entry{}, results: map[string]*Result{},
-		tasks: map[string]*Task{}, started: map[string]string{}, resumed: map[string]string{}, calls: map[string]string{}, compacts: map[string][]*entry{}, msgs: map[string][]*entry{},
+		tasks: map[string]*Task{}, started: map[string]string{}, resumed: map[string]string{}, calls: map[string]string{}, asked: map[string]string{}, compacts: map[string][]*entry{}, msgs: map[string][]*entry{},
 	}
 }
 
@@ -480,6 +482,16 @@ func compactedBy(items []Item) []Item {
 	return items
 }
 
+// origin is who a message came from, when not you. A background agent's
+// report on what it did comes as a peer's message, its words in a frame.
+type origin struct {
+	Kind     string `json:"kind"`
+	From     string `json:"from"`
+	Handback bool   `json:"handback"`
+	Report   string `json:"handbackReportText"`
+	ToolID   string `json:"handbackToolUseId"`
+}
+
 type rawEntry struct {
 	Type      string          `json:"type"`
 	Subtype   string          `json:"subtype"`
@@ -493,11 +505,9 @@ type rawEntry struct {
 	Timestamp string          `json:"timestamp"`
 	Entry     string          `json:"entrypoint"` // cli in a terminal, sdk-cli headless
 	Effort    string          `json:"effort"`     // an assistant line's
-	Content   json.RawMessage `json:"content"` // a system line's
-	Origin    struct {
-		Kind string `json:"kind"`
-	} `json:"origin"`
-	Message struct {
+	Content   json.RawMessage `json:"content"`    // a system line's
+	Origin    origin          `json:"origin"`
+	Message   struct {
 		ID      string          `json:"id"`
 		Content json.RawMessage `json:"content"`
 		Model   string          `json:"model"`
@@ -521,6 +531,7 @@ type rawEntry struct {
 		CommandMode string          `json:"commandMode"`
 		Content     json.RawMessage `json:"content"`
 		ToolUseID   string          `json:"toolUseID"`
+		Origin      origin          `json:"origin"`
 	} `json:"attachment"`
 
 	Cwd         string `json:"cwd"`
@@ -599,6 +610,11 @@ func (t *Transcript) parse(line []byte) *entry {
 			case "tool_use", "server_tool_use":
 				e.items = append(e.items, Item{Key: b.ID, Kind: "tool", At: r.Timestamp, Tool: b.Name, ToolID: b.ID, Input: trimInput(b.Input)})
 				t.calls[b.ID] = r.Timestamp
+				if b.Name == "Agent" || b.Name == "Task" {
+					var in struct{ Description string }
+					json.Unmarshal(b.Input, &in)
+					t.asked[b.ID] = in.Description
+				}
 			}
 		}
 
@@ -645,6 +661,7 @@ func (t *Transcript) parse(line []byte) *entry {
 			text, images, _ := contentOf(r.Attachment.Prompt)
 			t.finished(text)
 			if text != "" || images > 0 {
+				r.Origin = r.Attachment.Origin
 				t.prompt(e, r, text, images, note, false)
 			}
 		}
@@ -692,6 +709,7 @@ var (
 	taskSummary = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)
 	peerMessage = regexp.MustCompile(`(?s)<cross-session-message\b([^>]*)>(.*?)(?:</cross-session-message>|$)`)
 	peerName    = regexp.MustCompile(`from-name="([^"]*)"`)
+	agentMsg    = regexp.MustCompile(`(?s)<agent-message\b[^>]*\bfrom="([^"]*)"[^>]*>\n?(.*?)(?:</agent-message>|$)`)
 	taskTool    = regexp.MustCompile(`<tool-use-id>([^<]*)</tool-use-id>`)
 	taskID      = regexp.MustCompile(`<task-id>([^<]*)</task-id>`)
 	taskStatus  = regexp.MustCompile(`<status>([^<]*)</status>`)
@@ -811,6 +829,8 @@ func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note 
 		e.items[len(e.items)-1].Turn = turn
 	// Sent by another session with SendMessage. Busy, this one gets it as a
 	// queued message, which has only the tag to say so.
+	case r.Origin.Handback || strings.HasPrefix(text, "<agent-message") || r.Origin.Kind == "peer" && agentMsg.MatchString(text):
+		t.report(e, r, text, turn)
 	case r.Origin.Kind == "peer" || strings.HasPrefix(text, "<cross-session-message"):
 		m := peerMessage.FindStringSubmatch(text)
 		if m == nil {
@@ -820,6 +840,41 @@ func (t *Transcript) prompt(e *entry, r rawEntry, text string, images int, note 
 	default:
 		e.items = append(e.items, Item{Key: r.UUID, Kind: "prompt", At: r.Timestamp, Text: text, Images: images, UUID: r.UUID, Turn: turn})
 	}
+}
+
+// report files what one of the session's agents sent it: the report it ends
+// with, or a message on the way. Claude Code frames a report in a warning
+// that it is the agent's words, and indents it so the frame can't be forged.
+func (t *Transcript) report(e *entry, r rawEntry, text string, turn bool) {
+	m := agentMsg.FindStringSubmatch(text)
+	if m == nil && r.Origin.Report == "" {
+		return
+	}
+	body, framed := r.Origin.Report, r.Origin.Handback
+	if body == "" {
+		body = m[2]
+		if _, rest, ok := strings.Cut(body, "The report follows:\n"); ok {
+			lines := strings.Split(rest, "\n")
+			for i, l := range lines {
+				lines[i] = strings.TrimPrefix(l, "  ")
+			}
+			body, framed = strings.Join(lines, "\n"), true
+		}
+	}
+	from := r.Origin.From
+	if from == "" && m != nil {
+		from = m[1]
+	}
+	// The hand-back's own call id is not always one in the transcript.
+	toolID := t.started[from]
+	if _, ok := t.asked[r.Origin.ToolID]; toolID == "" && ok {
+		toolID = r.Origin.ToolID
+	}
+	it := Item{Key: r.UUID, Kind: "report", At: r.Timestamp, Text: strings.TrimSpace(body), ToolID: toolID, From: t.asked[toolID], Turn: turn}
+	if !framed {
+		it.Kind = "peer"
+	}
+	e.items = append(e.items, it)
 }
 
 // output files what a command printed. Claude Code writes it as a line of its
@@ -848,7 +903,7 @@ func (t *Transcript) result(b block, ed *toolUseResult) *Result {
 	}
 	if ed.Type == "create" && ed.Content != nil {
 		e.Created = true
-		e.Adds = strings.Count(strings.TrimSuffix(*ed.Content, "\n"), "\n") + 1
+		e.Adds = strings.Count(strings.TrimSuffix(string(*ed.Content), "\n"), "\n") + 1
 	}
 	for _, h := range ed.Patch {
 		for _, l := range h.Lines {
@@ -864,13 +919,25 @@ func (t *Transcript) result(b block, ed *toolUseResult) *Result {
 	return res
 }
 
+// onlyText is a result's content where it is text: an Agent call's is its
+// blocks, which would otherwise fail the whole record.
+type onlyText string
+
+func (s *onlyText) UnmarshalJSON(b []byte) error {
+	var v string
+	if json.Unmarshal(b, &v) == nil {
+		*s = onlyText(v)
+	}
+	return nil
+}
+
 // toolUseResult is the record Claude Code keeps of a call's result, in the
 // shapes of the tools dv shows more of than their text.
 type toolUseResult struct {
-	Type     string  `json:"type"` // Write: create | update; Read: text | image | pdf | notebook
-	FilePath string  `json:"filePath"`
-	Patch    []hunk  `json:"structuredPatch"`
-	Content  *string `json:"content"`
+	Type     string    `json:"type"` // Write: create | update; Read: text | image | pdf | notebook
+	FilePath string    `json:"filePath"`
+	Patch    []hunk    `json:"structuredPatch"`
+	Content  *onlyText `json:"content"`
 
 	File *struct {
 		FilePath   string `json:"filePath"`
