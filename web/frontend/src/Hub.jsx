@@ -503,6 +503,23 @@ function Entry({ folder: f, main, job, on }) {
   const worktree = !!main;
   const [renaming, setRenaming] = useState(false);
   const [copied, setCopied] = useState(false);
+  const opening = useRef(null);
+  useEffect(() => () => clearTimeout(opening.current), []);
+  // The card is a link: a click on its name waits to see whether a second
+  // makes it a double-click, which renames rather than opens.
+  const nameClick = (e) => {
+    if (e.button !== 0 || e.detail === 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    clearTimeout(opening.current);
+    if (e.detail > 1) {
+      e.stopPropagation();
+      setRenaming(true);
+      return;
+    }
+    const href = e.currentTarget.closest("a")?.href;
+    if (!href) return;
+    opening.current = setTimeout(() => (f.elsewhere ? window.open(href, "_blank", "noopener") : location.assign(href)), DOUBLE_CLICK_MS);
+  };
   useEffect(() => {
     if (!copied) return;
     const t = setTimeout(() => setCopied(false), 1500);
@@ -553,7 +570,9 @@ function Entry({ folder: f, main, job, on }) {
             }}
           />
         ) : (
-          <span className="name">{f.name}</span>
+          <span className="name" title="Double-click to rename" onClick={nameClick}>
+            {f.name}
+          </span>
         )}
         <GitState status={f.status} pr={f.pr} />
         <CardMenu items={menu} />
@@ -780,6 +799,8 @@ const stop = (f) => (e) => {
   e.stopPropagation();
   f();
 };
+
+const DOUBLE_CLICK_MS = 300;
 
 // Rename is a card's name being edited: Enter or leaving it keeps the name,
 // Esc does not. An empty name goes back to the folder's own.
