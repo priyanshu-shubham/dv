@@ -269,6 +269,7 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	gateway.Watch(dirs, server.MaskEnvFiles(user), server.AskLooseSecrets(user))
 	gateway.RouteGemini(server.GeminiRoute(user))
 	gateway.UseProviders(server.Providers(user))
+	gateway.SwitchOpenAI(server.OpenAIOff(user))
 	mux.HandleFunc("GET /api/secrets", server.Guarded(server.HandleSecrets))
 	mux.HandleFunc("POST /api/secrets", server.Guarded(server.HandleAddSecret))
 	mux.HandleFunc("DELETE /api/secrets/{name}", server.Guarded(server.HandleRemoveSecret))

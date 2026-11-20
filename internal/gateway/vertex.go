@@ -26,6 +26,7 @@ import (
 // GeminiRoute is how Gemini models are reached, as the user set it: with
 // the Gemini API key, or through Vertex AI with their Google Cloud login.
 type GeminiRoute struct {
+	Off      bool // switched off in Settings: none listed, none answered
 	Vertex   bool
 	Project  string // "" for gcloud's own
 	Location string // global, us or eu
@@ -59,6 +60,8 @@ func (a geminiAccess) id() string {
 	return "key:" + a.key
 }
 
+var errGeminiOff = errors.New("Gemini is switched off in dv's Settings, Models")
+
 var errNoProject = errors.New("there is no Google Cloud project for Vertex AI: name one here, or set one with gcloud config set project")
 
 // accessError is the route not there to use, which retrying won't change.
@@ -70,6 +73,9 @@ func (c *geminiUpstream) access() geminiAccess {
 	r := GeminiRoute{}
 	if c.route != nil {
 		r = c.route()
+	}
+	if r.Off {
+		return geminiAccess{err: errGeminiOff}
 	}
 	if !r.Vertex {
 		a := geminiAccess{key: c.key()}

@@ -365,6 +365,28 @@ func TestProviderRouting(t *testing.T) {
 	}
 }
 
+func TestOpenAISwitchedOff(t *testing.T) {
+	t.Setenv(OpenAIKeyName, "sk-test")
+	t.Cleanup(func() { openAIOffSource.Store(nil) })
+	g, err := New(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := g.provider("openai/gpt-6"); !ok {
+		t.Fatal("OpenAI not served with a key")
+	}
+	SwitchOpenAI(func() bool { return true })
+	if _, ok := g.provider("openai/gpt-6"); ok || len(g.ProviderModels()) != 0 {
+		t.Error("OpenAI served while switched off")
+	}
+	body := `{"model":"openai/gpt-6","messages":[{"role":"user","content":"hi"}]}`
+	rec := httptest.NewRecorder()
+	g.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, Prefix+g.token+"/v1/messages", strings.NewReader(body)))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "switched off") {
+		t.Errorf("a session on an OpenAI model is told why: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestStripProviderThinking(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"a","signature":"dvcc1.eA"},{"type":"thinking","thinking":"b","signature":"dvan1.lite.s"},{"type":"thinking","thinking":"c","signature":"real"},{"type":"text","text":"ok"}]}]}`)
 	got := string(stripGatewayThinking(body))

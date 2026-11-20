@@ -72,20 +72,36 @@ func MaskEnvFiles(user *store.Prefs) func() bool {
 	}
 }
 
-// GeminiRoute reads how Gemini models are reached: the setting geminiRoute,
-// "vertex" for Vertex AI in vertexProject at vertexLocation, else the API key.
+// GeminiRoute reads how Gemini models are reached: not at all with the
+// setting geminiOff, else by geminiRoute, "vertex" for Vertex AI in
+// vertexProject at vertexLocation, else the API key.
 func GeminiRoute(user *store.Prefs) func() gateway.GeminiRoute {
 	return func() gateway.GeminiRoute {
 		if user == nil {
 			return gateway.GeminiRoute{}
 		}
 		var s struct {
+			Off      bool   `json:"geminiOff"`
 			Route    string `json:"geminiRoute"`
 			Project  string `json:"vertexProject"`
 			Location string `json:"vertexLocation"`
 		}
 		json.Unmarshal(user.All()["settings"], &s)
-		return gateway.GeminiRoute{Vertex: s.Route == "vertex", Project: strings.TrimSpace(s.Project), Location: s.Location}
+		return gateway.GeminiRoute{Off: s.Off, Vertex: s.Route == "vertex", Project: strings.TrimSpace(s.Project), Location: s.Location}
+	}
+}
+
+// OpenAIOff reads whether OpenAI's API key is left unused: the setting openaiOff.
+func OpenAIOff(user *store.Prefs) func() bool {
+	return func() bool {
+		if user == nil {
+			return false
+		}
+		var s struct {
+			Off bool `json:"openaiOff"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.Off
 	}
 }
 

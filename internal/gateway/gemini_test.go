@@ -230,6 +230,14 @@ func TestGeminiServe(t *testing.T) {
 		t.Errorf("no key: %d %s", rec.Code, rec.Body)
 	}
 
+	off := newGeminiUpstream(func() string { return "k" })
+	off.route = func() GeminiRoute { return GeminiRoute{Off: true} }
+	rec = httptest.NewRecorder()
+	off.serve(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body)), []byte(body), &masker{})
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "switched off") || off.knownModels() != nil || off.failed() != nil {
+		t.Errorf("off, with a key: %d %s", rec.Code, rec.Body)
+	}
+
 	bad := fakeGemini(t, "", "", &seen)
 	bad.key = func() string { return "wrong" }
 	rec = httptest.NewRecorder()

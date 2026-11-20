@@ -1860,16 +1860,18 @@ const VERTEX_REGIONS = [
 ];
 
 // Gemini is how the gateway answers gemini/ models - with an API key, or
-// through Vertex AI with the user's Google Cloud login - and what Google made
+// through Vertex AI with the user's Google Cloud login, or not at all - and what Google made
 // of it. The key is a masked secret like any other; models are listed a
 // moment after the key, project or region changes.
 function Gemini({ settings, onChange }) {
   const secrets = useSecrets();
+  const off = !!settings.geminiOff;
   const vertex = settings.geminiRoute === "vertex";
   const [st, setSt] = useState(null);
   const [adding, setAdding] = useState(false);
   const [project, setProject] = useState(settings.vertexProject || "");
   useEffect(() => {
+    if (off) return;
     let tries = 0;
     let timer;
     const ask = () =>
@@ -1885,14 +1887,23 @@ function Gemini({ settings, onChange }) {
     return () => clearTimeout(timer);
     // st is only read for whether this is the first asking.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secrets, settings.geminiRoute, settings.vertexProject, settings.vertexLocation]);
-  if (!st) return null;
+  }, [secrets, off, settings.geminiRoute, settings.vertexProject, settings.vertexLocation]);
+  const power = (
+    <Setting
+      label="In the model picker"
+      note="Off leaves Gemini's models out, and dv uses neither a key nor your Google Cloud login for them, whatever there is."
+      value={!off}
+      onPick={(on) => onChange({ geminiOff: on ? undefined : true })}
+      choices={OFF_ON}
+    />
+  );
+  if (off || !st) return power;
   const listed = st.models ? `${st.models} models in the model picker` : "Listing its models…";
   const fresh = st.vertex !== vertex;
 
   const route = (
     <Setting
-      label="Gemini models"
+      label="Answered through"
       note="Where the model picker's Gemini models are answered from. Usage is billed to the key's project, or the Google Cloud project here."
       value={vertex ? "vertex" : "key"}
       onPick={(v) => onChange({ geminiRoute: v === "vertex" ? "vertex" : undefined })}
@@ -1905,6 +1916,7 @@ function Gemini({ settings, onChange }) {
     else if (st.key) note = `${listed}${st.key === "env" ? ", from GEMINI_API_KEY in dv's environment" : ""}.`;
     return (
       <>
+        {power}
         {route}
         <div className="settings-row">
           <div className="settings-text">
@@ -1929,6 +1941,7 @@ function Gemini({ settings, onChange }) {
   else if (!fresh && st.project) note = `${listed}, through Vertex AI in ${st.project}${settings.vertexProject ? "" : ", the project gcloud is set to"}.`;
   return (
     <>
+      {power}
       {route}
       <div className="settings-row">
         <div className="settings-text">
@@ -2007,13 +2020,14 @@ function Providers({ settings, onChange }) {
     timer = setTimeout(ask, st ? 600 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secrets, list]);
+  }, [secrets, list, settings.openaiOff]);
   if (!st) return null;
   const status = Object.fromEntries(st.map((p) => [p.id, p]));
   const listed = (s) => (s?.models ? `${s.models} models in the model picker` : "Listing its models…");
   const save = (next) => onChange({ providers: next.length ? next : undefined });
 
   const openai = status.openai || {};
+  const openaiOff = !!settings.openaiOff;
   let openaiNote = "A key from platform.openai.com, saved as OPENAI_API_KEY, puts OpenAI's models in the model picker, billed to the key.";
   if (openai.error) openaiNote = openai.error;
   else if (openai.key) openaiNote = `${listed(openai)}${openai.key === "env" ? ", from OPENAI_API_KEY in dv's environment" : ""}.`;
@@ -2021,19 +2035,28 @@ function Providers({ settings, onChange }) {
   return (
     <>
       <div className="settings-heading">OpenAI</div>
-      <div className="settings-row">
-        <div className="settings-text">
-          <div>API key</div>
-          <div className={cx("settings-note", openai.error && "prompt-error")}>{openaiNote}</div>
+      <Setting
+        label="In the model picker"
+        note="Off leaves OpenAI's models out, and dv doesn't use the key, even one in its environment. Your Codex sign-in's models stay."
+        value={!openaiOff}
+        onPick={(on) => onChange({ openaiOff: on ? undefined : true })}
+        choices={OFF_ON}
+      />
+      {!openaiOff && (
+        <div className="settings-row">
+          <div className="settings-text">
+            <div>API key</div>
+            <div className={cx("settings-note", openai.error && "prompt-error")}>{openaiNote}</div>
+          </div>
+          {openai.key !== "saved" && (
+            <span className="settings-actions">
+              <button className="btn" onClick={() => setAdding("OPENAI_API_KEY")}>
+                Add key
+              </button>
+            </span>
+          )}
         </div>
-        {openai.key !== "saved" && (
-          <span className="settings-actions">
-            <button className="btn" onClick={() => setAdding("OPENAI_API_KEY")}>
-              Add key
-            </button>
-          </span>
-        )}
-      </div>
+      )}
 
       <div className="settings-heading">Other providers</div>
       {list.map((p) => {

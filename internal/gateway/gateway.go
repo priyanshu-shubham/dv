@@ -187,6 +187,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(head.Model, GeminiPrefix):
 		g.gemini.serve(w, r, body, &g.mask)
 		return
+	case strings.HasPrefix(head.Model, OpenAIPrefix) && openAIOff():
+		apiError{http.StatusForbidden, "permission_error", errOpenAIOff.Error(), true}.write(w)
+		return
 	}
 	if p, ok := g.provider(head.Model); ok {
 		p.serve(w, r, body, &g.mask)

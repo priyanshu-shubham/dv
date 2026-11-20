@@ -66,10 +66,24 @@ func (p Provider) Check() error {
 	return nil
 }
 
-var providerSource atomic.Pointer[func() []Provider]
+var (
+	providerSource  atomic.Pointer[func() []Provider]
+	openAIOffSource atomic.Pointer[func() bool]
+)
 
 // UseProviders has the gateway read the user's providers from list.
 func UseProviders(list func() []Provider) { providerSource.Store(&list) }
+
+// SwitchOpenAI has the gateway read from off whether the user switched OpenAI
+// off, which leaves its models unlisted and unanswered whatever key there is.
+func SwitchOpenAI(off func() bool) { openAIOffSource.Store(&off) }
+
+func openAIOff() bool {
+	f := openAIOffSource.Load()
+	return f != nil && (*f)()
+}
+
+var errOpenAIOff = errors.New("OpenAI is switched off in dv's Settings, Models")
 
 // providerUpstream answers a provider's models: through the protocol it
 // speaks, with the key named, and its models listed from it.
@@ -97,7 +111,7 @@ func (g *Gateway) newProvider(cfg Provider) *providerUpstream {
 // whose settings are as they were stays as it was, its models known.
 func (g *Gateway) providers() []*providerUpstream {
 	var cfgs []Provider
-	if g.secretOrEnv(OpenAIKeyName) != "" {
+	if !openAIOff() && g.secretOrEnv(OpenAIKeyName) != "" {
 		cfgs = append(cfgs, openAI)
 	}
 	if f := providerSource.Load(); f != nil {
