@@ -459,8 +459,8 @@ func (h *Hub) worktree(w http.ResponseWriter, slug string) (wt, main store.Folde
 }
 
 func displayName(f store.Folder) string {
-	if f.Name != "" {
-		return f.Name
+	if n := cmp.Or(f.Name, f.Titled); n != "" {
+		return n
 	}
 	return filepath.Base(f.Path)
 }

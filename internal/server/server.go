@@ -224,6 +224,9 @@ type Live struct {
 
 func (s *Server) Live() Live { return Live{Sessions: s.agent.Activity(), Requests: s.Waiting()} }
 
+// FirstTitle is what the folder's first session is called, which names a task.
+func (s *Server) FirstTitle() string { return s.agent.FirstTitle() }
+
 // InUse is whether anything goes on in the folder that letting it go would
 // stop or miss: a session running, here or in a terminal, a request waiting,
 // an action's command, or a shell in the Terminal view.

@@ -254,6 +254,14 @@ func (h *Hub) handleFolders(w http.ResponseWriter, r *http.Request) {
 		if rv != nil {
 			st := rv.srv.Status()
 			v.Open = &st
+			// Kept, for the card to go on saying it once the folder is let go.
+			if f.Task && f.Name == "" {
+				if t := rv.srv.FirstTitle(); t != "" && t != f.Titled {
+					if nf, err := h.folders.Update(f.Slug, func(d *store.Folder) { d.Titled = t }); err == nil {
+						v.Folder, v.Name = nf, displayName(nf)
+					}
+				}
+			}
 		}
 		if rv != nil && !details {
 			continue

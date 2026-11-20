@@ -52,6 +52,7 @@ type Session struct {
 	// agent has answered one.
 	prompts int
 	replied bool
+	started time.Time // when the first thing was asked
 }
 
 // lastWords is how much of the last thing said a row keeps.
@@ -100,7 +101,9 @@ func summarize(path string) (Session, bool) {
 			s.Cwd, s.Branch = r.Cwd, r.GitBranch
 		}
 		if first == "" {
-			first = promptOf(r)
+			if first = promptOf(r); first != "" {
+				s.started, _ = time.Parse(time.RFC3339, r.Timestamp)
+			}
 		}
 		return s.Cwd == "" || first == ""
 	})

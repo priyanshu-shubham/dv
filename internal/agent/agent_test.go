@@ -1188,6 +1188,45 @@ func TestAPickedEffortOutlivesARestart(t *testing.T) {
 
 // Two sessions written at the same moment keep an order of their own, rather
 // than trading places on every listing: the files come in no order.
+func TestFirstTitleNamesByTheSessionStartedFirst(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("PATH", "")
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	write := func(id, at, prompt, title string) {
+		lines := `{"type":"user","uuid":"u1","timestamp":"` + at + `","cwd":"` + root + `","message":{"role":"user","content":"` + prompt + `"}}` + "\n"
+		if title != "" {
+			lines += `{"type":"ai-title","aiTitle":"` + title + `"}` + "\n"
+		}
+		os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(lines), 0o644)
+	}
+	saved, _ := store.OpenSessions(root)
+	m := New(root, permit.New(root), saved)
+	if got := m.FirstTitle(); got != "" {
+		t.Fatalf("no sessions: %q", got)
+	}
+	write("first", "2026-11-20T09:00:00Z", "why does the build fail on arm64 when cgo is off and the cache is cold", "")
+	// Written to since, so listed ahead of it.
+	write("later", "2026-11-20T10:00:00Z", "something else", "Something else")
+	if got, want := m.FirstTitle(), "why does the build fail on arm64 when cgo is off and the…"; got != want {
+		t.Errorf("untitled, titles off: %q, want %q", got, want)
+	}
+	// With titles on, it waits for one, until making it fails.
+	m.AutoTitles = func() bool { return true }
+	if got := m.FirstTitle(); got != "" {
+		t.Errorf("a title to come: %q", got)
+	}
+	m.untitled["first"] = true
+	if got := m.FirstTitle(); !strings.HasPrefix(got, "why does") {
+		t.Errorf("no title made: %q", got)
+	}
+	write("first", "2026-11-20T09:00:00Z", "why does the build fail", "Arm64 build without cgo")
+	if got := m.FirstTitle(); got != "Arm64 build without cgo" {
+		t.Errorf("titled: %q", got)
+	}
+}
+
 func TestSessionsWrittenTogetherKeepTheirOrder(t *testing.T) {
 	root, cfg := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)

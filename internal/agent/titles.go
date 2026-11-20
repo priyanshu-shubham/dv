@@ -72,6 +72,9 @@ func (m *Manager) makeTitle(id, gist string, t store.Title) {
 	if t.Text, err = askTitle(gist); err == nil {
 		err = m.saved.SetTitle(id, t)
 	}
+	m.mu.Lock()
+	m.untitled[id] = err != nil
+	m.mu.Unlock()
 	if err != nil && !titleFailed.Swap(true) {
 		fmt.Fprintln(os.Stderr, "dv: could not title a session:", err)
 	}

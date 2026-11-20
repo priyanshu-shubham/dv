@@ -50,20 +50,21 @@ type Manager struct {
 	// agent has not. Set once, as Suggests is.
 	AutoTitles func() bool
 
-	mu      sync.Mutex
-	procs   map[string]*proc
-	follows map[string]*follow
-	rows    map[string]cachedRow // by transcript path
-	scans   map[string]*earlier  // by transcript path
-	behind  map[string]bool      // transcripts for readBehind to read on
-	reading bool
-	titled  map[string]time.Time // when a title was last asked for, by session
-	shells  map[string]*shellRun // commands run with !, by session
-	live    map[string]running
-	liveAt  time.Time
-	opts    Options
-	optsAt  time.Time
-	probing bool
+	mu       sync.Mutex
+	procs    map[string]*proc
+	follows  map[string]*follow
+	rows     map[string]cachedRow // by transcript path
+	scans    map[string]*earlier  // by transcript path
+	behind   map[string]bool      // transcripts for readBehind to read on
+	reading  bool
+	titled   map[string]time.Time // when a title was last asked for, by session
+	untitled map[string]bool      // sessions the last asking made no title for
+	shells   map[string]*shellRun // commands run with !, by session
+	live     map[string]running
+	liveAt   time.Time
+	opts     Options
+	optsAt   time.Time
+	probing  bool
 	// When Claude Code's settings files last changed, as last looked.
 	settingsAt, settingsLooked time.Time
 
@@ -83,7 +84,7 @@ func New(root string, broker *permit.Broker, saved *store.Sessions) *Manager {
 	m := &Manager{
 		root: root, broker: broker, saved: saved,
 		procs: map[string]*proc{}, follows: map[string]*follow{}, rows: map[string]cachedRow{},
-		shells: map[string]*shellRun{}, scans: map[string]*earlier{}, behind: map[string]bool{}, titled: map[string]time.Time{},
+		shells: map[string]*shellRun{}, scans: map[string]*earlier{}, behind: map[string]bool{}, titled: map[string]time.Time{}, untitled: map[string]bool{},
 	}
 	// A session started here but not yet sent to has no transcript, so all
 	// that says it exists is its place among the open ones.
@@ -283,6 +284,53 @@ func (m *Manager) Title(id string) string {
 	}
 	row, _ := m.row(path)
 	return cmp.Or(row.Title, m.saved.Titles()[id].Text, row.Prompt)
+}
+
+// FirstTitle is what the folder's first session is called, which names a
+// task until the user names it: its AI title - Claude Code's, or the one dv
+// has made - and only where none can come, its own name or the start of its
+// first message. "" while one is still to come. A temporary session, or an
+// ask, doesn't count.
+func (m *Manager) FirstTitle() string {
+	asks := m.saved.AskIDs()
+	var first *Session
+	list := m.Sessions()
+	for i, s := range list {
+		if s.Temporary || slices.Contains(asks, s.ID) {
+			continue
+		}
+		if first == nil || s.started.Before(first.started) {
+			first = &list[i]
+		}
+	}
+	if first == nil {
+		return ""
+	}
+	ai := cmp.Or(first.ai, m.saved.Titles()[first.ID].Text)
+	if first.custom == "" {
+		ai = cmp.Or(first.Title, ai)
+	}
+	if ai != "" {
+		return ai
+	}
+	m.mu.Lock()
+	failed := m.untitled[first.ID]
+	m.mu.Unlock()
+	if m.AutoTitles != nil && m.AutoTitles() && !failed {
+		return ""
+	}
+	if first.custom != "" {
+		return first.custom
+	}
+	words := strings.Fields(first.Prompt)
+	name := ""
+	for i, w := range words {
+		if len(name)+1+len(w) > 60 && i > 0 {
+			return name + "…"
+		}
+		name = strings.TrimSpace(name + " " + w)
+	}
+	return name
 }
 
 // Reply is what the agent said last in a session, whole and as written - the

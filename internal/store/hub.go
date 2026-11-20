@@ -29,6 +29,9 @@ type Folder struct {
 	Teardown string `json:"teardown,omitempty"`
 	// Task is a folder the hub made for a one-off task, deleted when closed.
 	Task bool `json:"task,omitempty"`
+	// Titled is what a task's first session is called, which its card says
+	// while it has no Name.
+	Titled string `json:"titled,omitempty"`
 }
 
 // Folders is the hub's list, kept per user so any hub they start has it.
