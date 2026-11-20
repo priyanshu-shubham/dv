@@ -231,7 +231,7 @@ export const AUTO = { kind: "auto", rev: "" };
 // has its own app (phone/Phone.jsx) instead.
 export default function Header({
   meta, folder, mode, scope, resolvedScope, onScope, onSearch, onSettings, waiting, arrived, onBell, bellOn,
-  comments, commentsOn, onComments, padOn, onPad, update, pr, onActions, onCloseTask, onFinishWorktree, onLog, onReviewPR, settings,
+  comments, commentsOn, onComments, padOn, onPad, settingsDot = {}, pr, onActions, onCloseTask, onFinishWorktree, onLog, onReviewPR, settings,
 }) {
   const agent = mode === "agent";
   return (
@@ -300,7 +300,7 @@ export default function Header({
       <button className="icon" onClick={onSearch} title={`Search definitions and text (${modKey}+K)`}>
         <IconSearch size={16} />
       </button>
-      <button className={cx("icon", update && "has-update")} onClick={onSettings} title={update ? `Settings (,): dv v${update.latest} is out` : "Settings (,)"}>
+      <button className={cx("icon", settingsDot.dot)} onClick={onSettings} title={`Settings (,)${settingsDot.note || ""}`}>
         <IconSettings size={16} />
       </button>
       </div>

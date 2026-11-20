@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
-import { Modal, SettingsOverlay, useUpdate } from "./Overlays.jsx";
+import { Modal, settingsDot, SettingsOverlay, useLogTrouble, useUpdate } from "./Overlays.jsx";
 import { followPrefs, usePref } from "./prefs.js";
 import { Notices, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
 import { copyText, cx, isMac, isTyping, LRM, openFolderSession, PHONE, PHONE_APP, relTime, useDismiss, useFixedMenu, useMedia, usePersisted, workingLabel } from "./util.js";
@@ -114,6 +114,7 @@ export default function Hub() {
   useAppBadge(waitingIn(elsewhere));
   const dot = tabDot(useNotices({ desktop: notices, go: openFolderSession, sound: !phoneApp && settings.noticeSound !== false }));
   const update = useUpdate(settings.updateCheck === false);
+  const { dot: settingsMark, note: settingsNote = "" } = settingsDot(update, useLogTrouble());
   useTabIcon(theme, settings, dot);
 
   const pickNotices = async (on) => {
@@ -283,9 +284,9 @@ export default function Hub() {
             </button>
           )}
           <button
-            className={cx("icon", update && "has-update")}
+            className={cx("icon", settingsMark)}
             onClick={() => setDialog("settings")}
-            title={update ? `Settings, for every folder (,): dv v${update.latest} is out` : "Settings, for every folder (,)"}
+            title={`Settings, for every folder (,)${settingsNote}`}
           >
             <IconSettings size={16} />
           </button>

@@ -1056,6 +1056,8 @@ export function SettingsOverlay({
   // is a page of its own, which Back leaves for the list.
   const [tab, setTab] = useState(opening || (phoneApp ? null : "appearance"));
   const secretCount = useSecrets().length;
+  const trouble = useLogTrouble();
+  const dotOf = (id) => (id === "server" && update ? "has-update" : id === "monitor" && trouble ? `has-update logs-${trouble}` : null);
   // [id, name, icon, what the phone's list says is in it]
   const tabs = [
     ["appearance", "Appearance", IconPalette, "Theme, colours and fonts"],
@@ -1068,7 +1070,7 @@ export function SettingsOverlay({
     ...(ask ? [["ask", "Ask", IconAsk, "The Ask panel's prompts"]] : []),
     ...(actions ? [["actions", "Actions", IconBolt, "Commands and prompts to run"]] : []),
     ["server", "Server", IconServer, update ? `dv v${update.latest} is out` : "Version and restart"],
-    ["monitor", "Monitor", IconGauge, "This computer, and dv's logs"],
+    ["monitor", "Monitor", IconGauge, trouble ? troubleTitle[trouble] : "This computer, and dv's logs"],
   ];
   if (phoneApp) {
     const open = tabs.find(([id]) => id === tab);
@@ -1080,7 +1082,7 @@ export function SettingsOverlay({
         ) : (
           <div className="settings-list">
             {tabs.map(([id, name, Icon, about]) => (
-              <button key={id} className={cx("settings-list-row", id === "server" && update && "has-update")} onClick={() => setTab(id)}>
+              <button key={id} className={cx("settings-list-row", dotOf(id))} onClick={() => setTab(id)}>
                 <span className="settings-list-icon">
                   <Icon size={20} />
                 </span>
@@ -1101,15 +1103,15 @@ export function SettingsOverlay({
         <div className="settings-title">Settings</div>
         <span className="seg" role="tablist">
           {tabs.map(([id, name, Icon]) => {
-            // The Settings button's dot, on the tab the update is in.
-            const dot = id === "server" && update;
+            // The Settings button's dot, on the tab it is for.
+            const dot = dotOf(id);
             return (
               <button
                 key={id}
                 role="tab"
-                className={cx(id === tab && "on", dot && "has-update")}
+                className={cx(id === tab && "on", dot)}
                 aria-selected={id === tab}
-                title={dot ? `dv v${update.latest} is out` : undefined}
+                title={!dot ? undefined : id === "server" ? `dv v${update.latest} is out` : troubleTitle[trouble]}
                 onClick={() => setTab(id)}
               >
                 <Icon size={14} />
@@ -1313,6 +1315,7 @@ function Logs() {
           }
           run = r.started;
           after = r.next - 1;
+          seeLogs(run, after);
           setLines((had) => [...(had || []), ...r.lines].slice(-LOG_LINES));
           setError("");
           timer = setTimeout(look, 1500);
@@ -1354,7 +1357,7 @@ function Logs() {
       >
         {lines?.length === 0 && <span className="dim">Nothing yet.</span>}
         {lines?.map((l) => (
-          <div key={l.n} className={cx(l.err && "logs-err")}>
+          <div key={l.n} className={cx(l.err && (l.warn ? "logs-warn" : "logs-err"))}>
             <span className="dim">{clock(l.at)}</span>
             {"  "}
             {l.text}
@@ -2263,6 +2266,64 @@ export function useUpdate(off) {
     return () => updateHeard.delete(setFound);
   }, []);
   return found;
+}
+
+// useLogTrouble is "error" or "warn" while dv has printed one this browser
+// hasn't had its logs open for since.
+const SEEN_LOGS = "dv-logs-seen";
+const TROUBLE_MS = 15000;
+const troubleHeard = new Set();
+export function useLogTrouble() {
+  const [trouble, setTrouble] = useState(null);
+  useEffect(() => {
+    let live = true;
+    let timer;
+    const look = () => {
+      clearTimeout(timer);
+      if (document.hidden) return;
+      api.logTrouble().then(
+        (r) => {
+          if (!live) return;
+          const [run, n] = (localStorage.getItem(SEEN_LOGS) || "").split(":");
+          // A restarted dv numbers its lines from 1 again.
+          const seen = run === r.started ? +n || 0 : 0;
+          setTrouble(r.err > seen ? "error" : r.warn > seen ? "warn" : null);
+        },
+        () => {},
+      );
+      timer = setTimeout(look, TROUBLE_MS);
+    };
+    look();
+    troubleHeard.add(look);
+    document.addEventListener("visibilitychange", look);
+    window.addEventListener("storage", look);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+      troubleHeard.delete(look);
+      document.removeEventListener("visibilitychange", look);
+      window.removeEventListener("storage", look);
+    };
+  }, []);
+  return trouble;
+}
+
+const troubleTitle = { error: "dv logged an error", warn: "dv logged a warning" };
+
+// settingsDot is the Settings button's dot and what it is for, if anything;
+// trouble's colour over an update's.
+export function settingsDot(update, trouble) {
+  const notes = [trouble && troubleTitle[trouble], update && `dv v${update.latest} is out`].filter(Boolean);
+  if (!notes.length) return {};
+  return { dot: cx("has-update", trouble && `logs-${trouble}`), note: `: ${notes.join(", ")}` };
+}
+
+// seeLogs notes the logs read up to line n of run.
+function seeLogs(run, n) {
+  const seen = `${run}:${n}`;
+  if (localStorage.getItem(SEEN_LOGS) === seen) return;
+  localStorage.setItem(SEEN_LOGS, seen);
+  for (const look of troubleHeard) look();
 }
 
 // checkUpdate asks GitHub now, whenever it was last asked, and tells each

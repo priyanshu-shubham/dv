@@ -30,6 +30,20 @@ func TestPumpKeepsLines(t *testing.T) {
 	}
 }
 
+func TestTrouble(t *testing.T) {
+	lines, next, lastWarn, lastErr = nil, 1, 0, 0
+	keep("dv: could not send a notice: refused", true)
+	keep("dv: warning: could not update .git/info/exclude", true)
+	keep("dv: warnings are fine on stdout", false)
+	keep("serving on :8080", false)
+	if w, e := Trouble(); w != 2 || e != 1 {
+		t.Errorf("Trouble() = %d, %d; want 2, 1", w, e)
+	}
+	if got, _ := Since(0); got[0].Warn || !got[1].Warn || got[2].Warn {
+		t.Errorf("only the stderr warning should be Warn: %+v", got)
+	}
+}
+
 func TestKeepLetsGoOfTheOldest(t *testing.T) {
 	lines, next = nil, 1
 	for range maxLines * 2 {

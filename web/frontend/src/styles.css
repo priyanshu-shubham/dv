@@ -5234,8 +5234,12 @@ mark {
 }
 
 /* What went to stderr: warnings, and what could not be done. */
-.logs-err {
+.logs-warn {
   color: var(--mod);
+}
+
+.logs-err {
+  color: var(--del);
 }
 
 .settings-note.error {
@@ -10011,6 +10015,17 @@ button.ghost.composer-add {
   border-radius: 50%;
   background: var(--accent);
   vertical-align: 2px;
+}
+
+/* dv's logs have a warning or error not yet looked at. */
+.topbar .icon.logs-warn::after,
+.settings-tabs button.logs-warn::after {
+  background: var(--mod);
+}
+
+.topbar .icon.logs-error::after,
+.settings-tabs button.logs-error::after {
+  background: var(--del);
 }
 
 /* The header's bell: what is waiting, one click from the request. */

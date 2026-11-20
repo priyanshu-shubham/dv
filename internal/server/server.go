@@ -441,11 +441,16 @@ func restart() {
 }
 
 // HandleLogs is what this dv has printed to its terminal, the lines after
-// ?after; the whole process's, as HandleRestart is.
+// ?after; the whole process's, as HandleRestart is. With ?trouble it is only
+// where the last warning and error are, for a page to poll cheaply.
 func HandleLogs(w http.ResponseWriter, r *http.Request) {
-	after, _ := strconv.Atoi(r.URL.Query().Get("after"))
-	lines, next := logs.Since(after)
-	writeJSON(w, http.StatusOK, map[string]any{"lines": lines, "next": next, "started": started})
+	warn, bad := logs.Trouble()
+	out := map[string]any{"warn": warn, "err": bad, "started": started}
+	if !r.URL.Query().Has("trouble") {
+		after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+		out["lines"], out["next"] = logs.Since(after)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // HandleUpdateCheck says whether a newer release than this dv is out, asking

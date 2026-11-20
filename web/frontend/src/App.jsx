@@ -6,7 +6,7 @@ import { CommitLog } from "./Commits.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
 import FileDiff, { cssId, unshownBody } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
-import { FilePalette, FileViewer, FinishWorktree, HelpOverlay, okToRestart, restartDv, SearchPanel, SettingsOverlay, useUpdate, WorktreeSession } from "./Overlays.jsx";
+import { FilePalette, FileViewer, FinishWorktree, HelpOverlay, okToRestart, restartDv, SearchPanel, settingsDot, SettingsOverlay, useLogTrouble, useUpdate, WorktreeSession } from "./Overlays.jsx";
 import FolderSwitcher from "./FolderSwitcher.jsx";
 import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, isCommand, runAction, useAskSettings } from "./Actions.jsx";
 import { BranchPalette } from "./Branches.jsx";
@@ -1876,6 +1876,7 @@ export default function App() {
     document.title = [n ? `(${n}) ${repo}` : ended ? `✓ ${repo}` : repo, note].filter(Boolean).join(" - ");
   }, [requests, dot, meta, settings.tabName]);
   const update = useUpdate(settings.updateCheck === false);
+  const trouble = useLogTrouble();
   useTabIcon(theme, settings, dot);
 
   // Shift+Up and Down go through the open sessions in the order the list has
@@ -2761,7 +2762,7 @@ export default function App() {
         arrived={arrived}
         onBell={() => (windowed.length ? setPromptOpen((o) => !o) : document.querySelector(".agent-ask")?.scrollIntoView({ block: "nearest" }))}
         bellOn={promptOpen}
-        update={update}
+        settingsDot={settingsDot(update, trouble)}
         pr={pr}
         onReviewPR={meta?.git && meta.remote ? () => openOverlay({ type: "review-pr" }) : null}
         onActions={() => openOverlay({ type: "actions" })}

@@ -399,6 +399,9 @@ export const api = {
   // logs: { lines: [{ n, at, err, text }], next }, what this dv printed to its
   // terminal after line `after`. At the root, as a hub's is the process's.
   logs: (after = 0) => req(`/api/logs?after=${after}`, {}, ""),
+  // logTrouble: { warn, err, started }, the numbers of the last warning and
+  // error lines, 0 for none.
+  logTrouble: () => req("/api/logs?trouble", {}, ""),
   // updateCheck: { version, latest, newer }, or just { version: "dev" } for a
   // build of one's own, fresh from GitHub if asked; update installs latest
   // and restarts into it.

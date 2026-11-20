@@ -2311,6 +2311,14 @@ html.phone .settings-list-row.has-update .settings-list-text > :last-child {
   color: var(--accent);
 }
 
+html.phone .settings-list-row.logs-warn .settings-list-text > :last-child {
+  color: var(--mod);
+}
+
+html.phone .settings-list-row.logs-error .settings-list-text > :last-child {
+  color: var(--del);
+}
+
 html.phone .settings-body {
   gap: 24px;
   min-height: 0;

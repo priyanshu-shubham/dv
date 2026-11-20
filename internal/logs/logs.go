@@ -23,6 +23,7 @@ type Line struct {
 	N    int       `json:"n"`
 	At   time.Time `json:"at"`
 	Err  bool      `json:"err,omitempty"`
+	Warn bool      `json:"warn,omitempty"` // an Err line that is only a warning
 	Text string    `json:"text"`
 }
 
@@ -31,6 +32,8 @@ var (
 	lines []Line
 	next  = 1
 
+	lastWarn, lastErr int
+
 	stdout, stderr = os.Stdout, os.Stderr
 	pipes          []*os.File
 	pumping        sync.WaitGroup
@@ -38,6 +41,10 @@ var (
 
 // colour is the terminal's styling, which the page has no use for.
 var colour = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// Everything dv writes to stderr is trouble of some kind; it says which is
+// only a warning.
+var warning = regexp.MustCompile(`(?i)\bwarn(ing)?\b`)
 
 // Capture has everything written to os.Stdout and os.Stderr from now on,
 // fmt's and log's, go on to the terminal and be kept as well. The process's
@@ -123,7 +130,16 @@ func keep(text string, isErr bool) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	lines = append(lines, Line{N: next, At: time.Now(), Err: isErr, Text: text})
+	l := Line{N: next, At: time.Now(), Err: isErr, Text: text}
+	if isErr {
+		l.Warn = warning.MatchString(text)
+		if l.Warn {
+			lastWarn = l.N
+		} else {
+			lastErr = l.N
+		}
+	}
+	lines = append(lines, l)
 	next++
 	// Let go of a quarter at a time, not a line at a time.
 	if len(lines) > maxLines+maxLines/4 {
@@ -142,4 +158,12 @@ func Since(n int) ([]Line, int) {
 		}
 	}
 	return out, next
+}
+
+// Trouble is the numbers of the last warning and the last error printed, 0
+// for none yet.
+func Trouble() (warn, err int) {
+	mu.Lock()
+	defer mu.Unlock()
+	return lastWarn, lastErr
 }
