@@ -428,6 +428,8 @@ export const api = {
   secrets: () => req("/api/secrets", {}, ""),
   // gemini: { vertex, key: "saved" | "env" | "", project, found, location, models, error }, how the gateway answers gemini/ models
   gemini: () => req("/api/gemini", {}, ""),
+  // providers: [{ id, key: "saved" | "env" | "", models, error }], how OpenAI's API ("openai") and the endpoints the user added stand
+  providers: () => req("/api/providers", {}, ""),
   // accounts: { claude: { email, subscriptionType, apiProvider } | null, codex: { email, plan } | { error } }
   accounts: () => req("/api/accounts", {}, ""),
   secretValue: (name) => req(`/api/secrets/${encodeURIComponent(name)}/value`, {}, ""),

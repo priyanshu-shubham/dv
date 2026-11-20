@@ -28,6 +28,7 @@ type Model struct {
 	Efforts     []string `json:"efforts,omitempty"` // the effort levels it takes, if any
 	Effort      string   `json:"effort,omitempty"`  // the one the user's settings give it
 	Added       bool     `json:"added,omitempty"`   // put on the list by the user, not offered by the agent
+	Source      string   `json:"source,omitempty"`  // the gateway's provider that serves it, by name
 }
 
 // Options are what a session in dv starts with and can pick from.

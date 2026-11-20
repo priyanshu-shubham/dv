@@ -4,7 +4,7 @@ import { boot } from "./boot.js";
 import { usePref } from "./prefs.js";
 import { cx } from "./util.js";
 import { Modal, modesFor, OFF_ON, Setting, usePaletteNav } from "./Overlays.jsx";
-import { Picker } from "./Picker.jsx";
+import { ModelPicker, useModelMenu } from "./Picker.jsx";
 import {
   AgentIcon, IconArrowDown, IconAsk, IconBack, IconBolt, IconBranch, IconCheck, IconComment, IconEdit, IconEye, IconFile, IconGauge, IconKeyboard,
   IconNewSession, IconOpenOut, IconPad, IconPlus, IconRefresh, IconSettings, IconShell, IconSplit, IconTemporary, IconX,
@@ -366,9 +366,8 @@ export function AskSettings() {
   const info = useAgentChoices();
   const [adding, setAdding] = useState("");
   const edit = (patch) => setAsk((a) => ({ ...a, ...patch }));
-  const models = modelsFor(ask, info);
-  const model = models.find((m) => m.id === ask.model);
-  const efforts = model?.efforts || [];
+  const choices = useModelMenu(modelsFor(ask, info), ask.model);
+  const model = choices.find((m) => m.id === ask.model);
   const setPrompts = (prompts) => edit({ prompts: prompts.map((p) => p.trim()).filter(Boolean) });
   const add = () => {
     if (adding.trim()) setPrompts([...ask.prompts, adding]);
@@ -385,16 +384,17 @@ export function AskSettings() {
         <div className="settings-text">
           <div>Model</div>
         </div>
-        <Picker
+        <ModelPicker
+          className=""
           label={model?.label || ask.model || "Default"}
-          choices={models.map((m) => ({ id: m.id, label: m.label, description: m.description }))}
-          value={ask.model}
-          onPick={(id) => edit({ model: id, effort: "" })}
+          models={choices}
+          model={ask.model}
+          efforts={model?.efforts}
+          effort={ask.effort}
+          usual
+          onPick={(p) => edit("model" in p ? { model: p.model, effort: "" } : p)}
         />
       </div>
-      {efforts.length > 0 && (
-        <Setting label="Effort" value={ask.effort} onPick={(effort) => edit({ effort })} choices={[["", "Usual"], ...efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])]} />
-      )}
       <Setting label="Mode" note="Ask before edits keeps a question from changing the code you are reviewing." value={ask.mode} onPick={(mode) => edit({ mode })} choices={modesFor(ask.agent)} />
       <div className="settings-row">
         <div className="settings-text">
@@ -497,8 +497,11 @@ function ActionForm({ action, info, onSave, onCancel }) {
   const [a, setA] = useState(() => ({ ...BLANK, id: newID(), ...action }));
   const edit = (patch) => setA((x) => ({ ...x, ...patch }));
   const models = modelsFor(a, info);
-  const model = models.find((m) => m.id === a.model);
-  const efforts = model?.efforts || [];
+  const menu = useModelMenu(models, a.model);
+  // Codex's own list, for codex exec, isn't the picker's to arrange.
+  const codex = a.agent === "codex";
+  const choices = codex ? models : menu;
+  const model = choices.find((m) => m.id === a.model);
   const command = a.kind === "command";
   const ok = a.name.trim() && (command ? a.command : a.prompt).trim();
   const save = () =>
@@ -581,16 +584,18 @@ function ActionForm({ action, info, onSave, onCancel }) {
             <div className="settings-text">
               <div>Model</div>
             </div>
-            <Picker
+            <ModelPicker
+              className=""
               label={model?.label || a.model || "Default"}
-              choices={models.map((m) => ({ id: m.id, label: m.label, description: m.description }))}
-              value={a.model}
-              onPick={(id) => edit({ model: id, effort: "", modelLabel: models.find((m) => m.id === id)?.label || "" })}
+              models={choices}
+              model={a.model}
+              efforts={model?.efforts}
+              effort={a.effort}
+              usual
+              fixed={codex}
+              onPick={(p) => edit("model" in p ? { model: p.model, effort: "", modelLabel: choices.find((m) => m.id === p.model)?.label || "" } : p)}
             />
           </div>
-          {efforts.length > 0 && (
-            <Setting label="Effort" value={a.effort} onPick={(effort) => edit({ effort })} choices={[["", "Usual"], ...efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])]} />
-          )}
           <Setting label={a.agent === "codex" ? "Sandbox" : "Mode"} value={a.mode} onPick={(mode) => edit({ mode })} choices={modesFor(a.agent)} />
           {a.agent !== "codex" && (
             <>

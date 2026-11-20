@@ -3,7 +3,7 @@
 // conversation. AgentView keeps the state and does the work; these draw it.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cx, modelSource, useReorder } from "../util.js";
+import { cx, openSettings } from "../util.js";
 import { say } from "../Notices.jsx";
 import { Pad } from "../Notes.jsx";
 import { Icon } from "./icons.jsx";
@@ -254,117 +254,26 @@ export function Composer({
   );
 }
 
-// ModelListSheet is which models the model sheet offers, and in what order:
-// each switched on or off, dragged by its handle, an added one taken off.
-function ModelListSheet({ all, hidden, onHide, onOrder, onDrop, onBack, onClose }) {
-  const { shown, dragging, grip, row } = useReorder(
-    all.map((m) => m.id),
-    onOrder,
-  );
-  const byId = new Map(all.map((m) => [m.id, m]));
-  return (
-    <Sheet title="Models on the menu" onClose={onClose}>
-      {shown.map((id) => {
-        const m = byId.get(id);
-        const on = !hidden.includes(m.id);
-        const from = modelSource(m);
-        return (
-          <div key={m.id} ref={row(m.id)} className={cx("p-added p-model-row", dragging === m.id && "dragging")}>
-            <button className="p-grip" aria-label={`Move ${m.label}`} {...grip(m.id)}>
-              <Icon name="grip" size={20} />
-            </button>
-            <Row
-              title={
-                <>
-                  {m.label}
-                  {from && <span className="p-tag">{from}</span>}
-                </>
-              }
-              sub={m.description}
-              className={cx("p-model-edit", !on && "off")}
-              onClick={() => onHide(m.id, on)}
-              trail={<span className={cx("switch", on && "on")} role="switch" aria-checked={on} />}
-            />
-            {m.added && (
-              <button className="p-icon small" onClick={() => onDrop(m.id)} aria-label={`Take ${m.label} off the list`}>
-                <Icon name="trash" size={20} />
-              </button>
-            )}
-          </div>
-        );
-      })}
-      <Row className="p-add-row" icon="back" title="Back to the models" onClick={onBack} />
-    </Sheet>
-  );
-}
-
-// ModelSheet picks the model and how hard it thinks. A model can be added by
-// the name /model takes.
-export function ModelSheet({ models, all, hidden, onHide, onOrder, model, efforts, effort, onPick, onAdd, onDrop, onClose }) {
-  const [adding, setAdding] = useState(null); // the name being typed; null shows the row that asks for one
-  const [editing, setEditing] = useState(false);
-  if (editing) {
-    return <ModelListSheet all={all} hidden={hidden} onHide={onHide} onOrder={onOrder} onDrop={onDrop} onBack={() => setEditing(false)} onClose={onClose} />;
-  }
+// ModelSheet picks the model and how hard it thinks; the list itself is
+// edited in Settings, Models.
+export function ModelSheet({ models, model, efforts, effort, onPick, onClose }) {
   return (
     <Sheet title="Model" onClose={onClose}>
-
-      {models.map((m) => {
-        const choice = (
-          <Choice
-            key={m.id}
-            title={
-              <>
-                {m.label}
-                {m.tag && <span className="p-tag">{m.tag}</span>}
-              </>
-            }
-            sub={m.description}
-            on={m.id === model}
-            onClick={() => (onPick({ model: m.id }), onClose())}
-          />
-        );
-        return m.added ? (
-          <div key={m.id} className="p-added">
-            {choice}
-            <button className="p-icon small" onClick={() => onDrop(m.id)} aria-label={`Take ${m.label} off the list`}>
-              <Icon name="x" size={20} />
-            </button>
-          </div>
-        ) : (
-          choice
-        );
-      })}
-      {adding === null ? (
-        <>
-          <Row className="p-add-row" icon="plus" title="Add a model" onClick={() => setAdding("")} />
-          {onHide && <Row className="p-add-row" icon="settings" title="Edit the list" sub="Which models the menu offers" onClick={() => setEditing(true)} />}
-        </>
-      ) : (
-        <form
-          className="p-inline-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!adding.trim()) return;
-            onAdd(adding.trim());
-            onClose();
-          }}
-        >
-          <input
-            className="p-field mono"
-            value={adding}
-            placeholder="Name, as for /model"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            autoFocus
-            onChange={(e) => setAdding(e.target.value)}
-          />
-          <button className="p-btn tonal" type="submit" disabled={!adding.trim()}>
-            Add
-          </button>
-        </form>
-      )}
+      {models.map((m) => (
+        <Choice
+          key={m.id}
+          title={
+            <>
+              {m.label}
+              {m.tag && <span className="p-tag">{m.tag}</span>}
+            </>
+          }
+          sub={m.description}
+          on={m.id === model}
+          onClick={() => (onPick({ model: m.id }), onClose())}
+        />
+      ))}
+      <Row className="p-add-row" icon="settings" title="Edit the list" sub="Which models the menu offers, in Settings" onClick={() => (onClose(), openSettings("models", ".model-picker-heading"))} />
       {efforts?.length > 0 && (
         <>
           <div className="p-sub-label">Effort</div>

@@ -13,6 +13,7 @@ import (
 // anthropicRequest is what of a Messages request a Codex model is asked with.
 type anthropicRequest struct {
 	Model      string            `json:"model"`
+	MaxTokens  int               `json:"max_tokens"`
 	System     json.RawMessage   `json:"system"`
 	Messages   []anthropicMsg    `json:"messages"`
 	Tools      []json.RawMessage `json:"tools"`
@@ -48,6 +49,7 @@ type anthropicMsg struct {
 type block struct {
 	Type       string          `json:"type"`
 	Text       string          `json:"text"`
+	Thinking   string          `json:"thinking"`
 	ID         string          `json:"id"`
 	Name       string          `json:"name"`
 	Input      json.RawMessage `json:"input"`
@@ -229,6 +231,20 @@ func developerMessage(text string) map[string]any {
 
 // codexRequest is req as the ChatGPT backend's Responses API takes it.
 func codexRequest(req *anthropicRequest, slug, cacheKey string, levels []string) (map[string]any, *toolNames) {
+	return responsesRequest(req, slug, cacheKey, levels, responsesOpts{who: slug + ", an OpenAI model", toolsWhereLoaded: true})
+}
+
+// responsesOpts are where Responses APIs differ: whom the model is told it
+// is; whether tools loaded mid-conversation can go where they were loaded,
+// which only ChatGPT's backend takes; and that the model doesn't reason,
+// which OpenAI's API refuses reasoning parameters for.
+type responsesOpts struct {
+	who              string
+	toolsWhereLoaded bool
+	noReasoning      bool
+}
+
+func responsesRequest(req *anthropicRequest, slug, cacheKey string, levels []string, opts responsesOpts) (map[string]any, *toolNames) {
 	names := &toolNames{}
 	// Tools leading the prompt stay as they were, so its cached prefix does:
 	// one loaded later goes in an additional_tools item where it was loaded.
@@ -255,7 +271,7 @@ func codexRequest(req *anthropicRequest, slug, cacheKey string, levels []string)
 		}
 	}
 
-	input := []map[string]any{developerMessage(instructions(req.System, slug))}
+	input := []map[string]any{developerMessage(instructionsAs(req.System, opts.who))}
 	var loaded, userParts, assistantText []map[string]any
 	load := func(d toolDef) {
 		if d.Name != "" && !seen[d.Name] {
@@ -275,7 +291,7 @@ func codexRequest(req *anthropicRequest, slug, cacheKey string, levels []string)
 		}
 	}
 	flushLoaded := func() {
-		if len(loaded) > 0 {
+		if len(loaded) > 0 && opts.toolsWhereLoaded {
 			input = append(input, map[string]any{"type": "additional_tools", "role": "developer", "tools": loaded})
 			loaded = nil
 		}
@@ -351,6 +367,7 @@ func codexRequest(req *anthropicRequest, slug, cacheKey string, levels []string)
 		flushAssistant()
 	}
 	input = paired(input)
+	tools = append(tools, loaded...)
 
 	if webSearch {
 		tools = append(tools, map[string]any{"type": "web_search"})
@@ -389,10 +406,10 @@ func codexRequest(req *anthropicRequest, slug, cacheKey string, levels []string)
 	if thinking {
 		reasoning["summary"] = "auto"
 	}
-	if len(reasoning) > 0 {
+	if len(reasoning) > 0 && !opts.noReasoning {
 		out["reasoning"] = reasoning
 	}
-	if effort == "none" {
+	if effort == "none" || opts.noReasoning {
 		include = slices.DeleteFunc(include, func(s string) bool { return s == "reasoning.encrypted_content" })
 		out["include"] = include
 	}
@@ -547,10 +564,25 @@ func withoutReasoning(payload map[string]any) map[string]any {
 	return payload
 }
 
-// stripGatewayThinking drops the thinking a Codex or Gemini model did from
-// a request going to Anthropic, which would refuse its signatures: a session
-// moved from one of them to Claude.
+// stripGatewayThinking drops the thinking a model the gateway answers did
+// from a request going to Anthropic, which would refuse its signatures: a
+// session moved from one of them to Claude.
 func stripGatewayThinking(body []byte) []byte {
+	return keepThinking(body, func(sig string) (string, bool) { return sig, !gatewaySigned(sig) })
+}
+
+// gatewaySigs mark the thinking of the models the gateway answers, ridden in
+// a thinking block's signature: Codex's, Gemini's, a Chat Completions
+// endpoint's, an Anthropic-compatible one's.
+var gatewaySigs = []string{reasoningSig, thoughtSig, chatSig, compatSig}
+
+func gatewaySigned(sig string) bool {
+	return slices.ContainsFunc(gatewaySigs, func(p string) bool { return strings.HasPrefix(sig, p) })
+}
+
+// keepThinking is body with only the thinking blocks keep says to keep, each
+// with the signature keep gives it.
+func keepThinking(body []byte, keep func(sig string) (string, bool)) []byte {
 	var req map[string]json.RawMessage
 	if json.Unmarshal(body, &req) != nil {
 		return body
@@ -566,8 +598,12 @@ func stripGatewayThinking(body []byte) []byte {
 		}
 		kept := bs[:0]
 		for _, b := range bs {
-			if sig, _ := b["signature"].(string); b["type"] == "thinking" && (strings.HasPrefix(sig, reasoningSig) || strings.HasPrefix(sig, thoughtSig)) {
-				continue
+			if sig, _ := b["signature"].(string); b["type"] == "thinking" {
+				sig, ok := keep(sig)
+				if !ok {
+					continue
+				}
+				b["signature"] = sig
 			}
 			kept = append(kept, b)
 		}

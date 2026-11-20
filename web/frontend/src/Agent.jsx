@@ -15,7 +15,7 @@ import { absolute, inlineFiles, inside, kindOf, splitShown } from "./shown.js";
 import { Orb } from "./Orb.jsx";
 import { Modal, Switch } from "./Overlays.jsx";
 import { say, useOpenIn } from "./Notices.jsx";
-import { Picker, useRoom } from "./Picker.jsx";
+import { choicesOf, EFFORTS, ModelPicker, NO_HIDDEN, NO_NAMES, NO_ORDER, Picker, prettyModel, useRoom } from "./Picker.jsx";
 import { AttachButton, AttachTarget } from "./Threads.jsx";
 import {
   agentName,
@@ -49,7 +49,7 @@ import {
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
 import {
-  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconGrip, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconSettings, IconStop,
+  AgentIcon, IconArrowUp, IconAsk, IconBack, IconBolt, IconBranch, IconChat, IconChevron, IconCopy, IconEdit, IconChevronDown, IconChevronUp, IconFile, IconForward, IconGrip, IconLock, IconMaximize, IconNewSession, IconOpenOut, IconPin, IconPlus, IconReply, IconStop,
   IconTemporary,
   IconTrash,
   IconUndo, IconX,
@@ -70,9 +70,6 @@ const NO_QUEUED = [];
 const NO_COMMANDS = [];
 const NO_MODELS = [];
 const NO_PICKED = {};
-const NO_HIDDEN = [];
-const NO_ORDER = [];
-const NO_NAMES = {};
 const NO_NOTE = {};
 const DOUBLE_ESC_MS = 600;
 // How long the reader goes without a key before a request takes the keys.
@@ -326,8 +323,6 @@ function Chip({ kind, path, lines, label, title, on, onClick, onRemove }) {
   );
 }
 
-const EFFORTS = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra" };
-
 // RESUME is how a closed session is picked up again outside dv.
 export const RESUME = "claude --resume";
 
@@ -578,37 +573,12 @@ const Bar = ({ pct, tick }) => (
   </span>
 );
 
-// prettyModel names a model id the way a person would: claude-opus-5[1m] is Opus 5 (1M).
-function prettyModel(id) {
-  const m = /^claude-([a-z]+)-(\d+)(?:-(\d)(?!\d))?/.exec(id || "");
-  if (!m) return id || "";
-  const name = `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? "." + m[3] : ""}`;
-  return /\[1m\]/.test(id) ? `${name} (1M)` : name;
-}
-
-// choicesOf is the picker's models as it lists them, each by the user's own
-// name for it where they gave one. "" is the model the user's settings start
-// on; Claude Code's "default" is the one it recommends.
-function choicesOf(models, names) {
-  return models.map((c) => {
-    const own = (/^claude-/.test(c.model) && prettyModel(c.model)) || c.label;
-    return {
-      ...c,
-      label: names[c.id] || own,
-      own,
-      // One the user added is named as they typed it too, where the name reads otherwise.
-      description: c.added && own !== c.id ? c.id : c.description,
-      tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "",
-    };
-  });
-}
-
 const renamed = (names, id, name) => {
   const { [id]: _, ...rest } = names;
   return name ? { ...rest, [id]: name } : rest;
 };
 
-// ModelsSettings is the picker's list in Settings, as its Edit the list… has it.
+// ModelsSettings is the picker's list in Settings, which its Edit the list… opens.
 export function ModelsSettings({ models, onChanged }) {
   const [names, setNames] = usePref("user", "modelNames", NO_NAMES);
   const [order, setOrder] = usePref("user", "modelOrder", NO_ORDER);
@@ -1642,23 +1612,8 @@ export default function AgentView({
     setStepping(null);
     settings({ mode: m });
   };
-  const [modelNames, setModelNames] = usePref("user", "modelNames", NO_NAMES);
+  const [modelNames] = usePref("user", "modelNames", NO_NAMES);
   const modelChoices = useMemo(() => choicesOf(models, modelNames), [models, modelNames]);
-  const renameModel = (id, name) => setModelNames((n) => renamed(n, id, name));
-  // Added, a model is also picked, as /model would move the session to it.
-  const addModel = async (name) => {
-    const on = models.find((c) => c.id === name || c.model === name);
-    if (!on) {
-      try {
-        await api.agentModel("", name, true);
-      } catch (e) {
-        return setError(e.message);
-      }
-      onChanged();
-    }
-    settings({ model: on?.id ?? name });
-  };
-  const dropModel = (name) => api.agentModel("", name, false).then(onChanged, (e) => setError(e.message));
   // Claude's ids read as names; Codex's are named by its own list; any by the user's own name for it.
   const nameOf = (model) =>
     modelChoices.find((m) => modelNames[m.id] && sameModel(m.model, model))?.label ||
@@ -1674,8 +1629,8 @@ export default function AgentView({
     // nameOf reads only modelChoices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelChoices, using]);
-  // As the user arranged them in the list editor.
-  const [modelOrder, setModelOrder] = usePref("user", "modelOrder", NO_ORDER);
+  // As the user arranged them in Settings, Models.
+  const [modelOrder] = usePref("user", "modelOrder", NO_ORDER);
   const choices = useMemo(() => inOrder(offList ? [...modelChoices, offList] : modelChoices, modelOrder), [modelChoices, offList, modelOrder]);
   // The model the session is on: what it reports once running, else what was
   // asked for, else - resumed - what the transcript was last answered on.
@@ -1686,13 +1641,12 @@ export default function AgentView({
     chosen;
   const modelLabel = nameOf(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || nameOf(live.lastModel))) || chosen?.label || asked?.model;
   const effort = live?.effortUsing || asked?.effort || onModel?.effort || "";
-  // Taken off the menu in its list editor, but for the one the session is on.
-  const [hiddenModels, setHiddenModels] = usePref("user", "hiddenModels", NO_HIDDEN);
+  // Taken off the menu in Settings, but for the one the session is on.
+  const [hiddenModels] = usePref("user", "hiddenModels", NO_HIDDEN);
   const shownChoices = useMemo(
     () => choices.filter((c) => !hiddenModels.includes(c.id) || c.id === onModel?.id),
     [choices, hiddenModels, onModel?.id],
   );
-  const hideModel = (id, hide) => setHiddenModels((h) => (hide ? [...h.filter((x) => x !== id), id] : h.filter((x) => x !== id)));
 
   // Asked here, where the terminal would ask it, one at a time.
   const waiting = requests.filter((r) => r.session === id);
@@ -1997,17 +1951,10 @@ export default function AgentView({
             <ModelPicker
               label={modelLabel}
               models={shownChoices}
-              all={choices}
-              hidden={hiddenModels}
-              onHide={hideModel}
-              onOrder={setModelOrder}
-              onRename={renameModel}
               model={offList?.id || asked?.model || ""}
               efforts={onModel?.efforts}
               effort={effort}
               onPick={(patch) => settings(patch)}
-              onAdd={addModel}
-              onDrop={dropModel}
             />
           )}
           <Picker
@@ -2189,16 +2136,10 @@ export default function AgentView({
       {sheet?.type === "model" && (
         <ModelSheet
           models={shownChoices}
-          all={choices}
-          hidden={hiddenModels}
-          onHide={hideModel}
-          onOrder={setModelOrder}
           model={offList?.id || asked?.model || ""}
           efforts={onModel?.efforts}
           effort={effort}
           onPick={settings}
-          onAdd={addModel}
-          onDrop={dropModel}
           onClose={closeSheet}
         />
       )}
@@ -4507,106 +4448,11 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
   );
 }
 
-// ModelPicker is the model and how hard it thinks, in one menu, as the
-// terminal's /model has them. onPick is given { model } or { effort }; onAdd
-// and onDrop a model's name, to put on the list as /model takes it or take
-// off again.
-function ModelPicker({ label, models, all, hidden, onHide, onOrder, onRename, model, efforts, effort, onPick, onAdd, onDrop }) {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
-  const room = useRoom(open, ref);
-  const levels = useMemo(() => [...new Set(models.map((m) => m.efforts?.join(" ")).filter(Boolean))], [models]);
-  return (
-    <div className="model-menu" ref={ref}>
-      <button
-        className="mini composer-pick"
-        onClick={() => (setOpen((o) => !o), setEditing(false))}
-        title="Model and effort"
-      >
-        {label}
-        {effort && <span className="composer-effort">{EFFORTS[effort] || effort}</span>}
-        <IconChevronDown size={10} />
-      </button>
-      {open && editing && (
-        <div className={cx("model-list up model-editor-menu", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          <ModelListEditor
-            models={all}
-            hidden={hidden}
-            onHide={onHide}
-            onOrder={onOrder}
-            onRename={onRename}
-            onAdd={onAdd}
-            onDrop={onDrop}
-            onBack={() => setEditing(false)}
-          />
-        </div>
-      )}
-      {open && !editing && (
-        <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          {models.map((c) => (
-            <button key={c.id} className={cx(c.id === model && "on")} onClick={() => onPick({ model: c.id })}>
-              <span className="model-name">
-                {c.label}
-                {c.tag && <span className="model-tag">{c.tag}</span>}
-              </span>
-              {c.description && <span className="model-note">{c.description}</span>}
-            </button>
-          ))}
-          <button className="model-add-row" onClick={() => setEditing(true)}>
-            <span className="model-name">
-              <IconSettings size={10} />
-              Edit the list…
-            </span>
-          </button>
-          {levels.length > 0 && (
-            <div className="model-efforts" title="How hard the model thinks before answering">
-              <span>Effort</span>
-              {/* Every model's levels, out of sight under the picked one's, so
-                  the list keeps one width whichever model is picked. */}
-              <span className="effort-levels">
-                {levels.map((l) => (
-                  <span key={l} className="seg" aria-hidden="true">
-                    {l.split(" ").map((e) => (
-                      <button key={e} tabIndex={-1}>
-                        {e}
-                      </button>
-                    ))}
-                  </span>
-                ))}
-                {efforts?.length > 0 ? (
-                  <span className="seg">
-                    {efforts.map((e) => (
-                      <button
-                        key={e}
-                        className={cx(e === effort && "on")}
-                        title={EFFORTS[e]}
-                        onClick={() => {
-                          onPick({ effort: e });
-                          setOpen(false);
-                        }}
-                      >
-                        {e}
-                      </button>
-                    ))}
-                  </span>
-                ) : (
-                  <span>not for this model</span>
-                )}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ModelListEditor is which models the picker offers, and in what order: each
 // switched on or off and dragged into place, renamed by double-clicking its
 // name, one added by the name /model takes, and an added one taken off again.
 // models are in the menu's order.
-function ModelListEditor({ models, hidden, onHide, onOrder, onRename, onAdd, onDrop, onBack }) {
+function ModelListEditor({ models, hidden, onHide, onOrder, onRename, onAdd, onDrop }) {
   const [adding, setAdding] = useState("");
   const [renaming, setRenaming] = useState(null);
   const toggling = useRef(null);
@@ -4627,11 +4473,6 @@ function ModelListEditor({ models, hidden, onHide, onOrder, onRename, onAdd, onD
   return (
     <div className="model-editor">
       <div className="model-editor-head">
-        {onBack && (
-          <button className="ghost model-editor-back" onClick={onBack} title="Back to the models">
-            <IconBack size={12} />
-          </button>
-        )}
         <span className="model-editor-title">Models on the menu</span>
         <span className="model-editor-count">
           {shown} of {models.length}

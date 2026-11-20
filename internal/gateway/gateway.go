@@ -1,8 +1,10 @@
 // Package gateway is what the Claude Code sessions dv starts reach the model
 // through. It masks the user's secrets on the way out and puts them back in
 // the reply, sends a Claude model's requests on to Anthropic as they came,
-// answers a Codex model's (codex/…) through the user's ChatGPT sign-in, and
-// a Gemini model's (gemini/…) with the user's Gemini API key.
+// answers a Codex model's (codex/…) through the user's ChatGPT sign-in,
+// a Gemini model's (gemini/…) with the user's Gemini API key, and those of
+// the providers the user added - OpenAI's API, an OpenAI-compatible or
+// Anthropic-compatible endpoint - with their keys (providers.go).
 package gateway
 
 import (
@@ -25,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"dv/internal/secret"
 )
@@ -41,6 +44,10 @@ type Gateway struct {
 	codex     *codexUpstream
 	gemini    *geminiUpstream
 	prices    *priceList
+
+	providerClient *http.Client
+	provMu         sync.Mutex
+	provs          map[string]*providerUpstream // by their settings, as JSON
 
 	keyDir, path string
 	mu           sync.Mutex
@@ -81,6 +88,9 @@ func New(configDir, keyDir string) (*Gateway, error) {
 	}
 	g.gemini = newGeminiUpstream(g.geminiKey)
 	g.gemini.route = currentRoute
+	pt := http.DefaultTransport.(*http.Transport).Clone()
+	pt.ResponseHeaderTimeout = 10 * time.Minute // a local model can take long over a long prompt
+	g.providerClient = &http.Client{Transport: pt}
 	if err := g.load(); err != nil {
 		return nil, err
 	}
@@ -104,6 +114,7 @@ func (g *Gateway) Serve(addr net.Addr) {
 	g.codex.knownModels()
 	g.gemini.knownModels()
 	g.prices.current()
+	g.ProviderModels()
 }
 
 // Env is what a Claude Code dv starts on model runs with to go through the
@@ -130,7 +141,11 @@ func (g *Gateway) unknownWindow(model string) int {
 		return w
 	}
 	least := 0
-	for _, m := range slices.Concat(g.CodexModels(), g.GeminiModels()) {
+	all := slices.Concat(g.CodexModels(), g.GeminiModels())
+	for _, p := range g.ProviderModels() {
+		all = append(all, p.Models...)
+	}
+	for _, m := range all {
 		if m.Window > 0 && (least == 0 || m.Window < least) {
 			least = m.Window
 		}
@@ -173,7 +188,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.gemini.serve(w, r, body, &g.mask)
 		return
 	}
-	if bytes.Contains(body, []byte(reasoningSig)) || bytes.Contains(body, []byte(thoughtSig)) {
+	if p, ok := g.provider(head.Model); ok {
+		p.serve(w, r, body, &g.mask)
+		return
+	}
+	if slices.ContainsFunc(gatewaySigs, func(sig string) bool { return bytes.Contains(body, []byte(sig)) }) {
 		body = stripGatewayThinking(body)
 	}
 	g.forward(w, r, rest, body)
@@ -297,7 +316,7 @@ func (g *Gateway) Gemini() GeminiStatus {
 	return st
 }
 
-// Window is the context window of a Codex or Gemini model, 0 for another.
+// Window is the context window of a model the gateway serves, 0 for another.
 func (g *Gateway) Window(model string) int {
 	var list []Model
 	slug, ok := strings.CutPrefix(model, ModelPrefix)
@@ -305,6 +324,8 @@ func (g *Gateway) Window(model string) int {
 		list = g.CodexModels()
 	} else if slug, ok = strings.CutPrefix(model, GeminiPrefix); ok {
 		list = g.GeminiModels()
+	} else if p, ok := g.provider(model); ok {
+		slug, list = strings.TrimPrefix(model, p.prefix()), p.knownModels()
 	}
 	for _, m := range list {
 		if m.Slug == slug {
@@ -317,7 +338,25 @@ func (g *Gateway) Window(model string) int {
 // Served says model is one the gateway answers itself, which Claude Code
 // knows nothing of: neither its price nor its window.
 func Served(model string) bool {
-	return strings.HasPrefix(model, ModelPrefix) || strings.HasPrefix(model, GeminiPrefix)
+	if strings.HasPrefix(model, ModelPrefix) || strings.HasPrefix(model, GeminiPrefix) {
+		return true
+	}
+	if g := active.Load(); g != nil {
+		_, ok := g.provider(model)
+		return ok
+	}
+	return strings.HasPrefix(model, OpenAIPrefix)
+}
+
+// secretOrEnv is the secret the user saved as name, else dv's own
+// environment's variable of that name.
+func (g *Gateway) secretOrEnv(name string) string {
+	if saved := g.saved.Load(); saved != nil {
+		if k := (*saved)[name]; k != "" {
+			return k
+		}
+	}
+	return os.Getenv(name)
 }
 
 // geminiKey is the Gemini API key: the secret the user saved as

@@ -23,7 +23,7 @@ type addedModels map[string][]string
 var modelVersion = regexp.MustCompile(`-\d.*$`)
 
 // withAdded is what a session can be put on: what Claude Code offers, the
-// models the user added, then the Codex sign-in's and Gemini key's. An added one takes the
+// models the user added, then those dv's gateway serves. An added one takes the
 // effort levels of the offered model of its kind, as the page does for a
 // session moved to it with /model. Until Claude Code has said what it
 // offers, nothing is added either.
@@ -50,16 +50,16 @@ func (s *Server) withAdded(offered []agent.Model) []agent.Model {
 	return append(out, gatewayModels(out)...)
 }
 
-// gatewayModels are the models the user's Codex sign-in and Gemini API key
-// offer a Claude Code session, through dv's gateway; one already on the
-// list isn't put on twice.
+// gatewayModels are the models the user's Codex sign-in, Gemini route and
+// providers offer a Claude Code session, through dv's gateway; one already
+// on the list isn't put on twice.
 func gatewayModels(listed []agent.Model) []agent.Model {
 	gw := gateway.Active()
 	if gw == nil {
 		return nil
 	}
 	var out []agent.Model
-	add := func(prefix, through string, models []gateway.Model) {
+	add := func(prefix, source, through string, models []gateway.Model) {
 		for _, m := range models {
 			id := prefix + m.Slug
 			if slices.ContainsFunc(listed, func(l agent.Model) bool { return l.ID == id }) {
@@ -69,15 +69,22 @@ func gatewayModels(listed []agent.Model) []agent.Model {
 			if m.Window > 0 {
 				desc += fmt.Sprintf(" · %dk context", m.Window/1000)
 			}
-			out = append(out, agent.Model{ID: id, Model: id, Label: m.Label, Description: desc, Efforts: m.Efforts, Effort: m.Default})
+			out = append(out, agent.Model{ID: id, Model: id, Label: m.Label, Description: desc, Efforts: m.Efforts, Effort: m.Default, Source: source})
 		}
 	}
 	gemini := "Through your Gemini API key"
 	if gw.Gemini().Vertex {
 		gemini = "Through Vertex AI"
 	}
-	add(gateway.ModelPrefix, "Through your Codex sign-in", gw.CodexModels())
-	add(gateway.GeminiPrefix, gemini, gw.GeminiModels())
+	add(gateway.ModelPrefix, "Codex", "Through your Codex sign-in", gw.CodexModels())
+	add(gateway.GeminiPrefix, "Gemini", gemini, gw.GeminiModels())
+	for _, p := range gw.ProviderModels() {
+		through := "Through " + p.Name
+		if p.Prefix == gateway.OpenAIPrefix {
+			through = "Through your OpenAI API key"
+		}
+		add(p.Prefix, p.Name, through, p.Models)
+	}
 	return out
 }
 

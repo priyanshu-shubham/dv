@@ -377,7 +377,22 @@ export const workingLabel = () => "Claude is working";
 
 // modelSource is where a model on the picker comes from, for its editor: ""
 // for Claude Code's own.
-export const modelSource = (m) => (m.id.startsWith("codex/") ? "Codex" : m.id.startsWith("gemini/") ? "Gemini" : m.added ? "Added" : "");
+export const modelSource = (m) =>
+  m.source || (m.id.startsWith("codex/") ? "Codex" : m.id.startsWith("gemini/") ? "Gemini" : m.added ? "Added" : "");
+
+// openSettings opens Settings on tab, from wherever the page is: App opens it.
+// With to, a selector, it is scrolled to that once there, for a second at most.
+export function openSettings(tab, to) {
+  window.dispatchEvent(new CustomEvent("dv:settings", { detail: { tab } }));
+  if (!to) return;
+  const until = Date.now() + 1000;
+  const find = () => {
+    const el = document.querySelector(to);
+    if (el) el.scrollIntoView({ block: "start" });
+    else if (Date.now() < until) setTimeout(find, 50);
+  };
+  setTimeout(find, 50);
+}
 
 // inOrder is items as order (ids) arranges them. One order doesn't name - a
 // model released since it was set - keeps its place after the item it

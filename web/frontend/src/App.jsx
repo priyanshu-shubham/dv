@@ -1210,6 +1210,12 @@ export default function App() {
   // it was scrolled to, what had been typed - so stepping back returns to it as
   // it was rather than to the top of the definition they arrived at.
   const openOverlay = useCallback((o) => setStack([o]), []);
+  useEffect(() => {
+    // A new at opens Settings anew on tab, where it is open already on another.
+    const open = (e) => openOverlay({ type: "settings", tab: e.detail?.tab, at: Date.now() });
+    window.addEventListener("dv:settings", open);
+    return () => window.removeEventListener("dv:settings", open);
+  }, [openOverlay]);
   // The last search as it was left, which asking for search again without a
   // new query brings back: its results, and the row and scroll it had.
   const lastSearch = useRef(null);
@@ -2631,6 +2637,7 @@ export default function App() {
       {overlay?.type === "review-pr" && <PRPalette onPick={(p) => (closeOverlay(), reviewPR(p))} onClose={closeOverlay} />}
       {overlay?.type === "settings" && (
         <SettingsOverlay
+          key={overlay.at}
           theme={theme}
           onTheme={setTheme}
           view={view}

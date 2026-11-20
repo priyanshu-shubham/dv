@@ -89,6 +89,20 @@ func GeminiRoute(user *store.Prefs) func() gateway.GeminiRoute {
 	}
 }
 
+// Providers reads the model endpoints the user added: the setting providers.
+func Providers(user *store.Prefs) func() []gateway.Provider {
+	return func() []gateway.Provider {
+		if user == nil {
+			return nil
+		}
+		var s struct {
+			Providers []gateway.Provider `json:"providers"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.Providers
+	}
+}
+
 // AskLooseSecrets reads whether what looks like a secret is held, before a
 // session sends it, for the user to say: the setting askLooseSecrets, on
 // unless turned off.

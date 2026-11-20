@@ -890,43 +890,6 @@ html.phone ::-webkit-scrollbar {
   padding: 8px 0 8px 24px;
 }
 
-/* The model sheet's list editor: each model with its handle to drag it by and
-   the desktop's switch. */
-.p-model-row {
-  padding-left: 4px;
-}
-
-.p-grip {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 40px;
-  height: 48px;
-  color: var(--fg-3);
-  touch-action: none;
-}
-
-.p-model-row.dragging {
-  border-radius: 12px;
-  background: var(--m-high);
-}
-
-.p-model-row > .p-model-edit {
-  padding-left: 4px;
-}
-.p-added > .p-model-edit {
-  flex: 1;
-  min-width: 0;
-}
-
-.p-model-edit .switch {
-  margin-left: 12px;
-}
-
-.p-model-edit.off .p-row-title {
-  color: var(--fg-3);
-}
-
 /* The sheet already says what the box is for. */
 .p-unasked-sheet .unasked {
   width: auto;

@@ -1064,7 +1064,7 @@ export function SettingsOverlay({
     ["diff", "Diff", IconSplit, phone ? "Context and wrapping" : "Layout, context and wrapping"],
     ["notifications", "Notifications", IconBell, "This phone, Telegram, Google Chat"],
     ["agent", "Agent", IconSpark, "Prompts, suggestions, titles"],
-    ["models", "Models", IconLayers, "Sign-ins, Gemini, the model picker"],
+    ["models", "Models", IconLayers, "Sign-ins, Gemini, OpenAI, providers, the picker"],
     ["secrets", "Secrets", IconLock, secretCount ? `${secretCount} masked · asking · .env files` : "Masking, asking, .env files"],
     ...(terminal ? [["terminal", "Terminal", IconShell, "Copying and typing"]] : []),
     ...(ask ? [["ask", "Ask", IconAsk, "The Ask panel's prompts"]] : []),
@@ -1778,8 +1778,9 @@ function Secrets({ settings, onChange }) {
 }
 
 // Models is where sessions' models come from and how the picker lists them:
-// who Claude Code and Codex are signed in as, how Gemini is reached, and the
-// picker's list where Settings is open on a folder whose agent offers one.
+// who Claude Code and Codex are signed in as, how Gemini is reached, OpenAI's
+// API key and the endpoints the user added, and the picker's list where
+// Settings is open on a folder whose agent offers one.
 function Models({ settings, onChange, list }) {
   return (
     <>
@@ -1787,9 +1788,10 @@ function Models({ settings, onChange, list }) {
       <SignIns />
       <div className="settings-heading">Gemini</div>
       <Gemini settings={settings} onChange={onChange} />
+      <Providers settings={settings} onChange={onChange} />
       {list && (
         <>
-          <div className="settings-heading">Model picker</div>
+          <div className="settings-heading model-picker-heading">Model picker</div>
           {list}
         </>
       )}
@@ -1951,6 +1953,299 @@ function Gemini({ settings, onChange }) {
         choices={VERTEX_REGIONS}
       />
     </>
+  );
+}
+
+const PROVIDER_APIS = [
+  ["chat", "Chat Completions", "OpenAI's /chat/completions, which most OpenAI-compatible servers speak"],
+  ["responses", "Responses", "OpenAI's /responses"],
+  ["anthropic", "Anthropic", "Anthropic's /v1/messages, as LiteLLM and DeepSeek offer it"],
+];
+const API_NAMES = Object.fromEntries(PROVIDER_APIS.map(([v, name]) => [v, name]));
+const KEY_MODES = [
+  ["none", "No key", "The endpoint asks for none"],
+  ["key", "API key", "A key kept as a masked secret"],
+  ["helper", "Key helper", "A command that prints the key, for one that runs out"],
+];
+// Presets fill in an endpoint's usual address; each is still editable.
+const PROVIDER_PRESETS = [
+  ["custom", "Other", { name: "", url: "", api: "chat", keyed: true }],
+  ["litellm", "LiteLLM", { name: "LiteLLM", url: "http://localhost:4000", api: "anthropic", keyed: true }],
+  ["deepseek", "DeepSeek", { name: "DeepSeek", url: "https://api.deepseek.com/anthropic", api: "anthropic", keyed: true }],
+  ["openrouter", "OpenRouter", { name: "OpenRouter", url: "https://openrouter.ai/api/v1", api: "chat", keyed: true }],
+  ["ollama", "Ollama", { name: "Ollama", url: "http://localhost:11434/v1", api: "chat", keyed: false }],
+  ["vllm", "vLLM", { name: "vLLM", url: "http://localhost:8000/v1", api: "chat", keyed: false }],
+];
+const RESERVED_PROVIDERS = ["codex", "gemini", "openai", "claude", "anthropic"];
+const providerId = (name) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^[-_]+|-+$/g, "")
+    .slice(0, 32);
+
+// Providers are OpenAI's API, with a key, and the endpoints the user added,
+// each answering the models it lists as <id>/<model>: an OpenAI-compatible
+// server, or one that speaks Anthropic's API. Keys are masked secrets.
+function Providers({ settings, onChange }) {
+  const secrets = useSecrets();
+  const list = useMemo(() => settings.providers || [], [settings.providers]);
+  const [st, setSt] = useState(null);
+  const [adding, setAdding] = useState(null); // the secret's name a key is being added as
+  const [editing, setEditing] = useState(null); // a provider, or {} for a new one
+  useEffect(() => {
+    let tries = 0;
+    let timer;
+    const ask = () =>
+      api.providers().then(
+        (s) => {
+          setSt(s);
+          if (s.some((p) => (p.id !== "openai" || p.key) && !p.models && !p.error) && ++tries < 10) timer = setTimeout(ask, 1500);
+        },
+        () => {},
+      );
+    timer = setTimeout(ask, st ? 600 : 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secrets, list]);
+  if (!st) return null;
+  const status = Object.fromEntries(st.map((p) => [p.id, p]));
+  const listed = (s) => (s?.models ? `${s.models} models in the model picker` : "Listing its models…");
+  const save = (next) => onChange({ providers: next.length ? next : undefined });
+
+  const openai = status.openai || {};
+  let openaiNote = "A key from platform.openai.com, saved as OPENAI_API_KEY, puts OpenAI's models in the model picker, billed to the key.";
+  if (openai.error) openaiNote = openai.error;
+  else if (openai.key) openaiNote = `${listed(openai)}${openai.key === "env" ? ", from OPENAI_API_KEY in dv's environment" : ""}.`;
+
+  return (
+    <>
+      <div className="settings-heading">OpenAI</div>
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>API key</div>
+          <div className={cx("settings-note", openai.error && "prompt-error")}>{openaiNote}</div>
+        </div>
+        {openai.key !== "saved" && (
+          <span className="settings-actions">
+            <button className="btn" onClick={() => setAdding("OPENAI_API_KEY")}>
+              Add key
+            </button>
+          </span>
+        )}
+      </div>
+
+      <div className="settings-heading">Other providers</div>
+      {list.map((p) => {
+        const s = status[p.id];
+        const missing = p.key && s && !s.key;
+        let note = `${API_NAMES[p.api] || p.api} at ${p.url} · ${p.id}/…`;
+        if (s?.error) note = s.error;
+        else if (s) note = `${listed(s)}, as ${p.id}/… · ${API_NAMES[p.api] || p.api} at ${p.url}`;
+        return (
+          <div className="settings-row" key={p.id}>
+            <div className="settings-text">
+              <div>{p.name}</div>
+              <div className={cx("settings-note", s?.error && "prompt-error")}>{note}</div>
+            </div>
+            <span className="settings-actions">
+              {missing && (
+                <button className="btn" onClick={() => setAdding(p.key)}>
+                  Add key
+                </button>
+              )}
+              <button className="btn" onClick={() => setEditing(p)}>
+                Edit
+              </button>
+              <button
+                className="btn"
+                onClick={() => confirm(`Remove ${p.name}? Sessions on its models stop working.`) && save(list.filter((q) => q.id !== p.id))}
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+        );
+      })}
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>OpenAI- or Anthropic-compatible</div>
+          <div className="settings-note">
+            vLLM, Ollama, OpenRouter, a DeepSeek you host, LiteLLM, DeepSeek's own API. Each one's models go in the model picker as its id, a slash, then the model.
+          </div>
+        </div>
+        <span className="settings-actions">
+          <button className="btn" onClick={() => setEditing({})}>
+            Add provider
+          </button>
+        </span>
+      </div>
+      {adding && <MaskSecret suggested={adding} onClose={() => setAdding(null)} />}
+      {editing && (
+        <ProviderForm
+          was={editing.id ? editing : null}
+          taken={list.map((p) => p.id).filter((id) => id !== editing.id)}
+          keySaved={!!(editing.key && status[editing.id]?.key)}
+          onSave={(p) => save(editing.id ? list.map((q) => (q.id === editing.id ? p : q)) : [...list, p])}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// ProviderForm adds a provider, or changes one; its id, which its models are
+// named by in sessions, stays what it was made as.
+function ProviderForm({ was, taken, keySaved, onSave, onClose }) {
+  const [preset, setPreset] = useState(was ? "" : "custom");
+  const [name, setName] = useState(was?.name || "");
+  const [url, setUrl] = useState(was?.url || "");
+  const [apiKind, setApiKind] = useState(was?.api || "chat");
+  const [keyMode, setKeyMode] = useState(was ? (was.keyHelper ? "helper" : was.key ? "key" : "none") : "key");
+  const [key, setKey] = useState("");
+  const [helper, setHelper] = useState(was?.keyHelper || "");
+  const [ttl, setTtl] = useState(was?.keyTTL ? String(Math.round(was.keyTTL / 60)) : "");
+  const [models, setModels] = useState((was?.models || []).join(", "));
+  const [windowK, setWindowK] = useState(was?.window ? String(Math.round(was.window / 1000)) : "");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const id = was?.id || providerId(name);
+  const keyName = was?.key || `${id.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+  const pick = (v) => {
+    const p = PROVIDER_PRESETS.find(([k]) => k === v)[2];
+    setPreset(v);
+    setName(p.name);
+    setUrl(p.url);
+    setApiKind(p.api);
+    setKeyMode(p.keyed ? "key" : "none");
+    setError("");
+  };
+  const keyed = keyMode === "key";
+  const submit = async () => {
+    const u = url.trim().replace(/\/+$/, "");
+    if (!id) return setError("Name it.");
+    if (!was && RESERVED_PROVIDERS.includes(id)) return setError(`${id} is dv's own; name it otherwise.`);
+    if (taken.includes(id)) return setError(`There is a provider ${id} already.`);
+    if (!/^https?:\/\/\S+$/.test(u)) return setError("The URL starts with http:// or https://.");
+    if (keyMode === "helper" && !helper.trim()) return setError("Give the command that prints the key.");
+    const k = Math.round(Number(windowK) * 1000);
+    const p = { id, name: name.trim(), url: u, api: apiKind };
+    if (keyed) p.key = keyName;
+    if (keyMode === "helper") {
+      p.keyHelper = helper.trim();
+      if (Number(ttl) > 0) p.keyTTL = Math.round(Number(ttl) * 60);
+    }
+    const named = models
+      .split(/[\s,]+/)
+      .map((m) => m.trim())
+      .filter(Boolean);
+    if (named.length) p.models = named;
+    if (k > 0) p.window = k;
+    setBusy(true);
+    try {
+      if (keyed && key.trim()) {
+        await api.secretAdd(keyName, key.trim());
+        await reloadSecrets();
+      }
+      onSave(p);
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+  const enter = (e) => e.key === "Enter" && !busy && submit();
+  const urlHint = apiKind === "anthropic" ? "As ANTHROPIC_BASE_URL takes it" : "As an OpenAI SDK's base URL, /v1 and all";
+  return (
+    <Modal onClose={onClose} centred className="mask-secret provider-form">
+      <div className="help-head">
+        <span className="help-title">{was ? `Change ${was.name}` : "Add a provider"}</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={onClose} title="Close (Esc)">
+          <IconX size={14} />
+        </button>
+      </div>
+      <div className="mask-secret-body">
+        {!was && (
+          <span className="seg">
+            {PROVIDER_PRESETS.map(([v, label]) => (
+              <button key={v} className={cx(v === preset && "on")} aria-pressed={v === preset} onClick={() => pick(v)}>
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
+        <label className="provider-field">
+          <span>Name</span>
+          <input value={name} autoFocus spellCheck={false} placeholder="My server" onChange={(e) => (setName(e.target.value), setError(""))} onKeyDown={enter} />
+        </label>
+        <div className="settings-note">{id ? `Its models are ${id}/<model>${was ? "" : ", for good"}.` : "Its models are named by it."}</div>
+        <label className="provider-field">
+          <span>URL</span>
+          <input value={url} spellCheck={false} placeholder="https://host/v1" onChange={(e) => (setUrl(e.target.value), setError(""))} onKeyDown={enter} />
+        </label>
+        <div className="settings-note">{urlHint}.</div>
+        <span className="seg">
+          {PROVIDER_APIS.map(([v, label, title]) => (
+            <button key={v} className={cx(v === apiKind && "on")} aria-pressed={v === apiKind} title={title} onClick={() => setApiKind(v)}>
+              {label}
+            </button>
+          ))}
+        </span>
+        <span className="seg">
+          {KEY_MODES.map(([v, label, title]) => (
+            <button key={v} className={cx(v === keyMode && "on")} aria-pressed={v === keyMode} title={title} onClick={() => setKeyMode(v)}>
+              {label}
+            </button>
+          ))}
+        </span>
+        {keyed && (
+          <input
+            type="password"
+            value={key}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={keySaved ? `Saved as ${keyName}; type to change it` : `The key, masked as ${keyName}`}
+            onChange={(e) => setKey(e.target.value)}
+            onKeyDown={enter}
+          />
+        )}
+        {keyMode === "helper" && (
+          <>
+            <label className="provider-field">
+              <span>Command</span>
+              <input value={helper} spellCheck={false} placeholder="vault read -field=key secret/llm" onChange={(e) => (setHelper(e.target.value), setError(""))} onKeyDown={enter} />
+            </label>
+            <div className="settings-note">Run by the shell; what it prints is the key. Stopped if it takes over 30 seconds.</div>
+            <label className="provider-field">
+              <span>Keep for</span>
+              <input value={ttl} inputMode="numeric" placeholder="5" onChange={(e) => setTtl(e.target.value.replace(/\D/g, ""))} onKeyDown={enter} />
+              <span className="settings-note">minutes</span>
+            </label>
+            <div className="settings-note">Then it is run again, and sooner if the endpoint refuses the key.</div>
+          </>
+        )}
+        <label className="provider-field">
+          <span>Models</span>
+          <input value={models} spellCheck={false} placeholder="Listed by the endpoint" onChange={(e) => setModels(e.target.value)} onKeyDown={enter} />
+        </label>
+        <div className="settings-note">Named here, for an endpoint that lists none, or to add to its list. Comma-separated.</div>
+        <label className="provider-field">
+          <span>Context</span>
+          <input value={windowK} inputMode="numeric" placeholder="As listed, else 128" onChange={(e) => setWindowK(e.target.value.replace(/\D/g, ""))} onKeyDown={enter} />
+          <span className="settings-note">k tokens</span>
+        </label>
+        {error && <div className="settings-note prompt-error">{error}</div>}
+        <div className="action-form-foot">
+          <button className="mini" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary" disabled={busy || !name.trim() || !url.trim()} onClick={submit}>
+            {was ? "Save" : "Add"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -28,6 +28,17 @@ func HandleGemini(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, gw.Gemini())
 }
 
+// HandleProviders says how OpenAI's API and the providers the user added
+// stand: whether there is a key, and what each offers.
+func HandleProviders(w http.ResponseWriter, r *http.Request) {
+	gw := gateway.Active()
+	if gw == nil {
+		writeErr(w, http.StatusServiceUnavailable, errNoGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, gw.Providers())
+}
+
 // HandleAccounts says who Claude Code and Codex are signed in as.
 func HandleAccounts(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"claude": agent.ClaudeAccount()}
