@@ -613,6 +613,11 @@ function Entry({ folder: f, main, job, on }) {
             Stop sessions
           </button>
         )}
+        {!f.task && !worktree && f.git && !f.missing && (
+          <button className="mini hub-action hub-hover-only" title="Make a worktree of this repository, on a branch of its own" onClick={stop(() => on.newWorktree(f))}>
+            New worktree
+          </button>
+        )}
         {f.task && !job && (
           <button className="mini hub-action" title="Delete this task's folder and take it off the hub" onClick={stop(() => on.closeTask(f))}>
             Close task

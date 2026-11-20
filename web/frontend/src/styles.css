@@ -10763,6 +10763,11 @@ button.hub-remote-link:hover {
     visibility: visible;
   }
 
+  /* On every repository's card it would crowd a touch screen; its menu has it. */
+  .hub-row .hub-action.hub-hover-only {
+    display: none;
+  }
+
   .hub-row .hub-sub:has(.hub-action) > .hub-used,
   .hub-keys,
   .hub-search > kbd,
