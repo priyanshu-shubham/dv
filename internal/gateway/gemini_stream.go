@@ -130,7 +130,7 @@ func (s *geminiStream) begin(id string) error {
 		return nil
 	}
 	s.start = true
-	return s.out.send(messageStart("msg_"+id, s.model))
+	return s.out.send(messageStart(id, s.model))
 }
 
 // open starts a block for a step.

@@ -29,6 +29,19 @@ func TestTurnsAreMarkedWhereTheyBeginAndEnd(t *testing.T) {
 	}
 }
 
+func TestRepliesAllNamedMsgStayWhereTheyWereSaid(t *testing.T) {
+	tr := newTranscript("/repo")
+	tr.Feed([]byte(line(t, user("u1", "", "hi")) + line(t, assistant("a1", "u1", "msg_", text("Hello."))) +
+		line(t, user("u2", "a1", "ok")) + line(t, assistant("a2", "u2", "msg_", text("Sure.")))))
+	var got []string
+	for _, it := range tr.Items("") {
+		got = append(got, it.Text)
+	}
+	if strings.Join(got, " ") != "hi Hello. ok Sure." {
+		t.Errorf("items: %s", strings.Join(got, " "))
+	}
+}
+
 func TestACallTakesFromItsCallToItsResult(t *testing.T) {
 	call := assistant("a1", "u1", "m1", map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": map[string]any{"command": "sleep 2"}})
 	call["timestamp"] = "2026-09-17T14:04:24.129Z"

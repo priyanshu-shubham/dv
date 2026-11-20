@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"cmp"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"strings"
@@ -139,14 +140,17 @@ func (s *codexStream) begin(id string) error {
 		return nil
 	}
 	s.start = true
-	return s.out.send(messageStart("msg_"+id, s.model))
+	return s.out.send(messageStart(id, s.model))
 }
 
+// A reply's id tells its blocks apart from other replies' in the transcript,
+// so one the backend left unnamed, as Gemini's unstored interactions are, is
+// made up.
 func messageStart(id, model string) event {
 	return newEvent("message_start", map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
-			"id": id, "type": "message", "role": "assistant", "model": model,
+			"id": "msg_" + cmp.Or(id, rand.Text()), "type": "message", "role": "assistant", "model": model,
 			"content": []any{}, "stop_sequence": nil, "stop_reason": nil,
 			"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
 		},

@@ -167,6 +167,9 @@ func TestGeminiSearchAndCutShort(t *testing.T) {
 	if len(content) != 2 || content[0]["type"] != "server_tool_use" || content[0]["input"].(map[string]any)["query"] != "dv release" || msg["stop_reason"] != "max_tokens" {
 		t.Errorf("search %v", msg)
 	}
+	if id, _ := msg["id"].(string); len(id) <= len("msg_") {
+		t.Errorf("id %q", id)
+	}
 
 	col = &collector{}
 	s = &geminiStream{names: &toolNames{}, out: col, steps: map[int]*geminiStep{}}

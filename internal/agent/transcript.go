@@ -575,6 +575,10 @@ func (t *Transcript) parse(line []byte) *entry {
 	switch r.Type {
 	case "assistant":
 		e.assistant, e.msg = true, r.Message.ID
+		// dv's gateway once gave every Gemini reply this id.
+		if e.msg == "msg_" {
+			e.msg = ""
+		}
 		u := r.Message.Usage
 		e.tokens, e.model, e.effort = u.Input+u.CacheCreate+u.CacheRead+u.Output, r.Message.Model, r.Effort
 		var blocks []block
