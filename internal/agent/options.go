@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"dv/internal/gateway"
@@ -183,6 +184,7 @@ func probe(ctx context.Context, cwd string) (Options, *Usage, error) {
 	if json.Unmarshal(got["initialize"], &init) != nil {
 		return Options{}, nil, errors.New("Claude Code would not start")
 	}
+	heardAccount(init.Account)
 	// An older Claude Code refuses what it does not know, and still offers its models.
 	var s settingsResponse
 	json.Unmarshal(got["get_settings"], &s)
@@ -270,6 +272,57 @@ type initResponse struct {
 	Models   []offered `json:"models"`
 	Mode     string    `json:"current_permission_mode"`
 	Commands []Command `json:"commands"`
+	Account  *Account  `json:"account"`
+}
+
+// Account is who Claude Code is signed in as.
+type Account struct {
+	Email    string `json:"email,omitempty"`
+	Plan     string `json:"subscriptionType,omitempty"`
+	Provider string `json:"apiProvider,omitempty"` // firstParty, bedrock, vertex…
+}
+
+var claudeAccount struct {
+	sync.Mutex
+	account *Account
+	at      time.Time
+	asking  bool
+}
+
+// ClaudeAccount is who Claude Code is signed in as, nil before it is known
+// or when it isn't. Each folder's look at what a session starts with tells
+// it; without one lately, a Claude Code is started in the home folder to ask.
+func ClaudeAccount() *Account {
+	c := &claudeAccount
+	c.Lock()
+	defer c.Unlock()
+	if c.asking || time.Since(c.at) < optionsFor || !Available() {
+		return c.account
+	}
+	c.asking = true
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		home, _ := os.UserHomeDir()
+		got, err := ask(ctx, home)
+		var init initResponse
+		if err == nil {
+			json.Unmarshal(got["initialize"], &init)
+		}
+		c.Lock()
+		defer c.Unlock()
+		c.asking, c.at = false, time.Now()
+		if err == nil {
+			c.account = init.Account
+		}
+	}()
+	return c.account
+}
+
+func heardAccount(a *Account) {
+	claudeAccount.Lock()
+	claudeAccount.account, claudeAccount.at = a, time.Now()
+	claudeAccount.Unlock()
 }
 
 type offered struct {

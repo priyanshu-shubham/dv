@@ -12,7 +12,7 @@ import { ActionsPalette, ActionsSettings, AskSettings, CommandOutput, isCommand,
 import { BranchPalette } from "./Branches.jsx";
 import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
-import AgentView, { attachKey, RESUME } from "./Agent.jsx";
+import AgentView, { attachKey, ModelsSettings, RESUME } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
@@ -2654,6 +2654,7 @@ export default function App() {
           update={update}
           actions={<ActionsSettings />}
           ask={<AskSettings />}
+          models={agent.available ? <ModelsSettings models={agent.models || []} onChanged={loadSessions} /> : null}
           tab={overlay.tab}
         />
       )}

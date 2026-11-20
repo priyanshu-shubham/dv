@@ -267,6 +267,7 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	mux.HandleFunc("GET /api/notify", server.Guarded(notices.HandleStream))
 	mux.HandleFunc("POST /api/notify/presence", server.Guarded(notices.HandlePresence))
 	gateway.Watch(dirs, server.MaskEnvFiles(user), server.AskLooseSecrets(user))
+	gateway.RouteGemini(server.GeminiRoute(user))
 	mux.HandleFunc("GET /api/secrets", server.Guarded(server.HandleSecrets))
 	mux.HandleFunc("POST /api/secrets", server.Guarded(server.HandleAddSecret))
 	mux.HandleFunc("DELETE /api/secrets/{name}", server.Guarded(server.HandleRemoveSecret))
@@ -280,6 +281,7 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	mux.HandleFunc("DELETE /api/secrets/allowed/{key}", server.Guarded(server.HandleForgetAllowed))
 	mux.HandleFunc("DELETE /api/secrets/unasked/{id}", server.Guarded(server.HandleAskAgain))
 	mux.HandleFunc("GET /api/gemini", server.Guarded(server.HandleGemini))
+	mux.HandleFunc("GET /api/accounts", server.Guarded(server.HandleAccounts))
 	if tg := apps.tg; tg != nil {
 		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
 		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))

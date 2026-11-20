@@ -72,6 +72,23 @@ func MaskEnvFiles(user *store.Prefs) func() bool {
 	}
 }
 
+// GeminiRoute reads how Gemini models are reached: the setting geminiRoute,
+// "vertex" for Vertex AI in vertexProject at vertexLocation, else the API key.
+func GeminiRoute(user *store.Prefs) func() gateway.GeminiRoute {
+	return func() gateway.GeminiRoute {
+		if user == nil {
+			return gateway.GeminiRoute{}
+		}
+		var s struct {
+			Route    string `json:"geminiRoute"`
+			Project  string `json:"vertexProject"`
+			Location string `json:"vertexLocation"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return gateway.GeminiRoute{Vertex: s.Route == "vertex", Project: strings.TrimSpace(s.Project), Location: s.Location}
+	}
+}
+
 // AskLooseSecrets reads whether what looks like a secret is held, before a
 // session sends it, for the user to say: the setting askLooseSecrets, on
 // unless turned off.

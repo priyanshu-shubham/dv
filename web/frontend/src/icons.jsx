@@ -63,6 +63,7 @@ export const IconPalette = svg(
   { stroke: true },
 );
 export const IconServer = svg(<><rect x="2" y="2.5" width="12" height="4.5" rx="1.2" /><rect x="2" y="9" width="12" height="4.5" rx="1.2" /><path d="M4.5 4.75h.01M4.5 11.25h.01" /></>, { stroke: true });
+export const IconLayers = svg(<path d="M8 2L1.75 5.25 8 8.5l6.25-3.25zM1.75 8.25L8 11.5l6.25-3.25M1.75 11.25L8 14.5l6.25-3.25" />, { stroke: true });
 export const IconDownload = svg(<path d="M8 2v8.5M4.5 7L8 10.5 11.5 7M2.5 13.5h11" />, { stroke: true });
 export const IconBranch = svg(<><circle cx="4" cy="3.5" r="1.8" /><circle cx="4" cy="12.5" r="1.8" /><circle cx="12" cy="6" r="1.8" /><path d="M4 5.3v5.4M12 7.8c0 2-1.5 2.9-4 3.2" /></>, { stroke: true });
 export const IconCommit = svg(<><circle cx="8" cy="8" r="2.75" /><path d="M1.5 8h3.75M10.75 8h3.75" /></>, { stroke: true });

@@ -12,7 +12,7 @@ import { applyRanges, ensureLanguage, escapeHtml, highlightLines, langReady } fr
 import { findRegExp } from "./find.js";
 import { MarkdownDocument, Media, previewKind, PreviewToggle, SvgPreview } from "./Preview.jsx";
 import {
-  IconAsk, IconBack, IconBell, IconBolt, IconFile, IconGauge, IconLock, IconPalette, IconRefresh, IconSearch, IconServer, IconShell, IconSpark, IconSplit, IconSymbol, IconX,
+  IconAsk, IconBack, IconBell, IconBolt, IconFile, IconGauge, IconLayers, IconLock, IconPalette, IconRefresh, IconSearch, IconServer, IconShell, IconSpark, IconSplit, IconSymbol, IconX,
 } from "./icons.jsx";
 import { MachineSetting } from "./Machine.jsx";
 import { tabIconJPEG, tabIconURL } from "./favicon.js";
@@ -1049,6 +1049,7 @@ export function SettingsOverlay({
   update,
   actions,
   ask,
+  models,
   tab: opening,
 }) {
   // A phone opens on the list of sections, as Android's Settings does; each
@@ -1061,7 +1062,8 @@ export function SettingsOverlay({
     ["diff", "Diff", IconSplit, phone ? "Context and wrapping" : "Layout, context and wrapping"],
     ["notifications", "Notifications", IconBell, "This phone, Telegram, Google Chat"],
     ["agent", "Agent", IconSpark, "Prompts, suggestions, titles"],
-    ["secrets", "Secrets", IconLock, secretCount ? `${secretCount} masked · Gemini key · asking · .env files` : "Masking, Gemini key, asking, .env files"],
+    ["models", "Models", IconLayers, "Sign-ins, Gemini, the model picker"],
+    ["secrets", "Secrets", IconLock, secretCount ? `${secretCount} masked · asking · .env files` : "Masking, asking, .env files"],
     ...(terminal ? [["terminal", "Terminal", IconShell, "Copying and typing"]] : []),
     ...(ask ? [["ask", "Ask", IconAsk, "The Ask panel's prompts"]] : []),
     ...(actions ? [["actions", "Actions", IconBolt, "Commands and prompts to run"]] : []),
@@ -1244,6 +1246,7 @@ export function SettingsOverlay({
             />
           </>
         )}
+        {tab === "models" && <Models settings={settings} onChange={onChange} list={models} />}
         {tab === "secrets" && <Secrets settings={settings} onChange={onChange} />}
         {tab === "terminal" && (
           <>
@@ -1694,9 +1697,6 @@ function Secrets({ settings, onChange }) {
         </div>
       ))}
 
-      <div className="settings-heading">Gemini</div>
-      <GeminiKey secrets={list} />
-
       <div className="settings-heading">Asking</div>
       <Setting
         label="Ask before sending what looks like a secret"
@@ -1774,12 +1774,96 @@ function Secrets({ settings, onChange }) {
   );
 }
 
-// GeminiKey says whether the gateway has a Gemini API key to answer gemini/
-// models with, and what Google made of it. The key is a masked secret like
-// any other; its models are listed a moment after it is saved.
-function GeminiKey({ secrets }) {
+// Models is where sessions' models come from and how the picker lists them:
+// who Claude Code and Codex are signed in as, how Gemini is reached, and the
+// picker's list where Settings is open on a folder whose agent offers one.
+function Models({ settings, onChange, list }) {
+  return (
+    <>
+      <div className="settings-heading">Signed in</div>
+      <SignIns />
+      <div className="settings-heading">Gemini</div>
+      <Gemini settings={settings} onChange={onChange} />
+      {list && (
+        <>
+          <div className="settings-heading">Model picker</div>
+          {list}
+        </>
+      )}
+    </>
+  );
+}
+
+const capital = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+const PROVIDERS = { bedrock: "Amazon Bedrock", vertex: "Google Vertex AI", foundry: "Microsoft Foundry" };
+
+// SignIns is who Claude Code and Codex are signed in as. Claude Code is asked
+// in the background, so its account can take a moment to come.
+function SignIns() {
+  const [acc, setAcc] = useState(null);
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => {
+    let tries = 0;
+    let timer;
+    const ask = () =>
+      api.accounts().then(
+        (a) => {
+          setAcc(a);
+          if (a.claude) return;
+          if (++tries < 10) timer = setTimeout(ask, 1500);
+          else setGaveUp(true);
+        },
+        () => setAcc({}),
+      );
+    ask();
+    return () => clearTimeout(timer);
+  }, []);
+  if (!acc) return null;
+  const { claude, codex } = acc;
+  const row = (name, note, bad) => (
+    <div className="settings-row">
+      <div className="settings-text">
+        <div>{name}</div>
+        <div className={cx("settings-note", bad && "prompt-error")}>{note}</div>
+      </div>
+    </div>
+  );
+  return (
+    <>
+      {row(
+        "Claude",
+        claude
+          ? [claude.email, claude.subscriptionType, PROVIDERS[claude.apiProvider] && `through ${PROVIDERS[claude.apiProvider]}`].filter(Boolean).join(" · ")
+          : gaveUp
+            ? "Not signed in, or Claude Code isn't installed: run claude, then /login."
+            : "Asking Claude Code…",
+        !claude && gaveUp,
+      )}
+      {codex && row("Codex", codex.error || [codex.email, codex.plan && `ChatGPT ${capital(codex.plan)}`].filter(Boolean).join(" · "), !!codex.error)}
+    </>
+  );
+}
+
+const GEMINI_ROUTES = [
+  ["key", "API key", "Google's Gemini API, with a key from Google AI Studio"],
+  ["vertex", "Vertex AI", "Google Cloud, with your gcloud login"],
+];
+const VERTEX_REGIONS = [
+  ["global", "Global", "Wherever Google has room"],
+  ["us", "US", "Answered, and kept, in the US"],
+  ["eu", "EU", "Answered, and kept, in the EU"],
+];
+
+// Gemini is how the gateway answers gemini/ models - with an API key, or
+// through Vertex AI with the user's Google Cloud login - and what Google made
+// of it. The key is a masked secret like any other; models are listed a
+// moment after the key, project or region changes.
+function Gemini({ settings, onChange }) {
+  const secrets = useSecrets();
+  const vertex = settings.geminiRoute === "vertex";
   const [st, setSt] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [project, setProject] = useState(settings.vertexProject || "");
   useEffect(() => {
     let tries = 0;
     let timer;
@@ -1787,32 +1871,83 @@ function GeminiKey({ secrets }) {
       api.gemini().then(
         (s) => {
           setSt(s);
-          if (s.key && !s.models && !s.error && ++tries < 8) timer = setTimeout(ask, 1500);
+          if ((s.vertex || s.key) && !s.models && !s.error && ++tries < 10) timer = setTimeout(ask, 1500);
         },
         () => {},
       );
-    ask();
+    // The setting reaches dv a moment after it is picked.
+    timer = setTimeout(ask, st ? 600 : 0);
     return () => clearTimeout(timer);
-  }, [secrets]);
+    // st is only read for whether this is the first asking.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secrets, settings.geminiRoute, settings.vertexProject, settings.vertexLocation]);
   if (!st) return null;
-  let note = "A key from Google AI Studio, saved as GEMINI_API_KEY, puts Gemini's models in the model picker. Their requests go to Google's Gemini API with it, billed to the key's project.";
-  if (st.error) note = st.error;
-  else if (st.key) note = `${st.models ? `${st.models} models in the model picker` : "Listing its models…"}${st.key === "env" ? ", from GEMINI_API_KEY in dv's environment" : ""}.`;
+  const listed = st.models ? `${st.models} models in the model picker` : "Listing its models…";
+  const fresh = st.vertex !== vertex;
+
+  const route = (
+    <Setting
+      label="Gemini models"
+      note="Where the model picker's Gemini models are answered from. Usage is billed to the key's project, or the Google Cloud project here."
+      value={vertex ? "vertex" : "key"}
+      onPick={(v) => onChange({ geminiRoute: v === "vertex" ? "vertex" : undefined })}
+      choices={GEMINI_ROUTES}
+    />
+  );
+  if (!vertex) {
+    let note = "A key from Google AI Studio, saved as GEMINI_API_KEY, puts Gemini's models in the model picker.";
+    if (!fresh && st.error) note = st.error;
+    else if (st.key) note = `${listed}${st.key === "env" ? ", from GEMINI_API_KEY in dv's environment" : ""}.`;
+    return (
+      <>
+        {route}
+        <div className="settings-row">
+          <div className="settings-text">
+            <div>API key</div>
+            <div className={cx("settings-note", !fresh && st.error && "prompt-error")}>{note}</div>
+          </div>
+          {st.key !== "saved" && (
+            <span className="settings-actions">
+              <button className="btn" onClick={() => setAdding(true)}>
+                Add key
+              </button>
+            </span>
+          )}
+          {adding && <MaskSecret suggested="GEMINI_API_KEY" onClose={() => setAdding(false)} />}
+        </div>
+      </>
+    );
+  }
+  const save = () => onChange({ vertexProject: project.trim() || undefined });
+  let note = st.found ? `Empty, the project gcloud is set to: ${st.found}.` : "The Google Cloud project to use Vertex AI in.";
+  if (!fresh && st.error) note = st.error;
+  else if (!fresh && st.project) note = `${listed}, through Vertex AI in ${st.project}${settings.vertexProject ? "" : ", the project gcloud is set to"}.`;
   return (
-    <div className="settings-row">
-      <div className="settings-text">
-        <div>Gemini API key</div>
-        <div className={cx("settings-note", st.error && "prompt-error")}>{note}</div>
+    <>
+      {route}
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>Project</div>
+          <div className={cx("settings-note", !fresh && st.error && "prompt-error")}>{note}</div>
+        </div>
+        <input
+          value={project}
+          placeholder={st.found || "Project ID"}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setProject(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+        />
       </div>
-      {st.key !== "saved" && (
-        <span className="settings-actions">
-          <button className="btn" onClick={() => setAdding(true)}>
-            Add key
-          </button>
-        </span>
-      )}
-      {adding && <MaskSecret suggested="GEMINI_API_KEY" onClose={() => setAdding(false)} />}
-    </div>
+      <Setting
+        label="Region"
+        note="Where Vertex AI answers. US and EU keep the requests, and anything Google stores of them, in that region."
+        value={settings.vertexLocation || "global"}
+        onPick={(v) => onChange({ vertexLocation: v === "global" ? undefined : v })}
+        choices={VERTEX_REGIONS}
+      />
+    </>
   );
 }
 

@@ -30,15 +30,20 @@ var errNoGeminiKey = errors.New("there is no Gemini API key: save one as " + Gem
 
 // geminiUpstream is Gemini's Interactions API, used stateless (store:false):
 // every request carries the whole conversation, as Claude Code sends it.
+// It is the Gemini API's with a key, or Vertex AI's, the same but for where
+// it is and how it is signed in to (vertex.go).
 type geminiUpstream struct {
-	base   string
-	client *http.Client
-	key    func() string
+	base       string
+	vertexHost string // where Vertex is, for tests
+	client     *http.Client
+	key        func() string
+	route      func() GeminiRoute
+	login      *googleLogin
 
 	mu        sync.Mutex
 	models    []Model
-	modelsKey string // the key the list is of
-	askedKey  string
+	modelsFor string // the access's id the list is of
+	askedFor  string
 	askedAt   time.Time
 	err       error // the last asking's
 	asking    bool
@@ -47,7 +52,7 @@ type geminiUpstream struct {
 func newGeminiUpstream(key func() string) *geminiUpstream {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = 5 * time.Minute
-	return &geminiUpstream{base: geminiBackend, client: &http.Client{Transport: t}, key: key}
+	return &geminiUpstream{base: geminiBackend, client: &http.Client{Transport: t}, key: key, login: &googleLogin{}}
 }
 
 // geminiThinking are the thinking levels of the models Google's docs list
@@ -83,44 +88,55 @@ func geminiLevels(slug string) (levels []string, def string) {
 	return t.levels, t.def
 }
 
-// knownModels are the models last heard of for the key there is now,
-// without waiting: a list gone stale, or of another key, is asked for
-// again behind it.
+// knownModels are the models last heard of for the route there is now,
+// without waiting: a list gone stale, or of another key or project, is
+// asked for again behind it.
 func (c *geminiUpstream) knownModels() []Model {
-	key := c.key()
+	a := c.access()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if key == "" {
+	if a.err != nil {
 		return nil
 	}
+	id := a.id()
 	since := time.Since(c.askedAt)
-	due := key != c.askedKey || since >= 10*time.Minute || (c.err != nil && since >= time.Minute)
+	due := id != c.askedFor || since >= 10*time.Minute || (c.err != nil && since >= time.Minute)
 	if due && !c.asking {
-		c.asking, c.askedKey, c.askedAt = true, key, time.Now()
+		c.asking, c.askedFor, c.askedAt = true, id, time.Now()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			models, err := c.fetchModels(ctx, key)
+			var models []Model
+			var err error
+			if a.vertex {
+				models, err = c.fetchVertexModels(ctx, a)
+			} else {
+				models, err = c.fetchModels(ctx, a.key)
+			}
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			c.asking, c.err = false, err
 			if err == nil {
-				c.models, c.modelsKey = models, key
+				c.models, c.modelsFor = models, id
 			}
 		}()
 	}
-	if c.modelsKey != key {
+	if c.modelsFor != id {
 		return nil
 	}
 	return c.models
 }
 
-// failed is why the key's models couldn't be listed, nil where they were
-// or haven't been asked for yet.
+// failed is why the route's models couldn't be listed, nil where they were
+// or haven't been asked for yet - or, on Vertex, why it can't be used.
 func (c *geminiUpstream) failed() error {
+	a := c.access()
+	if a.vertex && a.err != nil {
+		return a.err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.askedKey != c.key() {
+	if a.err != nil || c.askedFor != a.id() {
 		return nil
 	}
 	return c.err
@@ -174,28 +190,36 @@ func (c *geminiUpstream) fetchModels(ctx context.Context, key string) ([]Model, 
 			if n, _ := strconv.ParseFloat(v[1], 64); n < 3 {
 				continue
 			}
-			levels, def := geminiLevels(slug)
-			gm := Model{Slug: slug, Label: cmp.Or(m.Display, slug), Window: m.Input, Levels: levels, Default: def}
-			for _, l := range levels {
-				if slices.Contains(claudeEfforts, l) {
-					gm.Efforts = append(gm.Efforts, l)
-				}
-			}
-			out = append(out, gm)
+			out = append(out, geminiModel(slug, cmp.Or(m.Display, slug), m.Input))
 		}
 		if page = list.Next; page == "" {
 			break
 		}
 	}
-	// Newest first, as Codex's list is.
+	geminiNewestFirst(out)
+	return out, nil
+}
+
+func geminiModel(slug, label string, window int) Model {
+	levels, def := geminiLevels(slug)
+	m := Model{Slug: slug, Label: label, Window: window, Levels: levels, Default: def}
+	for _, l := range levels {
+		if slices.Contains(claudeEfforts, l) {
+			m.Efforts = append(m.Efforts, l)
+		}
+	}
+	return m
+}
+
+// geminiNewestFirst sorts as Codex's list is.
+func geminiNewestFirst(models []Model) {
 	version := func(m Model) float64 {
 		n, _ := strconv.ParseFloat(geminiVersion.FindStringSubmatch(m.Slug)[1], 64)
 		return n
 	}
-	slices.SortStableFunc(out, func(a, b Model) int {
+	slices.SortStableFunc(models, func(a, b Model) int {
 		return cmp.Or(cmp.Compare(version(b), version(a)), strings.Compare(a.Slug, b.Slug))
 	})
-	return out, nil
 }
 
 // serve answers a Messages request with a Gemini model.
@@ -215,7 +239,7 @@ func (c *geminiUpstream) serve(w http.ResponseWriter, r *http.Request, body []by
 
 	resp, err := c.send(r.Context(), payload)
 	if err != nil {
-		if errors.Is(err, errNoGeminiKey) {
+		if errors.As(err, new(accessError)) {
 			apiError{http.StatusForbidden, "permission_error", err.Error(), true}.write(w)
 		} else if !errors.Is(err, context.Canceled) {
 			apiError{http.StatusBadGateway, "api_error", "Gemini: " + err.Error(), false}.write(w)
@@ -267,16 +291,18 @@ func (c *geminiUpstream) send(ctx context.Context, payload map[string]any) (*htt
 }
 
 func (c *geminiUpstream) post(ctx context.Context, payload map[string]any) (*http.Response, error) {
-	key := c.key()
-	if key == "" {
-		return nil, errNoGeminiKey
+	a := c.access()
+	if a.err != nil {
+		return nil, accessError{a.err}
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/interactions", bytes.NewReader(data))
-	req.Header.Set("x-goog-api-key", key)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.interactions(a), bytes.NewReader(data))
+	if err := c.authorize(req, a); err != nil {
+		return nil, accessError{err}
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if payload["stream"] == true {
 		req.Header.Set("Accept", "text/event-stream")

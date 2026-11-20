@@ -72,6 +72,7 @@ const NO_MODELS = [];
 const NO_PICKED = {};
 const NO_HIDDEN = [];
 const NO_ORDER = [];
+const NO_NAMES = {};
 const NO_NOTE = {};
 const DOUBLE_ESC_MS = 600;
 // How long the reader goes without a key before a request takes the keys.
@@ -583,6 +584,60 @@ function prettyModel(id) {
   if (!m) return id || "";
   const name = `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? "." + m[3] : ""}`;
   return /\[1m\]/.test(id) ? `${name} (1M)` : name;
+}
+
+// choicesOf is the picker's models as it lists them, each by the user's own
+// name for it where they gave one. "" is the model the user's settings start
+// on; Claude Code's "default" is the one it recommends.
+function choicesOf(models, names) {
+  return models.map((c) => {
+    const own = (/^claude-/.test(c.model) && prettyModel(c.model)) || c.label;
+    return {
+      ...c,
+      label: names[c.id] || own,
+      own,
+      // One the user added is named as they typed it too, where the name reads otherwise.
+      description: c.added && own !== c.id ? c.id : c.description,
+      tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "",
+    };
+  });
+}
+
+const renamed = (names, id, name) => {
+  const { [id]: _, ...rest } = names;
+  return name ? { ...rest, [id]: name } : rest;
+};
+
+// ModelsSettings is the picker's list in Settings, as its Edit the list… has it.
+export function ModelsSettings({ models, onChanged }) {
+  const [names, setNames] = usePref("user", "modelNames", NO_NAMES);
+  const [order, setOrder] = usePref("user", "modelOrder", NO_ORDER);
+  const [hidden, setHidden] = usePref("user", "hiddenModels", NO_HIDDEN);
+  const [error, setError] = useState("");
+  const all = useMemo(() => inOrder(choicesOf(models, names), order), [models, names, order]);
+  const change = (p) => p.then(onChanged, (e) => setError(e.message));
+  // Claude Code is asked what it offers once a folder opens, which can still be on its way.
+  const none = models.length === 0;
+  useEffect(() => {
+    if (!none) return;
+    const timer = setInterval(onChanged, 2000);
+    return () => clearInterval(timer);
+  }, [none, onChanged]);
+  if (none) return <div className="settings-note">Asking Claude Code which models it offers…</div>;
+  return (
+    <>
+      {error && <div className="settings-note prompt-error">{error}</div>}
+      <ModelListEditor
+        models={all}
+        hidden={hidden}
+        onHide={(id, hide) => setHidden((h) => (hide ? [...h.filter((x) => x !== id), id] : h.filter((x) => x !== id)))}
+        onOrder={setOrder}
+        onRename={(id, name) => setNames((n) => renamed(n, id, name))}
+        onAdd={(name) => change(api.agentModel("", name, true))}
+        onDrop={(name) => change(api.agentModel("", name, false))}
+      />
+    </>
+  );
 }
 
 // AgentView is Agent mode's main pane: one session's conversation, and the box
@@ -1587,21 +1642,9 @@ export default function AgentView({
     setStepping(null);
     settings({ mode: m });
   };
-  const modelChoices = useMemo(
-    // "" is the model the user's settings start on; Claude Code's "default" is the one it recommends.
-    () =>
-      models.map((c) => {
-        const label = (/^claude-/.test(c.model) && prettyModel(c.model)) || c.label;
-        return {
-          ...c,
-          label,
-          // One the user added is named as they typed it too, where the name reads otherwise.
-          description: c.added && label !== c.id ? c.id : c.description,
-          tag: c.id === "" ? (c.model ? "default" : "") : c.id === "default" ? "recommended" : "",
-        };
-      }),
-    [models],
-  );
+  const [modelNames, setModelNames] = usePref("user", "modelNames", NO_NAMES);
+  const modelChoices = useMemo(() => choicesOf(models, modelNames), [models, modelNames]);
+  const renameModel = (id, name) => setModelNames((n) => renamed(n, id, name));
   // Added, a model is also picked, as /model would move the session to it.
   const addModel = async (name) => {
     const on = models.find((c) => c.id === name || c.model === name);
@@ -1616,8 +1659,10 @@ export default function AgentView({
     settings({ model: on?.id ?? name });
   };
   const dropModel = (name) => api.agentModel("", name, false).then(onChanged, (e) => setError(e.message));
-  // Claude's ids read as names; Codex's are named by its own list.
-  const nameOf = (model) => (/^claude-/.test(model || "") ? prettyModel(model) : modelChoices.find((m) => sameModel(m.model, model))?.label || model);
+  // Claude's ids read as names; Codex's are named by its own list; any by the user's own name for it.
+  const nameOf = (model) =>
+    modelChoices.find((m) => modelNames[m.id] && sameModel(m.model, model))?.label ||
+    (/^claude-/.test(model || "") ? prettyModel(model) : modelChoices.find((m) => sameModel(m.model, model))?.label || model);
   // Claude Code offers only the latest of each kind. A session put on an older
   // one with /model lists it too, taking the levels of its kind's latest.
   const using = live?.using;
@@ -1956,6 +2001,7 @@ export default function AgentView({
               hidden={hiddenModels}
               onHide={hideModel}
               onOrder={setModelOrder}
+              onRename={renameModel}
               model={offList?.id || asked?.model || ""}
               efforts={onModel?.efforts}
               effort={effort}
@@ -4407,7 +4453,7 @@ function EditCard({ item, session, view, contextLines, wrap, threads, onAttach, 
 // terminal's /model has them. onPick is given { model } or { effort }; onAdd
 // and onDrop a model's name, to put on the list as /model takes it or take
 // off again.
-function ModelPicker({ label, models, all, hidden, onHide, onOrder, model, efforts, effort, onPick, onAdd, onDrop }) {
+function ModelPicker({ label, models, all, hidden, onHide, onOrder, onRename, model, efforts, effort, onPick, onAdd, onDrop }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));
@@ -4426,7 +4472,16 @@ function ModelPicker({ label, models, all, hidden, onHide, onOrder, model, effor
       </button>
       {open && editing && (
         <div className={cx("model-list up model-editor-menu", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
-          <ModelListEditor models={all} hidden={hidden} onHide={onHide} onOrder={onOrder} onAdd={onAdd} onDrop={onDrop} onBack={() => setEditing(false)} />
+          <ModelListEditor
+            models={all}
+            hidden={hidden}
+            onHide={onHide}
+            onOrder={onOrder}
+            onRename={onRename}
+            onAdd={onAdd}
+            onDrop={onDrop}
+            onBack={() => setEditing(false)}
+          />
         </div>
       )}
       {open && !editing && (
@@ -4490,22 +4545,35 @@ function ModelPicker({ label, models, all, hidden, onHide, onOrder, model, effor
 }
 
 // ModelListEditor is which models the picker offers, and in what order: each
-// switched on or off and dragged into place, one added by the name /model
-// takes, and an added one taken off again. models are in the menu's order.
-function ModelListEditor({ models, hidden, onHide, onOrder, onAdd, onDrop, onBack }) {
+// switched on or off and dragged into place, renamed by double-clicking its
+// name, one added by the name /model takes, and an added one taken off again.
+// models are in the menu's order.
+function ModelListEditor({ models, hidden, onHide, onOrder, onRename, onAdd, onDrop, onBack }) {
   const [adding, setAdding] = useState("");
+  const [renaming, setRenaming] = useState(null);
+  const toggling = useRef(null);
+  useEffect(() => () => clearTimeout(toggling.current), []);
   const shown = models.filter((m) => !hidden.includes(m.id)).length;
   const { shown: order, dragging, grip, row } = useReorder(
     models.map((m) => m.id),
     onOrder,
   );
   const byId = new Map(models.map((m) => [m.id, m]));
+  // A click on a name switches it, once it's clear a second isn't coming to rename it.
+  const textClick = (c, on) => (e) => {
+    clearTimeout(toggling.current);
+    if (!onRename) return onHide(c.id, on);
+    if (e.detail > 1) return setRenaming(c.id);
+    toggling.current = setTimeout(() => onHide(c.id, on), DOUBLE_CLICK_MS);
+  };
   return (
     <div className="model-editor">
       <div className="model-editor-head">
-        <button className="ghost model-editor-back" onClick={onBack} title="Back to the models">
-          <IconBack size={12} />
-        </button>
+        {onBack && (
+          <button className="ghost model-editor-back" onClick={onBack} title="Back to the models">
+            <IconBack size={12} />
+          </button>
+        )}
         <span className="model-editor-title">Models on the menu</span>
         <span className="model-editor-count">
           {shown} of {models.length}
@@ -4516,19 +4584,24 @@ function ModelListEditor({ models, hidden, onHide, onOrder, onAdd, onDrop, onBac
           const c = byId.get(id);
           const on = !hidden.includes(c.id);
           const from = modelSource(c);
+          const note = [c.label !== c.own && c.own, c.description].filter(Boolean).join(" · ");
           return (
             <div key={c.id} ref={row(c.id)} className={cx("model-editor-row", !on && "off", dragging === c.id && "dragging")}>
               <button className="ghost model-editor-grip" title="Drag to reorder (↑ ↓)" aria-label={`Move ${c.label}`} {...grip(c.id)}>
                 <IconGrip size={12} />
               </button>
-              <span className="model-editor-text" onClick={() => onHide(c.id, on)}>
-                <span className="model-name">
-                  {c.label}
-                  {c.tag && <span className="model-tag">{c.tag}</span>}
-                  {from && <span className="model-tag">{from}</span>}
+              {renaming === c.id ? (
+                <ModelRename model={c} onDone={(name) => (setRenaming(null), name !== null && onRename(c.id, name))} />
+              ) : (
+                <span className="model-editor-text" title={onRename ? "Double-click to rename" : undefined} onClick={textClick(c, on)}>
+                  <span className="model-name">
+                    {c.label}
+                    {c.tag && <span className="model-tag">{c.tag}</span>}
+                    {from && <span className="model-tag">{from}</span>}
+                  </span>
+                  {note && <span className="model-note">{note}</span>}
                 </span>
-                {c.description && <span className="model-note">{c.description}</span>}
-              </span>
+              )}
               {c.added && (
                 <button className="ghost model-editor-drop" title="Take it off the list" onClick={() => onDrop(c.id)}>
                   <IconTrash size={12} />
@@ -4555,6 +4628,37 @@ function ModelListEditor({ models, hidden, onHide, onOrder, onAdd, onDrop, onBac
         />
       </label>
     </div>
+  );
+}
+
+const DOUBLE_CLICK_MS = 300;
+
+// ModelRename is a model's name being edited: Enter or leaving it keeps the
+// name, Esc does not, and an empty one, or its own, gives it back its own.
+function ModelRename({ model, onDone }) {
+  const kept = useRef(true);
+  const done = (value) => {
+    const name = value.trim();
+    onDone(kept.current ? (name === model.own ? "" : name) : null);
+  };
+  return (
+    <input
+      className="session-rename model-rename"
+      autoFocus
+      defaultValue={model.label}
+      placeholder={model.own}
+      spellCheck={false}
+      onFocus={(e) => e.target.select()}
+      onBlur={(e) => done(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") e.target.blur();
+        else if (e.key === "Escape") {
+          kept.current = false;
+          e.target.blur();
+        }
+      }}
+    />
   );
 }
 

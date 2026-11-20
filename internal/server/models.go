@@ -72,8 +72,12 @@ func gatewayModels(listed []agent.Model) []agent.Model {
 			out = append(out, agent.Model{ID: id, Model: id, Label: m.Label, Description: desc, Efforts: m.Efforts, Effort: m.Default})
 		}
 	}
+	gemini := "Through your Gemini API key"
+	if gw.Gemini().Vertex {
+		gemini = "Through Vertex AI"
+	}
 	add(gateway.ModelPrefix, "Through your Codex sign-in", gw.CodexModels())
-	add(gateway.GeminiPrefix, "Through your Gemini API key", gw.GeminiModels())
+	add(gateway.GeminiPrefix, gemini, gw.GeminiModels())
 	return out
 }
 

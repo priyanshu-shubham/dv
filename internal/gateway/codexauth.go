@@ -3,7 +3,9 @@ package gateway
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -95,4 +97,43 @@ func (c *codexUpstream) loginBytes() ([]byte, error) {
 		return nil, errNotSignedIn
 	}
 	return b, err
+}
+
+// CodexAccount is who Codex is signed in as, read from its sign-in's ID
+// token: Error says why there is none.
+type CodexAccount struct {
+	Email string `json:"email,omitempty"`
+	Plan  string `json:"plan,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func (g *Gateway) CodexAccount() CodexAccount {
+	b, err := g.codex.loginBytes()
+	if err != nil {
+		return CodexAccount{Error: err.Error()}
+	}
+	var auth struct {
+		Mode   string  `json:"auth_mode"`
+		APIKey *string `json:"OPENAI_API_KEY"`
+		Tokens struct {
+			ID string `json:"id_token"`
+		} `json:"tokens"`
+	}
+	json.Unmarshal(b, &auth)
+	parts := strings.Split(auth.Tokens.ID, ".")
+	if len(parts) != 3 {
+		if auth.APIKey != nil && *auth.APIKey != "" {
+			return CodexAccount{Error: "Codex is signed in with an API key, not ChatGPT, which dv's Codex models need: run codex login"}
+		}
+		return CodexAccount{Error: errNotSignedIn.Error()}
+	}
+	payload, _ := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	var claims struct {
+		Email string `json:"email"`
+		Auth  struct {
+			Plan string `json:"chatgpt_plan_type"`
+		} `json:"https://api.openai.com/auth"`
+	}
+	json.Unmarshal(payload, &claims)
+	return CodexAccount{Email: claims.Email, Plan: claims.Auth.Plan}
 }

@@ -80,6 +80,7 @@ func New(configDir, keyDir string) (*Gateway, error) {
 		path:      filepath.Join(configDir, "secrets.json"),
 	}
 	g.gemini = newGeminiUpstream(g.geminiKey)
+	g.gemini.route = currentRoute
 	if err := g.load(); err != nil {
 		return nil, err
 	}
@@ -261,18 +262,22 @@ func copyFlushing(w http.ResponseWriter, r io.Reader) {
 // one or before the list has come.
 func (g *Gateway) CodexModels() []Model { return g.codex.knownModels() }
 
-// GeminiModels are the models the user's Gemini API key offers, none
-// without one or before the list has come.
+// GeminiModels are the models the user's Gemini route offers, none without
+// one or before the list has come.
 func (g *Gateway) GeminiModels() []Model { return g.gemini.knownModels() }
 
-// GeminiStatus is what Settings says of the Gemini API key: where it is
-// from ("saved", "env", none ""), how many models it offers, and why it
-// offers none where its models couldn't be listed - the key refused, most
-// often.
+// GeminiStatus is what Settings says of the Gemini route: for the API key,
+// where it is from ("saved", "env", none ""); for Vertex AI, the project
+// and location used, and the project found when none is named; how many
+// models it offers, and why none where they couldn't be listed.
 type GeminiStatus struct {
-	Key    string `json:"key"`
-	Models int    `json:"models"`
-	Error  string `json:"error,omitempty"`
+	Vertex   bool   `json:"vertex"`
+	Key      string `json:"key"`
+	Project  string `json:"project,omitempty"`
+	Found    string `json:"found,omitempty"`
+	Location string `json:"location,omitempty"`
+	Models   int    `json:"models"`
+	Error    string `json:"error,omitempty"`
 }
 
 func (g *Gateway) Gemini() GeminiStatus {
@@ -281,6 +286,9 @@ func (g *Gateway) Gemini() GeminiStatus {
 		st.Key = "saved"
 	} else if g.geminiKey() != "" {
 		st.Key = "env"
+	}
+	if a := g.gemini.access(); a.vertex {
+		st.Vertex, st.Project, st.Location, st.Found = true, a.project, a.location, g.gemini.login.defaultProject()
 	}
 	st.Models = len(g.GeminiModels())
 	if err := g.gemini.failed(); err != nil {

@@ -423,8 +423,10 @@ export const api = {
   telegram: () => req("/api/notify/telegram", {}, ""),
   // secrets: [{ name, preview }], masked in what any session sends a model
   secrets: () => req("/api/secrets", {}, ""),
-  // gemini: { key: "saved" | "env" | "", models, error }, the Gemini API key the gateway answers gemini/ models with
+  // gemini: { vertex, key: "saved" | "env" | "", project, found, location, models, error }, how the gateway answers gemini/ models
   gemini: () => req("/api/gemini", {}, ""),
+  // accounts: { claude: { email, subscriptionType, apiProvider } | null, codex: { email, plan } | { error } }
+  accounts: () => req("/api/accounts", {}, ""),
   secretValue: (name) => req(`/api/secrets/${encodeURIComponent(name)}/value`, {}, ""),
   // secretScan: { found }, what in text looks like a secret and isn't masked
   secretScan: (text) => req("/api/secrets/scan", { method: "POST", body: JSON.stringify({ text }) }, ""),

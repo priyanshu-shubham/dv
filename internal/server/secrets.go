@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"dv/internal/agent"
 	"dv/internal/gateway"
 	"dv/internal/permit"
 )
@@ -25,6 +26,15 @@ func HandleGemini(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, gw.Gemini())
+}
+
+// HandleAccounts says who Claude Code and Codex are signed in as.
+func HandleAccounts(w http.ResponseWriter, r *http.Request) {
+	out := map[string]any{"claude": agent.ClaudeAccount()}
+	if gw := gateway.Active(); gw != nil {
+		out["codex"] = gw.CodexAccount()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // HandleSecrets lists the secrets masked in what sessions send a model.
