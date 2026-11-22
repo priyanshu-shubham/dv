@@ -363,6 +363,19 @@ func (p *providerUpstream) fetchModels(ctx context.Context) ([]Model, error) {
 		}
 		out = append(out, m)
 	}
+	// Models named by hand are the whole list, taking what the endpoint's
+	// listing says of each: OpenRouter's lists hundreds.
+	if len(p.cfg.Models) > 0 {
+		for _, id := range p.cfg.Models {
+			id = strings.TrimSpace(id)
+			if i := slices.IndexFunc(listed, func(e listedEntry) bool { return e.ID == id }); i >= 0 {
+				add(listed[i])
+			} else {
+				add(listedEntry{ID: id})
+			}
+		}
+		return out, nil
+	}
 	for _, e := range listed {
 		if notChat.MatchString(e.ID) || official && (!openAIChat.MatchString(e.ID) || openAINotFor.MatchString(e.ID)) {
 			continue
@@ -371,9 +384,6 @@ func (p *providerUpstream) fetchModels(ctx context.Context) ([]Model, error) {
 	}
 	if official {
 		slices.SortStableFunc(out, func(a, b Model) int { return strings.Compare(b.Slug, a.Slug) })
-	}
-	for _, id := range p.cfg.Models {
-		add(listedEntry{ID: strings.TrimSpace(id)})
 	}
 	return out, nil
 }

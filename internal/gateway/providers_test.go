@@ -66,6 +66,15 @@ func waitModels(t *testing.T, p *providerUpstream) []Model {
 	return nil
 }
 
+func TestNamedModelsOnly(t *testing.T) {
+	p := fakeProvider(t, Provider{ID: "or", Name: "OpenRouter", API: APIChat, Models: []string{"z/local", " b/two"}},
+		`{"data":[{"id":"a/one"},{"id":"b/two","context_length":200000},{"id":"c/three"}]}`, nil, nil, nil)
+	models := waitModels(t, p)
+	if len(models) != 2 || models[0].Slug != "z/local" || models[1].Slug != "b/two" || models[1].Window != 200000 {
+		t.Fatalf("models %+v", models)
+	}
+}
+
 func TestChatProvider(t *testing.T) {
 	var seen []map[string]any
 	turn := func(w http.ResponseWriter, body map[string]any) {

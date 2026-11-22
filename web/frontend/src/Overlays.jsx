@@ -2250,9 +2250,9 @@ function ProviderForm({ was, taken, keySaved, onSave, onClose }) {
         )}
         <label className="provider-field">
           <span>Models</span>
-          <input value={models} spellCheck={false} placeholder="Listed by the endpoint" onChange={(e) => setModels(e.target.value)} onKeyDown={enter} />
+          <input value={models} spellCheck={false} placeholder="All the endpoint lists" onChange={(e) => setModels(e.target.value)} onKeyDown={enter} />
         </label>
-        <div className="settings-note">Named here, for an endpoint that lists none, or to add to its list. Comma-separated.</div>
+        <div className="settings-note">Only these go in the model picker, in place of all the endpoint lists. Comma-separated.</div>
         <label className="provider-field">
           <span>Context</span>
           <input value={windowK} inputMode="numeric" placeholder="As listed, else 128" onChange={(e) => setWindowK(e.target.value.replace(/\D/g, ""))} onKeyDown={enter} />
