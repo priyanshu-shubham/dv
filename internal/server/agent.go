@@ -53,6 +53,7 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 		"available": agent.Available(),
 		"hooks":     hooks,
 		"sessions":  s.agent.Sessions(),
+		"board":     s.boardSessions(),
 		"models":    s.withAdded(opts.Models),
 		"modes":     agentModes,
 		"mode":      opts.Mode,

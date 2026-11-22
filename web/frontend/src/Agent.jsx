@@ -387,7 +387,7 @@ async function imageOf(blob, name) {
 
 // readImage takes a picture for a message, scaled down if it is bigger than
 // Claude would look at or than it takes (5 MB, as base64).
-async function readImage(file) {
+export async function readImage(file) {
   if (!IMAGE_TYPES.includes(file.type)) throw new Error(`${file.name || "That"} is not an image dv can send: PNG, JPEG, GIF or WebP.`);
   let blob = file;
   const bitmap = file.type === "image/gif" ? null : await createImageBitmap(file).catch(() => null);
@@ -405,7 +405,7 @@ async function readImage(file) {
 
 // filesIn is the files a paste carries. Some browsers list a copied image
 // only among the items.
-function filesIn(data) {
+export function filesIn(data) {
   const files = [...data.files];
   if (!files.length) for (const it of data.items || []) if (it.kind === "file") files.push(it.getAsFile());
   return files.filter(Boolean);
@@ -616,7 +616,7 @@ export default function AgentView({
   id, session, agents, modes: allModes, root, view, contextLines, wrap, threads, attached,
   onAttach, onDetach, onClearAttached, onRestoreAttached, onJump, onComment, onThreadAction, onSymbol, onOpenFile,
   requests, hooks, onHooks, onSelect, onNew, onStart, onStartAdded, temporaryNew, onTemporaryNew, onClose, task = false, onChanged, reveal, boxFocus, offline, active = true,
-  docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent, phone = null,
+  docked = false, startAs, sendNow, askPrompts, onEndAsk, onAskToAgent, phone = null, replies = false,
 }) {
   // In the phone app: { onBack, onActions }, and the sheet open over the session.
   const [sheet, setSheet] = useState(null);
@@ -2188,7 +2188,9 @@ export default function AgentView({
     <OpenCall.Provider value={setPeek}>
     <Pictures.Provider value={pictures}>
     <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef}>
-      {!docked && (
+      {/* Docked, the selection is the surrounding view's, unless replies says
+          the session is the one to quote it to, as a ticket's agent is. */}
+      {(!docked || replies) && (
         <SelectionAsk within={paneRef} active={active} onReply={id && !readOnly ? replyWith : null} onAsk={askInNew} onMask={(text) => setMasking({ picked: text })} />
       )}
       {phone ? (
@@ -2255,9 +2257,11 @@ export default function AgentView({
           {live?.cost > 0 && <span className="dim agent-cost">${live.cost.toFixed(2)}</span>}
           {docked && (
             <>
-              <button className="ghost" onClick={() => onEndAsk(busy)} title="New conversation: this one ends, and the next question starts afresh">
-                <IconPlus size={13} />
-              </button>
+              {onEndAsk && (
+                <button className="ghost" onClick={() => onEndAsk(busy)} title="New conversation: this one ends, and the next question starts afresh">
+                  <IconPlus size={13} />
+                </button>
+              )}
               <button className="ghost" onClick={onAskToAgent} title="Open in the Agent view, as a session in the list">
                 <IconForward size={13} />
               </button>
@@ -2719,7 +2723,8 @@ function SelectionAsk({ within, active, onReply, onAsk, onMask }) {
         </button>
       )}
     </div>,
-    document.body,
+    // In a dialog, the rest of the page is inert: the bar is drawn in it.
+    within.current?.closest(".backdrop") || document.body,
   );
 }
 
@@ -4110,6 +4115,18 @@ function Output({ tool, input, out, failed, root, onOpenFile }) {
   return <Lines className={cx("agent-result", failed && "error")} text={out.text} />;
 }
 
+// showLess folds back what a Show less button sits at the end of. Clicked
+// there, at the foot of what may be a long page, the fold would leave the view
+// past it, so its top is brought back.
+function showLess(e, setAll) {
+  const el = e.currentTarget.parentElement;
+  setAll(false);
+  requestAnimationFrame(() => {
+    const scroller = el.closest(".agent-scroll");
+    if (scroller && el.getBoundingClientRect().top < scroller.getBoundingClientRect().top) el.scrollIntoView({ block: "start" });
+  });
+}
+
 // Folded shows the start of a long page, fading out, until asked for the rest,
 // which then reads with the conversation instead of scrolling in a box of its own.
 function Folded({ className, children }) {
@@ -4130,9 +4147,9 @@ function Folded({ className, children }) {
       <div className="agent-folded-body" ref={ref}>
         {children}
       </div>
-      {cut && !all && (
-        <button className="link agent-more" onClick={() => setAll(true)}>
-          Show all
+      {cut && (
+        <button className="link agent-more" onClick={(e) => (all ? showLess(e, setAll) : setAll(true))}>
+          {all ? "Show less" : "Show all"}
         </button>
       )}
     </div>
@@ -4157,13 +4174,14 @@ function Lines({ className, text }) {
   const [all, setAll] = useState(false);
   usePathsVersion();
   const lines = text.replace(/\n$/, "").split("\n");
-  const cut = !all && lines.length > SHOWN_LINES + 3;
+  const long = lines.length > SHOWN_LINES + 3;
+  const cut = !all && long;
   return (
     <div className={cx(className, "agent-lines")} ref={copiesAll(text.replace(/\n$/, ""))}>
       <pre>{linkText(cut ? lines.slice(0, SHOWN_LINES).join("\n") : text)}</pre>
-      {cut && (
-        <button className="link agent-more" onClick={() => setAll(true)}>
-          Show all {lines.length.toLocaleString()} lines
+      {long && (
+        <button className="link agent-more" onClick={(e) => (all ? showLess(e, setAll) : setAll(true))}>
+          {all ? "Show less" : `Show all ${lines.length.toLocaleString()} lines`}
         </button>
       )}
     </div>
@@ -4198,9 +4216,9 @@ function ReadLines({ read, onOpenFile }) {
           </div>
         );
       })}
-      {shown.length < lines.length && (
-        <button className="link agent-more" onClick={() => setAll(true)}>
-          Show all {lines.length.toLocaleString()} lines
+      {lines.length > SHOWN_READ && (
+        <button className="link agent-more" onClick={(e) => (all ? showLess(e, setAll) : setAll(true))}>
+          {all ? "Show less" : `Show all ${lines.length.toLocaleString()} lines`}
         </button>
       )}
     </div>
@@ -4243,9 +4261,9 @@ function FoundList({ found, path, onOpenFile }) {
           </div>
         ),
       )}
-      {shown.length < found.length && (
-        <button className="link agent-more" onClick={() => setAll(true)}>
-          Show all {found.length.toLocaleString()}
+      {found.length > SHOWN_FOUND && (
+        <button className="link agent-more" onClick={(e) => (all ? showLess(e, setAll) : setAll(true))}>
+          {all ? "Show less" : `Show all ${found.length.toLocaleString()}`}
         </button>
       )}
     </div>
@@ -4681,6 +4699,9 @@ function SessionID({ id }) {
 // first. asking is the set of sessions with a prompt or question waiting on
 // the reader; elsewhere, the other folders' activity; repoRoot, the main
 // checkout, which tells this repository's worktrees from other folders.
+const ROLE_TITLE = { scope: "Scoper", planner: "Planner", "plan-reviewer": "Plan reviewer", builder: "Builder", reviewer: "Reviewer" };
+const roleTitle = (b) => (b.round ? `${ROLE_TITLE[b.role]}, round ${b.round}` : ROLE_TITLE[b.role] || b.role);
+
 export function SessionList({
   sessions,
   available,
@@ -4690,6 +4711,7 @@ export function SessionList({
   repoRoot,
   activeId,
   added = {},
+  board,
   onSelect,
   onNew,
   onNewWorktree,
@@ -4699,6 +4721,7 @@ export function SessionList({
   onRename,
 }) {
   const [filter, setFilter] = useState("");
+  const [boardOpen, setBoardOpen] = useState(false);
   // The card is where the session on screen is named, so it is kept in sight.
   const listRef = useRef(null);
   useEffect(() => {
@@ -4707,9 +4730,21 @@ export function SessionList({
   const q = filter.trim().toLowerCase();
   const shown = q ? sessions.filter((s) => `${s.title} ${s.prompt} ${s.id}`.toLowerCase().includes(q)) : sessions;
   const isOpen = (s) => s.open || s.running === "dv";
+  // A board ticket's agents keep to a group of their own, out of the way, but
+  // for one waiting on the reader and the one on screen.
+  const tucked = (s) => !!board?.[s.id] && !asking?.has(s.id) && s.id !== activeId;
+  const listed = shown.filter((s) => !tucked(s));
+  const byTicket = new Map();
+  for (const s of shown.filter(tucked)) {
+    const t = board[s.id];
+    if (!byTicket.has(t.ticket)) byTicket.set(t.ticket, { title: t.title, rows: [] });
+    byTicket.get(t.ticket).rows.push(s);
+  }
+  const tuckedCount = [...byTicket.values()].reduce((n, g) => n + g.rows.length, 0);
+  const showBoard = boardOpen || !!q;
   // As Shift+↑/↓ steps through them.
-  const open = shown.filter(isOpen).sort(byLastSent);
-  const recent = shown.filter((s) => !isOpen(s));
+  const open = listed.filter(isOpen).sort(byLastSent);
+  const recent = listed.filter((s) => !isOpen(s));
 
   const [away, closeAway] = useOpenIn(elsewhere);
   const awayShown = q ? away.filter(({ f, s }) => `${s.title} ${s.id} ${f.name} ${f.branch || ""}`.toLowerCase().includes(q)) : away;
@@ -4870,6 +4905,23 @@ export function SessionList({
         {others.map(awayRow)}
         {recent.length > 0 && <div className="session-group">Recent</div>}
         {recent.map(row)}
+        {tuckedCount > 0 && (
+          <button className="session-group session-group-toggle" aria-expanded={showBoard} onClick={() => setBoardOpen((o) => !o)}>
+            {showBoard ? <IconChevronDown size={10} /> : <IconChevron size={10} />}
+            Board
+            <span className="session-group-count">{tuckedCount}</span>
+          </button>
+        )}
+        {showBoard &&
+          [...byTicket].map(([id, g]) => (
+            <div key={id} className="session-ticket">
+              <div className="session-ticket-head">
+                <span className="session-ticket-id">{id}</span> {g.title}
+              </div>
+              {/* Under its ticket, a session is named by what it does there. */}
+              {g.rows.map((s) => row({ ...s, title: roleTitle(board[s.id]) }))}
+            </div>
+          ))}
         {!available && <div className="empty">The claude CLI is not on your PATH.</div>}
         {available && shown.length === 0 && !(q && awayShown.length) && (
           <div className="empty">{q ? "No sessions match." : "No sessions in this repository yet."}</div>

@@ -354,6 +354,16 @@ export function ModeSwitch({ mode, modes, onMode, attached, uncommitted }) {
           Terminal
         </button>
       )}
+      {modes.includes("board") && (
+        <button
+          className={cx(mode === "board" && "on")}
+          aria-pressed={mode === "board"}
+          onClick={() => onMode("board")}
+          title="The repository's tickets, each with an agent at every stage (Shift+←/→ steps through the modes)"
+        >
+          Board
+        </button>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { AttachButton, ThreadList } from "./Threads.jsx";
 import { Notes, openNotes, Pad } from "./Notes.jsx";
 import { SessionList } from "./Agent.jsx";
 import { TerminalList } from "./Terminal.jsx";
+import { BoardSideList } from "./Board.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
   IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFile, IconFilter, IconX,
@@ -22,7 +23,7 @@ const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.inne
 export default function Sidebar({
   meta, pr, right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
-  filtersPaused, onPauseFilters, onReset, oneFile, onOneFile, agent, terminal, onWidth, modes, onMode, attached, uncommitted, onFinishWorktree, onLog,
+  filtersPaused, onPauseFilters, onReset, oneFile, onOneFile, agent, terminal, board, onWidth, modes, onMode, attached, uncommitted, onFinishWorktree, onLog,
 }) {
   const code = mode === "code";
   const [filter, setFilter] = useState("");
@@ -89,7 +90,7 @@ export default function Sidebar({
   // folder, and a button apiece for a folder of 40,000 files took seconds to
   // lay out. Rows are all one height, which the stylesheet sets.
   const [win, setWin] = useState({ top: 0, height: 0, row: 24 });
-  const listMounted = mode !== "agent" && mode !== "terminal";
+  const listMounted = mode !== "agent" && mode !== "terminal" && mode !== "board";
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -190,6 +191,8 @@ export default function Sidebar({
         <SessionList {...agent} />
       ) : mode === "terminal" ? (
         <TerminalList {...terminal} />
+      ) : mode === "board" ? (
+        <BoardSideList {...board} />
       ) : (
         <>
           <div className="sidebar-filter">

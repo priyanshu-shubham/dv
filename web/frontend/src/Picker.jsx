@@ -124,14 +124,14 @@ export function ModelPicker({ label, models, model, efforts, effort, onPick, usu
 }
 
 // useRoom is the way a menu opens and how tall it may be, within the session
-// pane or settings it is in, else the window. The composer is at the foot of a
+// pane, settings or ticket it is in, else the window. The composer is at the foot of a
 // session but halfway down a new one's page, where opening upwards ran past
 // the top; settings scroll, and cut off what runs past them.
 export function useRoom(open, ref) {
   const [room, setRoom] = useState(null);
   useLayoutEffect(() => {
     if (!open) return;
-    const pane = ref.current.closest(".agent-pane, .settings-body")?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
+    const pane = ref.current.closest(".agent-pane, .settings-body, .board-doc-body, .p-ticket-scroll")?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
     const h = ref.current.querySelector(".model-list").scrollHeight;
     setRoom(menuRoom(ref.current.getBoundingClientRect(), h, pane.top, pane.bottom, false));
   }, [open]);

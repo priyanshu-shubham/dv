@@ -49,6 +49,9 @@ type Manager struct {
 	// AutoTitles says whether dv has a small model name the sessions their
 	// agent has not. Set once, as Suggests is.
 	AutoTitles func() bool
+	// Env is what a session's process gets added to its environment, read at
+	// each start, so a resumed session has it too. Set once, as Suggests is.
+	Env func(id string) []string
 
 	mu       sync.Mutex
 	procs    map[string]*proc
@@ -498,16 +501,25 @@ func (m *Manager) Share(id string) error {
 
 // Create starts a new session in the repository. Nothing runs until the first
 // message is sent.
-func (m *Manager) Create() (string, error) { return m.create(false) }
+func (m *Manager) Create() (string, error) { return m.create(m.root, false) }
 
 // CreateAsk is Create for the Ask panel: marked before anything is told of
 // it, so it is never listed, and never open, being the panel's alone.
-func (m *Manager) CreateAsk() (string, error) { return m.create(true) }
+func (m *Manager) CreateAsk() (string, error) { return m.create(m.root, true) }
 
-func (m *Manager) create(ask bool) (string, error) {
+// CreateIn is Create for a session that works in a folder under the
+// repository, such as a worktree kept inside it.
+func (m *Manager) CreateIn(cwd string) (string, error) {
+	if !within(cwd, m.root) {
+		return "", fmt.Errorf("%s is not inside %s", cwd, m.root)
+	}
+	return m.create(cwd, false)
+}
+
+func (m *Manager) create(cwd string, ask bool) (string, error) {
 	id := newUUID()
 	m.mu.Lock()
-	m.procs[id] = m.newProc(id, m.root, false)
+	m.procs[id] = m.newProc(id, cwd, false)
 	m.mu.Unlock()
 	if ask {
 		if err := m.saved.SetAsk(id, true); err != nil {
@@ -646,6 +658,12 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	p.named = func() string { return agentName(transcriptFiles(m.root)[id]) }
 	p.suggests = func() bool { return m.Suggests != nil && m.Suggests() }
 	p.instructions = m.instructions
+	p.env = func() []string {
+		if m.Env == nil {
+			return nil
+		}
+		return m.Env(id)
+	}
 	p.unasked = func(path string) bool { return m.Unasked != nil && unasked(m.Unasked(), m.root, path) }
 	p.picked = func(model, effort string) {
 		p.mu.Lock()

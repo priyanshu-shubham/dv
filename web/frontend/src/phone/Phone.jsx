@@ -14,6 +14,7 @@ import { Choice, Menu, Row, Sheet } from "./Sheet.jsx";
 import Sessions from "./Sessions.jsx";
 import Files from "./Files.jsx";
 import { TerminalList, TerminalScreen } from "./Terminals.jsx";
+import PhoneBoard from "./Board.jsx";
 import { usePush } from "./push.js";
 import { endPicking } from "./Pick.jsx";
 import { say } from "../Notices.jsx";
@@ -24,6 +25,7 @@ const TABS = [
   { id: "diff", label: "Diff", icon: "diff" },
   { id: "files", label: "Files", icon: "file", on: "fileOn" },
   { id: "terminal", label: "Terminal", icon: "terminal" },
+  { id: "board", label: "Board", icon: "note" },
   { id: "comments", label: "Comments", icon: "comment", on: "commentOn" },
 ];
 
@@ -193,8 +195,10 @@ export default function Phone({ app }) {
   useBack(inCode, closeCode);
 
   const [sheet, setSheet] = useState(null); // "folders" | "scope" | "menu"
+  const [boardVisited, setBoardVisited] = useState(tab === "board");
+  if (tab === "board" && !boardVisited) setBoardVisited(true);
   const waiting = app.requests.length + (app.elsewhere || []).reduce((n, f) => n + (f.requests?.length || 0), 0);
-  const tabs = TABS.filter((t) => (t.id !== "diff" && t.id !== "terminal") || app.modes.includes(t.id));
+  const tabs = TABS.filter((t) => !["diff", "terminal", "board"].includes(t.id) || app.modes.includes(t.id));
 
   const title = meta?.repo || slug || "dv";
   const branch = meta?.head?.branch || (meta?.head?.sha || "").slice(0, 7);
@@ -240,6 +244,7 @@ export default function Phone({ app }) {
         <section className="p-tab" hidden={tab !== "agent"}>
           <Sessions
             sessions={app.agent.sessions}
+            board={app.agent.board}
             requests={app.requests}
             elsewhere={app.elsewhere}
             repoRoot={meta?.repoRoot}
@@ -294,6 +299,21 @@ export default function Phone({ app }) {
               onAttach={(s) => terminal.onNew(s).then((t) => t && openTerm(t.id))}
               onClose={terminal.onClose}
               onRename={terminal.onRename}
+            />
+          )}
+        </section>
+
+        <section className="p-tab" hidden={tab !== "board"}>
+          {/* Kept once opened, so a ticket left for a file it names is there on Back. */}
+          {boardVisited && (
+            <PhoneBoard
+              shown={tab === "board"}
+              models={app.agentProps.agents[""].models}
+              onOpenSession={openSession}
+              onOpenFile={(path) => {
+                openFile(path);
+                cameFrom.current = "board";
+              }}
             />
           )}
         </section>

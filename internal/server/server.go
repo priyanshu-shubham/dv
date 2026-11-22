@@ -6,6 +6,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"embed"
@@ -15,6 +16,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,6 +90,10 @@ type Server struct {
 	notices    *notify.Folder
 	stopNotices context.CancelFunc
 
+	board     *store.Board
+	boardMu   sync.Mutex // one change of a ticket's stage at a time
+	stopBoard func()
+
 	actionsMu sync.Mutex
 	actions   map[string]ranAction   // by session, until its turn is done
 	commands  map[string]*ranCommand // by action, while it runs
@@ -125,6 +131,10 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	if err != nil {
 		return nil, err
 	}
+	board, err := store.OpenBoard(repo.Root, repo.CommonDir, filepath.Base(cmp.Or(repo.MainRoot(), repo.Root)))
+	if err != nil {
+		return nil, err
+	}
 	prefs, err := store.OpenRepoPrefs(repo.Root)
 	if err != nil {
 		return nil, err
@@ -137,7 +147,20 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 	s := &Server{
 		repo: repo, store: st, viewed: vw, notes: notes, prefs: prefs, user: user, index: ix,
 		permit: broker, agent: agent.New(repo.Root, broker, sessions), saved: sessions, notices: notices,
-		terms: term.New(repo.Root), stopNotices: func() {},
+		terms: term.New(repo.Root), stopNotices: func() {}, board: board, stopBoard: func() {},
+	}
+	s.agent.Env = s.boardEnv
+	if s.drivesBoard() {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			s.watchBoard(ctx)
+		}()
+		s.stopBoard = func() {
+			cancel()
+			<-done
+		}
 	}
 	s.agent.Suggests = PromptSuggestions(user)
 	s.agent.Instructions = AgentInstructions(user)
@@ -182,6 +205,7 @@ func (s *Server) Close() {
 	s.terms.Close()
 	s.stopCommands()
 	s.stopNotices()
+	s.stopBoard()
 	if s.notices != nil {
 		s.notices.Close()
 	}
@@ -290,6 +314,20 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/notes", Guarded(s.handleAddNote))
 	mux.HandleFunc("PATCH /api/notes/{id}", Guarded(s.handlePatchNote))
 	mux.HandleFunc("DELETE /api/notes/{id}", Guarded(s.handleDeleteNote))
+
+	mux.HandleFunc("GET /api/board", Guarded(s.handleBoard))
+	mux.HandleFunc("POST /api/board", Guarded(s.handleAddTicket))
+	mux.HandleFunc("GET /api/board/{id}", Guarded(s.handleTicket))
+	mux.HandleFunc("PATCH /api/board/{id}", Guarded(s.handlePatchTicket))
+	mux.HandleFunc("DELETE /api/board/{id}", Guarded(s.handleDeleteTicket))
+	mux.HandleFunc("POST /api/board/{id}/move", Guarded(s.handleMoveTicket))
+	mux.HandleFunc("POST /api/board/{id}/round", Guarded(s.handleRunRound))
+	mux.HandleFunc("POST /api/board/{id}/comments", Guarded(s.handleCommentTicket))
+	mux.HandleFunc("POST /api/board/{id}/plan-review", Guarded(s.handleReviewPlan))
+	mux.HandleFunc("POST /api/board/{id}/agent", Guarded(s.handleTicketAgent))
+	mux.HandleFunc("POST /api/board/{id}/images", Guarded(s.handleAddTicketImage))
+	mux.HandleFunc("GET /api/board/{id}/images/{name}", s.handleTicketImage)
+	mux.HandleFunc("DELETE /api/board/{id}/images/{name}", Guarded(s.handleDeleteTicketImage))
 
 	mux.HandleFunc("GET /api/viewed", s.handleViewed)
 	mux.HandleFunc("POST /api/viewed", s.handleMarkViewed)

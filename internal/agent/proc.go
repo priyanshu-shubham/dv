@@ -50,6 +50,7 @@ type proc struct {
 	// instructions is what dv adds to Claude Code's system prompt; read at each
 	// start, since a resume does not keep it.
 	instructions func() string
+	env          func() []string // added to the process's environment at each start
 	// unasked says whether AutoAskEdits leaves an edit to the file to auto mode.
 	unasked func(path string) bool
 	// picked keeps a model chosen with /model, which Claude Code keeps "for
@@ -198,6 +199,9 @@ func (p *proc) startLocked(name string) error {
 	// to. The second has it say when a turn is over.
 	cmd.Env = append(os.Environ(), "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1")
 	cmd.Env = append(cmd.Env, gateway.Env(p.model)...)
+	if p.env != nil {
+		cmd.Env = append(cmd.Env, p.env()...)
+	}
 	ownGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

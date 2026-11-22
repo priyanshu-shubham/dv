@@ -42,8 +42,24 @@ export function chime() {
 // Below the header, clear of the message box. Outside the page, which an
 // overlay makes inert, so a notice can still be acted on over one. In the phone
 // app they are Android's snackbars, at the foot over the tabs.
+// useDialogOpen says whether a dialog is open over the page: its backdrop is
+// put on the body.
+function useDialogOpen() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const check = () => setOpen(!!document.querySelector("body > .backdrop"));
+    const watch = new MutationObserver(check);
+    watch.observe(document.body, { childList: true });
+    check();
+    return () => watch.disconnect();
+  }, []);
+  return open;
+}
+
 export function Notices({ phone }) {
   useRestartNotice();
+  // Over a dialog they keep clear of its head, where its own controls are.
+  const dialog = useDialogOpen();
   return createPortal(
     phone ? (
       <Toaster
@@ -58,7 +74,14 @@ export function Notices({ phone }) {
         toastOptions={{ unstyled: true }}
       />
     ) : (
-      <Toaster position="top-right" offset={{ top: 46, right: 14 }} mobileOffset={{ top: 48 }} gap={8} visibleToasts={4} toastOptions={{ unstyled: true }} />
+      <Toaster
+        position={dialog ? "bottom-right" : "top-right"}
+        offset={dialog ? { bottom: 14, right: 14 } : { top: 46, right: 14 }}
+        mobileOffset={{ top: 48 }}
+        gap={8}
+        visibleToasts={4}
+        toastOptions={{ unstyled: true }}
+      />
     ),
     document.body,
   );

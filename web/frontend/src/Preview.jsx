@@ -56,15 +56,21 @@ export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }
 // Without onStartComment it is the preview alone.
 // toAgent is an agent's own edit, where the box sends a note to its session
 // rather than leaving a comment in the review. See DiffBody.
+// notes are the caller's own, [{ key, line, node }], each drawn under the block
+// holding its line as a thread is.
 export function MarkdownDocument({
-  lines, path, side = "new", scope, onOpenFile, threads, composing, setComposing, onStartComment, onComment, onThreadAction, onAttach, onSearch, toAgent = false,
+  lines, path, side = "new", scope, onOpenFile, threads, composing, setComposing, onStartComment, onComment, onThreadAction, onAttach, onSearch, toAgent = false, notes,
 }) {
   const ref = useRef(null);
   // key -> { el: what it is drawn in, hold: the room kept for it inside a table or list }
   const slots = useRef(new Map());
   // A comment on the file itself is not on any block: its card shows it.
   const mine = (threads || []).filter((t) => t.startLine > 0 && (!t.side || t.side === side));
-  const shown = [...mine.map((t) => ["t:" + t.id, t.endLine]), ...(composing?.side === side ? [["c", composing.end]] : [])];
+  const shown = [
+    ...mine.map((t) => ["t:" + t.id, t.endLine]),
+    ...(notes || []).map((n) => ["n:" + n.key, n.line]),
+    ...(composing?.side === side ? [["c", composing.end]] : []),
+  ];
   const slot = (key) => {
     if (!slots.current.has(key)) {
       const el = document.createElement("div");
@@ -196,6 +202,8 @@ export function MarkdownDocument({
                   setComposing(null);
                 }}
               />
+            ) : key.startsWith("n:") ? (
+              notes.find((n) => "n:" + n.key === key)?.node
             ) : (
               <ThreadList
                 threads={mine.filter((t) => "t:" + t.id === key)}

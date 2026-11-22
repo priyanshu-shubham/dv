@@ -253,10 +253,16 @@ func (r *Repo) hasCommit(sha string) bool {
 
 // runGH runs GitHub's CLI in dir, failing with what it said.
 func runGH(dir string, timeout time.Duration, args ...string) ([]byte, error) {
+	return runGHIn(dir, timeout, "", args...)
+}
+
+// runGHIn is runGH with stdin for gh to read.
+func runGHIn(dir string, timeout time.Duration, stdin string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

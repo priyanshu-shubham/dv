@@ -14,6 +14,7 @@ import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey, ModelsSettings, RESUME } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
+import BoardView, { useBoard } from "./Board.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
 import { HeldSecrets, SecretHover } from "./Secrets.jsx";
@@ -61,7 +62,7 @@ const NO_FILES = [];
 const RECENT_FILES = 10;
 const NO_ATTACHED = [];
 const NO_ATTACHED_BY = {};
-const MODES = ["diff", "code", "agent", "terminal"];
+const MODES = ["diff", "code", "agent", "terminal", "board"];
 const FOLDER_MODES = ["code", "agent", "terminal"];
 const NO_FILTER = { include: "", exclude: "" };
 
@@ -186,6 +187,11 @@ export default function App() {
   // So does the Terminal view, which keeps the terminals it showed attached.
   const [termVisited, setTermVisited] = useState(mode === "terminal");
   if (mode === "terminal" && !termVisited) setTermVisited(true);
+  const [boardVisited, setBoardVisited] = useState(mode === "board");
+  if (mode === "board" && !boardVisited) setBoardVisited(true);
+  const [board, loadBoard, boardError] = useBoard(mode === "board" && !phoneApp);
+  const [ticketOpen, setTicketOpen] = useState(null);
+  const [ticketSession, setTicketSession] = useState(null); // the session the open ticket shows
   const [terms, loadTerms, tmuxSessions] = useTerminals(mode === "terminal");
   const [termPicked, setTermId] = usePersisted("terminal", "", { folder: true });
   const termId = terms?.some((t) => t.id === termPicked) ? termPicked : terms?.[0]?.id || "";
@@ -1061,7 +1067,7 @@ export default function App() {
     (next, at) => {
       const from = modeRef.current;
       if (next === from) return;
-      if ([next, from].some((m) => m === "agent" || m === "terminal")) return setMode(next);
+      if ([next, from].some((m) => m === "agent" || m === "terminal" || m === "board")) return setMode(next);
       const a = at || captureAnchor(from === "diff" ? scrollRef.current : codeRef.current);
       if (next === "code") {
         const path = a?.path || activePath;
@@ -1372,7 +1378,8 @@ export default function App() {
   }, [mode, loadSessions]);
   // The models come from asking Claude Code, which the first load sets off.
   useEffect(() => {
-    if (mode !== "agent" || !agent.available || agent.models?.length) return;
+    // The board picks its reviewers' models from the same list.
+    if ((mode !== "agent" && mode !== "board") || !agent.available || agent.models?.length) return;
     const t = setTimeout(loadSessions, 500);
     return () => clearTimeout(t);
   }, [mode, agent, loadSessions]);
@@ -1801,7 +1808,7 @@ export default function App() {
     setShowSession((n) => n + 1);
   };
   const notices = useNotices({
-    looking: phoneApp ? (phoneSession ? agentId : null) : mode === "agent" ? agentId : null,
+    looking: phoneApp ? (phoneSession ? agentId : null) : mode === "agent" ? agentId : mode === "board" ? ticketSession : null,
     phone: phoneApp,
     buzz: phoneApp && settings.noticeHaptics !== false,
     sound: !phoneApp && settings.noticeSound !== false,
@@ -1896,7 +1903,9 @@ export default function App() {
       if (isTyping(e.target) && !(e.target.matches(".agent-composer textarea") && !e.target.value)) return;
       if (selecting()) return;
       if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
-      const open = agent.sessions.filter((s) => s.open || s.running === "dv").sort(byLastSent);
+      // As the list has them: a board ticket's agents are folded away.
+      const listed = (s) => !agent.board?.[s.id] || s.id === agentId || askingSessions.has(s.id);
+      const open = agent.sessions.filter((s) => (s.open || s.running === "dv") && listed(s)).sort(byLastSent);
       if (!open.length) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1906,7 +1915,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [mode, agent.sessions, agentId, selectSession]);
+  }, [mode, agent.sessions, agent.board, askingSessions, agentId, selectSession]);
 
   // What is added from Diff and Code goes to a session that can be written to:
   // the one last looked at or picked, open or not, else the first open one,
@@ -2454,6 +2463,30 @@ export default function App() {
     offline,
   };
 
+  const openInAgent = (sid) => {
+    selectSession(sid);
+    setMode("agent");
+  };
+  // A ticket's agent, talked to from the ticket: the Ask panel's docked view,
+  // its keys left to the board.
+  const boardSession = (sid) => (
+    <AgentView
+      {...agentProps}
+      key={sid}
+      docked
+      replies
+      id={sid}
+      session={agent.sessions.find((x) => x.id === sid)}
+      attached={attachedLive[sid] || NO_ATTACHED}
+      onAttach={(a, to = sid) => attach(a, to)}
+      onDetach={(key) => attachedFor(sid, (list) => list.filter((x) => x.key !== key))}
+      onClearAttached={() => attachedFor(sid, () => [])}
+      onAskToAgent={() => openInAgent(sid)}
+      reveal={undefined}
+      boxFocus={undefined}
+    />
+  );
+
   const commentsProps = {
     tab: panelTab,
     onTab: setPanelTab,
@@ -2826,6 +2859,7 @@ export default function App() {
             ],
             activeId: agentId,
             added: attachedLive,
+            board: agent.board,
             asking: askingSessions,
             elsewhere,
             repoRoot: meta?.repoRoot,
@@ -2837,6 +2871,7 @@ export default function App() {
             onRemove: removeSession,
             onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
           }}
+          board={{ board, openId: ticketOpen, onOpen: setTicketOpen }}
           terminal={{
             terms,
             sessions: tmuxSessions,
@@ -2870,6 +2905,21 @@ export default function App() {
             copyOnSelect={settings.copyOnSelect !== false}
             typeAhead={settings.typeAhead !== false}
             onNew={newTerminal}
+          />
+        )}
+        {boardVisited && (
+          <BoardView
+            active={mode === "board"}
+            board={board}
+            load={loadBoard}
+            loadError={boardError}
+            openId={ticketOpen}
+            onOpen={setTicketOpen}
+            models={agents[""].models}
+            session={boardSession}
+            onOpenSession={(sid) => (setTicketOpen(null), openInAgent(sid))}
+            onLooking={setTicketSession}
+            onOpenFile={goTo}
           />
         )}
         {showComments && <CommentsPanel {...commentsProps} />}

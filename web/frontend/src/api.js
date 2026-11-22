@@ -233,6 +233,24 @@ export const api = {
   patchNote: (id, patch) => req(`/api/notes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteNote: (id) => req(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
+  // board: { tickets, version, drives, templates, base }; drives is whether this dv runs its agents.
+  board: () => req("/api/board"),
+  // ticket: { ticket, docs: { ticket, plan } }.
+  ticket: (id) => req(`/api/board/${encodeURIComponent(id)}`),
+  addTicket: (t) => req("/api/board", { method: "POST", body: JSON.stringify(t) }),
+  // patch: any of { title, request, templates, model }.
+  patchTicket: (id, patch) => req(`/api/board/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteTicket: (id) => req(`/api/board/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  moveTicket: (id, stage, note = "") => req(`/api/board/${encodeURIComponent(id)}/move`, { method: "POST", body: JSON.stringify({ stage, note }) }),
+  // comments: [{ quote, text }] on doc, "ticket" or "plan", for the agent writing it to revise.
+  commentTicket: (id, doc, comments) => req(`/api/board/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ doc, comments }) }),
+  reviewPlan: (id) => req(`/api/board/${encodeURIComponent(id)}/plan-review`, { method: "POST", body: "{}" }),
+  runRound: (id) => req(`/api/board/${encodeURIComponent(id)}/round`, { method: "POST", body: "{}" }),
+  // image: { mediaType, data }, data in base64.
+  addTicketImage: (id, image) => req(`/api/board/${encodeURIComponent(id)}/images`, { method: "POST", body: JSON.stringify(image) }),
+  deleteTicketImage: (id, name) => req(`/api/board/${encodeURIComponent(id)}/images/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  ticketImageURL: (id, name) => `${base}/api/board/${encodeURIComponent(id)}/images/${encodeURIComponent(name)}`,
+
   // key is the comparison's label: a file is viewed in one diff, not all of them.
   viewed: (key) => req(`/api/viewed?${new URLSearchParams({ key })}`),
 

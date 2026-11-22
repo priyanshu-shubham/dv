@@ -130,6 +130,8 @@ func run() error {
 		return comment(*dir, flag.Args()[1:], os.Stdin)
 	case "note":
 		return note(*dir, flag.Args()[1:], os.Stdin)
+	case "ticket":
+		return ticket(flag.Args()[1:], os.Stdin)
 	case "claude":
 		return claude(flag.Args()[1:])
 	case "codex":

@@ -13,15 +13,19 @@ import { say, useOpenIn } from "../Notices.jsx";
 
 const isOpen = (s) => s.open || s.running === "dv";
 
-export default function Sessions({ sessions, requests, elsewhere, repoRoot, available, usage, onOpen, onClose, onRemove, onRename }) {
+export default function Sessions({ sessions, board, requests, elsewhere, repoRoot, available, usage, onOpen, onClose, onRemove, onRename }) {
   const [held, setHeld] = useState(null); // the session long-pressed
   const [renaming, setRenaming] = useState(null);
   const [limits, setLimits] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
   const [away, closeAway] = useOpenIn(elsewhere);
   const asking = new Map();
   for (const r of requests) if (!asking.has(r.session)) asking.set(r.session, r);
 
-  const here = sessions.filter((s) => !asking.has(s.id));
+  // A board ticket's agents are folded away, as in the Agent view, unless one
+  // waits on the reader; the Board tab is where they are worked with.
+  const tucked = sessions.filter((s) => board?.[s.id] && !asking.has(s.id));
+  const here = sessions.filter((s) => !asking.has(s.id) && !board?.[s.id]);
   const working = here.filter((s) => s.busy && isOpen(s)).sort(byLastSent);
   const open = here.filter((s) => isOpen(s) && !s.busy).sort(byLastSent);
   const recent = here.filter((s) => !isOpen(s));
@@ -108,6 +112,13 @@ export default function Sessions({ sessions, requests, elsewhere, repoRoot, avai
       {others.map((a) => row(a.s, a))}
       {recent.length > 0 && <div className="p-sec">Recent</div>}
       {recent.map((s) => row(s))}
+      {tucked.length > 0 && (
+        <button className="p-sec p-sec-toggle" aria-expanded={boardOpen} onClick={() => setBoardOpen((o) => !o)}>
+          Board agents<span className="p-sec-aside">{tucked.length}</span>
+          <Icon name={boardOpen ? "up" : "down"} size={18} />
+        </button>
+      )}
+      {boardOpen && tucked.map((s) => row(s))}
       {!sessions.length && !away.length && <div className="p-empty">No sessions here yet. Start one with New session.</div>}
       <div className="p-fab-room" />
 
