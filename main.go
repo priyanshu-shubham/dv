@@ -272,6 +272,7 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	gateway.RouteGemini(server.GeminiRoute(user))
 	gateway.UseProviders(server.Providers(user))
 	gateway.SwitchOpenAI(server.OpenAIOff(user))
+	agent.AgyOff = server.AgyOff(user)
 	mux.HandleFunc("GET /api/secrets", server.Guarded(server.HandleSecrets))
 	mux.HandleFunc("POST /api/secrets", server.Guarded(server.HandleAddSecret))
 	mux.HandleFunc("DELETE /api/secrets/{name}", server.Guarded(server.HandleRemoveSecret))
@@ -287,6 +288,7 @@ func withNotices(h http.Handler, user *store.Prefs, notices *notify.Center, apps
 	mux.HandleFunc("GET /api/gemini", server.Guarded(server.HandleGemini))
 	mux.HandleFunc("GET /api/providers", server.Guarded(server.HandleProviders))
 	mux.HandleFunc("GET /api/accounts", server.Guarded(server.HandleAccounts))
+	mux.HandleFunc("GET /api/agy", server.Guarded(server.HandleAgy))
 	if tg := apps.tg; tg != nil {
 		mux.HandleFunc("GET /api/notify/telegram", server.Guarded(tg.HandleStatus))
 		mux.HandleFunc("POST /api/notify/telegram", server.Guarded(tg.HandleSetUp))

@@ -74,7 +74,7 @@ function Thread({ thread, onAction, onAttach, compact, ticked, onTick }) {
   const [editing, setEditing] = useState(null);
 
   return (
-    <article className={cx("thread", thread.resolved && "resolved")}>
+    <article className={cx("thread", thread.resolved && "resolved")} data-thread={thread.id}>
       {!compact && thread.quote?.length > 0 && <Quote lines={thread.quote} excerpt={thread.excerpt} />}
       {compact && (
         <div className="thread-head">

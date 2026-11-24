@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -132,12 +133,15 @@ func claudeTitle(gist string) (string, error) {
 	return "", errors.New("no title came back")
 }
 
+// titleLabel is what a model may put before the title it was asked for.
+var titleLabel = regexp.MustCompile(`(?i)^(session\s+)?title:\s*`)
+
 // cleanTitle is a model's answer as a title: its first line, without the
 // quotes or Markdown it may come wrapped in.
 func cleanTitle(s string) string {
 	const wrapping = " \t\"'`*#."
 	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
-	s = strings.Trim(strings.TrimPrefix(strings.Trim(s, wrapping), "Title:"), wrapping)
+	s = strings.Trim(titleLabel.ReplaceAllString(strings.Trim(s, wrapping), ""), wrapping)
 	if utf8.RuneCountInString(s) > 80 {
 		return ""
 	}

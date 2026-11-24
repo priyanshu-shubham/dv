@@ -22,7 +22,7 @@ function FileDiff({
   entry, fd, loading, error, view, contextLines, wrap, threads, collapsed,
   onToggleCollapse, viewed, onToggleViewed, onComment, onThreadAction, onSymbol,
   composing, setComposing, onAttach, onSearch, onView, onDiscard, reveal, generatedHidden, onShowGenerated,
-  onBody, found, foundAt, foundHead, scope, onOpenFile,
+  onBody, found, foundAt, foundHead, scope, onOpenFile, pin,
 }) {
   const [expanded, setExpanded] = useState({});
   const [selection, setSelection] = useState(null); // { side, start, end }
@@ -55,14 +55,16 @@ function FileDiff({
     setExpanded((e) => ({ ...e, [id]: grow(e[id], amount) }));
   }, []);
 
+  // With no onComment, it is read only: the lines aren't the ones a comment holds to.
   const startComment = useCallback(
     (side, start, end, selected, excerpt) => {
+      setSelection(null);
+      if (!onComment) return;
       const src = side === "old" ? fd?.oldLines : fd?.newLines;
       const quote = src ? src.slice(start - 1, end) : [];
       setComposing({ path: entry.path, side, start, end, quote, selected, excerpt });
-      setSelection(null);
     },
-    [fd, entry.path, setComposing],
+    [fd, entry.path, setComposing, onComment],
   );
 
   // A body that is on its way; stepping between changes has to be able to
@@ -123,30 +125,34 @@ function FileDiff({
           <IconComment size={12} />
           <span className="btn-label">Comment</span>
         </button>
-        <button
-          className="view-file"
-          onClick={() => onView(entry.path)}
-          title={entry.status === "D" ? "View the file as it was before it was deleted (f)" : "View the whole file (f)"}
-        >
-          <IconFile size={12} />
-          <span className="btn-label">File</span>
-        </button>
-        <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} ask={() => ({ a: { kind: "file", file: entry.path } })} what="this file" />
+        {onView && (
+          <button
+            className="view-file"
+            onClick={() => onView(entry.path)}
+            title={entry.status === "D" ? "View the file as it was before it was deleted (f)" : "View the whole file (f)"}
+          >
+            <IconFile size={12} />
+            <span className="btn-label">File</span>
+          </button>
+        )}
+        {onAttach && <AttachButton onClick={(to) => onAttach({ kind: "file", file: entry.path }, to)} ask={() => ({ a: { kind: "file", file: entry.path } })} what="this file" />}
         {onDiscard && (
           <button className="view-file discard" onClick={() => onDiscard(entry)} title="Put the file back as the last commit has it">
             <IconUndo size={12} />
             <span className="btn-label">Discard</span>
           </button>
         )}
-        <button
-          className={cx("btn", "outline", "viewed", viewed && "on")}
-          aria-pressed={viewed}
-          onClick={() => onToggleViewed(entry.path)}
-          title="Mark the file viewed (v)"
-        >
-          <IconCheck size={12} />
-          <span className="btn-label">Viewed</span>
-        </button>
+        {onToggleViewed && (
+          <button
+            className={cx("btn", "outline", "viewed", viewed && "on")}
+            aria-pressed={viewed}
+            onClick={() => onToggleViewed(entry.path)}
+            title="Mark the file viewed (v)"
+          >
+            <IconCheck size={12} />
+            <span className="btn-label">Viewed</span>
+          </button>
+        )}
       </header>
 
       {!collapsed && (fileThreads.length > 0 || fileComposing) && (
@@ -245,6 +251,7 @@ function FileDiff({
               path={entry.path}
               wrap={wrap}
               reveal={reveal}
+              pin={pin}
               onBody={onBody}
               found={found}
               foundAt={foundAt}
@@ -341,6 +348,11 @@ function chunk(blocks, split) {
   return out;
 }
 
+// A pin unfolds this many lines at most, in anchors of hunks.js's span: a
+// walkthrough's step whole, unchanged lines and all, as the reviewer meant it read.
+const PIN_MAX = 400;
+const PIN_PIECE = 20;
+
 // unshownBody is what DiffBody would publish for a file not on the page, as
 // it will lay out once shown: nothing expanded, its threads kept in view.
 export const unshownBody = (fd, view, contextLines, threads) => ({
@@ -362,17 +374,24 @@ export const unshownBody = (fd, view, contextLines, threads) => ({
 // sends a note to its session rather than leaving a comment in the review.
 // In Code mode a change bar opens that change in place; onOpenDiff, given
 // { side, line, top }, carries it over to the Diff.
+// pin, { start, end } on the new side, is lines pointed to, as a walkthrough's
+// step, kept unfolded as a comment's are.
 export function DiffBody({
   fd, view, oneNumber, side, contextLines, expanded, onExpand, threads, selection, setSelection,
   composing, setComposing, onStartComment, onComment, onThreadAction, onSymbol, onAttach, onSearch, path, wrap,
-  reveal, hit = 0, drawAll = false, unknown = false, toAgent = false, onBody, found, foundAt, barsIn, onOpenDiff,
+  reveal, pin, hit = 0, drawAll = false, unknown = false, toAgent = false, onBody, found, foundAt, barsIn, onOpenDiff,
 }) {
   // Where comments hang, which stay in view whatever the context setting.
   const anchors = useMemo(() => {
     const out = threads.map((t) => ({ side: t.side, start: t.startLine, end: t.endLine }));
     if (composing) out.push({ side: composing.side, start: composing.start, end: composing.end });
+    // An anchor unfolds no more than its last lines, so a long pin goes in pieces.
+    if (pin) {
+      const end = Math.min(pin.end || pin.start, pin.start + PIN_MAX - 1);
+      for (let at = pin.start; at <= end; at += PIN_PIECE) out.push({ side: "new", start: at, end: Math.min(end, at + PIN_PIECE - 1) });
+    }
     return out;
-  }, [threads, composing]);
+  }, [threads, composing, pin]);
   const blocks = useMemo(() => {
     if (view !== "code") return chunk(buildBlocks(fd, contextLines, expanded, anchors), view === "split");
     const lines = codeLines(fd, side);
@@ -871,7 +890,7 @@ function Block({ lines, view, wrap, ctx, onMeasure, force }) {
     // Observed against the pane that scrolls: against the window, the pane
     // clips the block before the margin is applied, so nothing off screen is
     // ever near.
-    const root = el.closest(".content, .agent-scroll, .viewer-body");
+    const root = el.closest(".content, .agent-scroll, .viewer-body, .board-doc-body");
     const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { root, rootMargin: OVERSCAN });
     io.observe(el);
     return () => io.disconnect();

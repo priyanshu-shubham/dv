@@ -82,6 +82,15 @@ func (s *Server) raiseNotices(ctx context.Context) {
 			if old := done[id]; old != "" {
 				s.notices.Settle(old, "")
 			}
+			// A board agent's turn ending is the board going on as it should,
+			// but for one that stopped short.
+			if b, ok := s.boardSessions()[id]; ok {
+				if n, stalled := s.stallNotice(b, id); stalled {
+					done[id] = n.ID
+					s.notices.Raise(n)
+				}
+				continue
+			}
 			n := s.doneNotice(a)
 			act, ran := s.takeAction(id)
 			failed := ran && s.agent.Failed(id)
@@ -142,6 +151,11 @@ func (s *Server) askNotice(r Asked) notify.Notice {
 	n.Body = redacted(n.Body)
 	n.Body = clip(n.Body)
 	n.Choices, n.Answer = s.choices(r.Request)
+	// A board agent's question is the board needing the reader, where it is answered.
+	if b, ok := s.boardSessions()[r.Session]; ok {
+		n.Board, n.Title = true, "The board needs your attention"
+		n.Where = fmt.Sprintf("%s · the %s asks", b.Ticket, roleName[b.Role])
+	}
 	return n
 }
 

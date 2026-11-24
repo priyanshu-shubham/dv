@@ -118,6 +118,11 @@ type proc struct {
 	modelCmd int
 	apiErr   string // the API error Claude Code last said, which its transcript holds
 
+	// agyKind marks a session agy runs rather than Claude Code; agy is its
+	// process while it runs.
+	agyKind bool
+	agy     *agyRun
+
 	wmu sync.Mutex // one write to stdin at a time
 }
 
@@ -191,6 +196,9 @@ func (p *proc) nameToStart() string {
 func (p *proc) startLocked(name string) error {
 	if p.cmd != nil {
 		return nil
+	}
+	if p.agyKind {
+		return p.startAgyLocked()
 	}
 	cmd := exec.Command("claude", p.args(name)...)
 	cmd.Dir = p.cwd
@@ -277,6 +285,12 @@ func (p *proc) turnOver() {
 // refresh asks Claude Code how full the context is and what effort it runs at,
 // and reports the model and effort in force.
 func (p *proc) refresh() (model, effort string) {
+	p.mu.Lock()
+	if p.agyKind {
+		defer p.mu.Unlock()
+		return p.using, p.effortUsing
+	}
+	p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	used, err := p.request(ctx, map[string]any{"subtype": "get_context_usage", "detail": "summary"})
@@ -390,6 +404,19 @@ func (p *proc) send(id, text string, images []Image) (string, error) {
 		p.mu.Unlock()
 		return "", err
 	}
+	if a := p.agy; a != nil {
+		if !p.busy {
+			p.blocks, p.since = nil, time.Now()
+		}
+		p.busy, p.err, p.lastUsed, p.resume = true, "", time.Now(), true
+		p.mu.Unlock()
+		p.changed()
+		if err := a.send(id, text, images); err != nil {
+			return "", err
+		}
+		p.sent()
+		return id, nil
+	}
 	// The rewind is made by this message being written after the message it
 	// resumed at; a later start must continue from here instead.
 	p.resumeAt, p.suggestion = "", ""
@@ -440,6 +467,10 @@ func (p *proc) request(ctx context.Context, req map[string]any) (json.RawMessage
 	if p.cmd == nil {
 		p.mu.Unlock()
 		return nil, errors.New("Claude Code is not running")
+	}
+	if p.agy != nil {
+		p.mu.Unlock()
+		return nil, errors.New("Antigravity takes no Claude Code requests")
 	}
 	p.nextReq++
 	id := "dv-" + strconv.Itoa(p.nextReq)

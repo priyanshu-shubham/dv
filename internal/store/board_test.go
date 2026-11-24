@@ -3,7 +3,9 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestBoardIsSharedAndNumbersTickets(t *testing.T) {
@@ -33,6 +35,38 @@ func TestBoardIsSharedAndNumbersTickets(t *testing.T) {
 	}
 	if got := a.List(); len(got) != 2 {
 		t.Fatalf("a lists %d tickets", len(got))
+	}
+}
+
+// TestTheBoardStampsAStagesStart: entering a stage, however it happens, restarts
+// its clock; other changes don't. Leaving the Inbox the first time is when the
+// work began, kept through later moves.
+func TestTheBoardStampsAStagesStart(t *testing.T) {
+	b, _ := OpenBoard(t.TempDir(), "", "r")
+	tk, _ := b.Add(Ticket{Title: "One"})
+	if tk.StageAt.IsZero() || !tk.StartedAt.IsZero() {
+		t.Fatalf("filed: %v, %v", tk.StageAt, tk.StartedAt)
+	}
+	back := func(x *Ticket) {
+		x.StageAt = x.StageAt.Add(-time.Hour)
+		if !x.StartedAt.IsZero() {
+			x.StartedAt = x.StartedAt.Add(-time.Hour)
+		}
+	}
+	b.Update(tk.ID, func(x *Ticket) error { back(x); x.Stage = "scope"; return nil })
+	scoped, _ := b.Get(tk.ID)
+	if time.Since(scoped.StageAt) > time.Minute || scoped.StartedAt != scoped.StageAt {
+		t.Fatalf("into Scope: %v, %v", scoped.StageAt, scoped.StartedAt)
+	}
+	b.Update(tk.ID, func(x *Ticket) error { back(x); x.Status = "working"; return nil })
+	same, _ := b.Get(tk.ID)
+	if time.Since(same.StageAt) < 59*time.Minute {
+		t.Fatal("a change within the stage restarted its clock")
+	}
+	b.Update(tk.ID, func(x *Ticket) error { x.Stage = "plan"; return nil })
+	planned, _ := b.Get(tk.ID)
+	if time.Since(planned.StageAt) > time.Minute || time.Since(planned.StartedAt) < 59*time.Minute {
+		t.Fatalf("into Plan: %v, began %v", planned.StageAt, planned.StartedAt)
 	}
 }
 
@@ -83,6 +117,30 @@ func TestSaveDocKeepsWhatItReplaces(t *testing.T) {
 	}
 }
 
+func TestTicketInTheOldAgentReviewStageLoadsInBuild(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	b, err := OpenBoard(t.TempDir(), common, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, _ := b.Add(Ticket{Title: "Under review", Stage: "build"})
+	path := filepath.Join(b.Dir(), boardName)
+	data, _ := os.ReadFile(path)
+	old := strings.Replace(string(data), `"stage": "build"`, `"stage": "agent-review"`, 1)
+	if old == string(data) {
+		t.Fatalf("no stage to change in %s", data)
+	}
+	os.WriteFile(path, []byte(old), 0o644)
+
+	again, err := OpenBoard(t.TempDir(), common, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := again.Get(tk.ID); err != nil || got.Stage != "build" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
 func TestBoardDeleteLetsGoOfIt(t *testing.T) {
 	b, _ := OpenBoard(t.TempDir(), "", "r")
 	parent, _ := b.Add(Ticket{Title: "Parent"})
@@ -105,5 +163,22 @@ func TestBoardDeleteLetsGoOfIt(t *testing.T) {
 	}
 	if _, err := b.Add(Ticket{Title: "Waits on nothing", After: []string{"R-99"}}); err == nil {
 		t.Fatal("waited on a ticket that doesn't exist")
+	}
+}
+
+func TestATicketTakesOnlyTheKnownPriorities(t *testing.T) {
+	b, _ := OpenBoard(t.TempDir(), "", "r")
+	tk, err := b.Add(Ticket{Title: "Fix the login", Priority: "urgent"})
+	if err != nil || tk.Priority != "urgent" {
+		t.Fatalf("added at urgent: %+v, %v", tk, err)
+	}
+	if _, err := b.Add(Ticket{Title: "x", Priority: "p0"}); err == nil {
+		t.Fatal("took an unknown priority")
+	}
+	if _, err := b.Update(tk.ID, func(x *Ticket) error { x.Priority = "someday"; return nil }); err == nil {
+		t.Fatal("changed to an unknown priority")
+	}
+	if got, _ := b.Update(tk.ID, func(x *Ticket) error { x.Priority = ""; return nil }); got.Priority != "" {
+		t.Fatalf("back to normal: %q", got.Priority)
 	}
 }

@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"dv/internal/gitx"
 )
@@ -98,8 +100,8 @@ func (ix *Index) searchRG(opts SearchOpts) (*SearchResult, error) {
 	} else {
 		args = append(args, "--smart-case")
 	}
-	if opts.Glob != "" {
-		args = append(args, "--glob", opts.Glob)
+	for _, g := range globs(opts.Glob) {
+		args = append(args, "--glob", g)
 	}
 	for _, d := range ix.lister.SkippedDirs() {
 		args = append(args, "--glob", "!"+d+"/")
@@ -170,17 +172,14 @@ func (ix *Index) searchBuiltin(opts SearchOpts) (*SearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	var globRe *regexp.Regexp
-	if opts.Glob != "" {
-		globRe = globToRegexp(opts.Glob)
-	}
+	only := newGlobFilter(opts.Glob)
 
 	res := &SearchResult{Matches: []Match{}, Engine: "builtin"}
 	for _, p := range paths {
 		if skipPath(p) {
 			continue
 		}
-		if globRe != nil && !globRe.MatchString(p) {
+		if !only.keep(p) {
 			continue
 		}
 		b, err := gitx.ReadTextFile(filepath.Join(ix.root, p), maxIndexedBytes)
@@ -243,6 +242,59 @@ func compile(opts SearchOpts) (*regexp.Regexp, error) {
 		pat = "(?i)" + pat
 	}
 	return regexp.Compile(pat)
+}
+
+// globs splits the panel's file filter into its patterns, at spaces and at
+// commas outside braces, which ripgrep reads as alternatives.
+func globs(s string) []string {
+	var out []string
+	var cur strings.Builder
+	depth := 0
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range s {
+		switch {
+		case r == '{':
+			depth++
+		case r == '}' && depth > 0:
+			depth--
+		case depth == 0 && (r == ',' || unicode.IsSpace(r)):
+			flush()
+			continue
+		}
+		cur.WriteRune(r)
+	}
+	flush()
+	return out
+}
+
+// globFilter is the file filter as ripgrep applies it: a file passes if it
+// matches any pattern, or there are only ! ones, and matches no ! pattern.
+type globFilter struct{ in, out []*regexp.Regexp }
+
+func newGlobFilter(s string) globFilter {
+	var f globFilter
+	for _, g := range globs(s) {
+		if neg, ok := strings.CutPrefix(g, "!"); ok {
+			if re := globToRegexp(neg); re != nil {
+				f.out = append(f.out, re)
+			}
+		} else if re := globToRegexp(g); re != nil {
+			f.in = append(f.in, re)
+		}
+	}
+	return f
+}
+
+func (f globFilter) keep(p string) bool {
+	match := func(res []*regexp.Regexp) bool {
+		return slices.ContainsFunc(res, func(re *regexp.Regexp) bool { return re.MatchString(p) })
+	}
+	return (len(f.in) == 0 || match(f.in)) && !match(f.out)
 }
 
 // globToRegexp handles the simple `*.go` / `src/**/*.ts` forms the panel offers.

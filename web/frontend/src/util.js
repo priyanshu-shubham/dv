@@ -28,6 +28,8 @@ export function pickSession(slug, session) {
 export const OUTPUT_KEY = "dv:output";
 // TERMINAL_KEY likewise holds the terminal it is to show.
 export const TERMINAL_KEY = "dv:terminal";
+// BOARD_KEY likewise says it is to show the board.
+export const BOARD_KEY = "dv:board";
 
 // usePersisted keeps a small preference in localStorage so the viewer opens the
 // way you left it; `session` keeps it for the tab only. It is for what suits
@@ -363,7 +365,7 @@ export const plainText = (s) =>
     .trim();
 
 // agentName names who runs an action's prompt: "codex" for `codex exec`, else Claude.
-export const agentName = (agent) => (agent === "codex" ? "Codex" : "Claude");
+export const agentName = (agent) => (agent === "codex" ? "Codex" : agent === "agy" ? "Antigravity" : "Claude");
 
 // Only followed in dv: another process has it open and dv was not let in too.
 export const heldElsewhere = (s) => s?.running === "terminal" && !s.shared;
@@ -513,6 +515,28 @@ export function globMatcher(list) {
   return res.length ? (path) => res.some((re) => re.test(path)) : null;
 }
 
+// applyFileFilters is a diff's files as the repository's filters leave them:
+// generated ones hidden if asked, and the include and exclude patterns.
+// Paused, every file stays, the counts still of what would be hidden; keep,
+// if given, is a file that stays whatever the filters say.
+export function applyFileFilters(all, { hideGenerated, pathFilter, paused, keep }) {
+  const include = globMatcher(pathFilter.include);
+  const exclude = globMatcher(pathFilter.exclude);
+  let filteredOut = 0;
+  let hiddenGenerated = 0;
+  const files = all.filter((f) => {
+    if (f.path === keep) return true;
+    if (hideGenerated && f.generated) {
+      hiddenGenerated++;
+      return paused;
+    }
+    const shown = (!include || include(f.path)) && !exclude?.(f.path);
+    if (!shown) filteredOut++;
+    return shown || paused;
+  });
+  return { files, filteredOut, hiddenGenerated };
+}
+
 // listFilter compiles the file list's filter box, or null when it is empty:
 // comma-separated terms, each a piece of the path to look for or, given a * or
 // ?, a glob as globMatcher reads one. A term starting with ! hides what it
@@ -578,3 +602,50 @@ export function relTime(iso) {
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString();
 }
+
+// Input that means the reader is steering, which a jump must give way to.
+const INTERRUPTS = ["wheel", "touchstart", "keydown", "mousedown"];
+
+// yOf is the scroll position that puts el `offset` px below the top of root.
+export const yOf = (root, el, offset) =>
+  root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - offset;
+
+// chase scrolls root to aim().y every frame until it has held still on a final
+// target for a moment. One scroll is not enough: a file the reader has not
+// reached is an empty stub until its diff loads, so the page is far shorter
+// than it will be and a jump near the end is clamped part-way, and each
+// correction brings more files into range, which loads them, which moves the
+// target again. It gives up the moment the reader steers - watching input, not
+// the scroll position, which scroll anchoring moves on its own as content loads.
+export function chase(root, aim) {
+  const QUIET_MS = 500;
+  const LIMIT_MS = 8000;
+  const started = performance.now();
+  let lastMove = started;
+  let live = true;
+  const stop = () => {
+    live = false;
+    for (const e of INTERRUPTS) window.removeEventListener(e, stop, true);
+  };
+  for (const e of INTERRUPTS) window.addEventListener(e, stop, { capture: true, passive: true });
+  const step = () => {
+    if (!live) return;
+    const a = aim();
+    const now = performance.now();
+    if (a) {
+      const to = Math.round(Math.min(root.scrollHeight - root.clientHeight, Math.max(0, a.y)));
+      if (Math.abs(to - root.scrollTop) >= 1) {
+        root.scrollTo({ top: to, behavior: "instant" });
+        lastMove = now;
+      }
+    }
+    if ((a?.final && now - lastMove > QUIET_MS) || now - started > LIMIT_MS) stop();
+    else requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return stop;
+}
+
+// laidOut is whether el is drawn where it says: inside a file the browser is
+// skipping (content-visibility), its box is not where it will be once shown.
+export const laidOut = (el) => !!el && (el.checkVisibility?.({ contentVisibilityAuto: true }) ?? true);

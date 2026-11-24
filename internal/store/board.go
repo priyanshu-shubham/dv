@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,7 +22,10 @@ type TicketError string
 func (e TicketError) Error() string { return string(e) }
 
 // Stages are a ticket's columns, in order.
-var Stages = []string{"inbox", "scope", "plan", "build", "agent-review", "review", "merged"}
+var Stages = []string{"inbox", "scope", "plan", "build", "review", "merged"}
+
+// TicketPriorities are the ones a ticket can have, "" being normal.
+var TicketPriorities = []string{"urgent", "high", "", "low"}
 
 // Ticket is one piece of work on a repository's board. What its agents write -
 // the full ticket and the plan - are Markdown files in its folder, not fields.
@@ -30,6 +34,9 @@ type Ticket struct {
 	Title   string   `json:"title"`
 	Request string   `json:"request,omitempty"` // the words it was created with
 	Labels  []string `json:"labels,omitempty"`
+	// Priority is the reader's: urgent, high or low, "" for normal. It orders
+	// the board; the agents don't see it.
+	Priority string `json:"priority,omitempty"`
 	// Images are the file names of the pictures it was given, in its folder.
 	Images []string `json:"images,omitempty"`
 	// Archived is put out of the board's way, at whatever stage, until restored.
@@ -46,22 +53,64 @@ type Ticket struct {
 	Parent string `json:"parent,omitempty"`
 	// After is the tickets this one waits on, by ID; one merged stops counting.
 	After []string `json:"after,omitempty"`
+	// From is the ticket this one was filed from as a follow-up: related work
+	// that neither waits for the other.
+	From string `json:"from,omitempty"`
 	// Sessions holds the agent session of each role: scope, planner, builder,
 	// reviewer.
 	Sessions map[string]string `json:"sessions,omitempty"`
-	Model    map[string]string `json:"model,omitempty"` // by role, "" for the session's default
+	// Model and Effort are by role, "" for the agent's default: picked for a
+	// role still to start, and what a started one runs on.
+	Model    map[string]string `json:"model,omitempty"`
+	Effort   map[string]string `json:"effort,omitempty"`
 	Branch   string            `json:"branch,omitempty"`
 	Worktree string            `json:"worktree,omitempty"`
-	PR       int               `json:"pr,omitempty"`
-	CI       string            `json:"ci,omitempty"` // passing | failing | pending, "" for no checks
+	// Base is the trunk commit its agents last read the code at; what landed
+	// after it is news to the next one.
+	Base  string `json:"base,omitempty"`
+	PR    int    `json:"pr,omitempty"`
+	CI    string `json:"ci,omitempty"` // passing | failing | pending, "" for no checks
+	PRURL string `json:"prURL,omitempty"`
+	// PRTitle is the pull request's title as the builder wrote it; its
+	// description is the ticket's "pr" document.
+	PRTitle string `json:"prTitle,omitempty"`
+	// PushedAt is when dv last pushed the branch, whose checks take a while to
+	// be listed after it.
+	PushedAt time.Time `json:"pushedAt,omitzero"`
 	// Merging is the reader's approval: dv merges once CI passes.
 	Merging bool `json:"merging,omitempty"`
+	// Nothing is an agent finding the ticket needs no change, for the reader
+	// to close it on or not; kept once closed, as why it merged without one.
+	Nothing *Nothing `json:"nothing,omitempty"`
+	// CatchUp is the branch being brought up with a trunk that moved on, as
+	// it was about to merge; nil once that's checked.
+	CatchUp *CatchUp `json:"catchUp,omitempty"`
+	// Comments are the reader's on its documents, with their answers.
+	Comments []DocComment `json:"comments,omitempty"`
+	// ReviewedAt is the branch's commit the reader last reviewed it at, when
+	// they sent it back from their review; what's after it is new to them.
+	ReviewedAt string `json:"reviewedAt,omitempty"`
+	// HandedAt is the branch's commit as it last came to the reader's review;
+	// a builder's commits after it, there, are unreviewed.
+	HandedAt string `json:"handedAt,omitempty"`
+	// CodeThreads are the review threads on its code sent to the builder,
+	// which it answers in the thread.
+	CodeThreads []SentThread `json:"codeThreads,omitempty"`
 	// Problem is what dv last failed to do for the ticket, until it next
 	// succeeds or the ticket moves.
-	Problem  string     `json:"problem,omitempty"`
-	Question *Question  `json:"question,omitempty"`
-	Answered []Question `json:"answered,omitempty"`
-	Rounds   []Round    `json:"rounds,omitempty"`
+	Problem string `json:"problem,omitempty"`
+	// Question is the builder's to the planner; ScopeQuestion the planner's to
+	// the scoper, a product decision, which may come while answering it.
+	Question      *Question  `json:"question,omitempty"`
+	ScopeQuestion *Question  `json:"scopeQuestion,omitempty"`
+	Answered      []Question `json:"answered,omitempty"`
+	Rounds        []Round    `json:"rounds,omitempty"`
+	// GuideRound is the round whose reviewer wrote the "guide" document, the
+	// reader's way through the branch; one from an earlier round is stale.
+	GuideRound int `json:"guideRound,omitempty"`
+	// Suggestions are follow-ups an agent offers, for the reader to file or
+	// dismiss.
+	Suggestions []Suggestion `json:"suggestions,omitempty"`
 	// PlanReview is another model's review of the plan, which the planner
 	// answers before the reader sees the plan. NoPlanReview skips it.
 	PlanReview   *Round `json:"planReview,omitempty"`
@@ -73,26 +122,92 @@ type Ticket struct {
 	Templates []string  `json:"templates,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// StageAt is when it entered the stage it is in; StartedAt when it first
+	// left the Inbox. Kept by the board as the stage changes, whoever moves it.
+	StageAt   time.Time `json:"stageAt,omitzero"`
+	StartedAt time.Time `json:"startedAt,omitzero"`
 }
 
 // Question is what the builder found the plan doesn't settle.
 type Question struct {
 	Text   string    `json:"text"`
+	Asker  string    `json:"asker,omitempty"` // builder, the default, or planner
 	Answer string    `json:"answer,omitempty"`
-	By     string    `json:"by,omitempty"`     // planner | you
-	Source string    `json:"source,omitempty"` // what the planner's answer rests on
+	By     string    `json:"by,omitempty"`     // planner, scope or you
+	Source string    `json:"source,omitempty"` // what the answer rests on
 	At     time.Time `json:"at"`
 }
 
 // Round is one pass of agent review.
 type Round struct {
+	// Kind is "main" for the check of what the trunk brought in as the
+	// branch caught up with it, "" for a review of the branch.
+	Kind      string    `json:"kind,omitempty"`
 	Templates []string  `json:"templates"`
 	Model     string    `json:"model,omitempty"`
 	Session   string    `json:"session,omitempty"` // the reviewer's, fresh each round
 	Findings  []Finding `json:"findings"`
-	// Phase is who the round waits on: review, fix, recheck, done.
+	// Phase is who the round waits on: review, fix, recheck, guide (the
+	// reviewer writing the reader's guide), done.
 	Phase string    `json:"phase"`
 	At    time.Time `json:"at"`
+}
+
+// DocComment is one of the reader's comments on the ticket, the plan or the
+// pull request's description, kept with what its author answered. It is the
+// reader's record; later stages work from the document the answers changed.
+type DocComment struct {
+	ID       string        `json:"id"` // C1, C2, … on the ticket
+	Doc      string        `json:"doc"`
+	Quote    string        `json:"quote,omitempty"`
+	Thread   []CommentPost `json:"thread"` // the reader's comment first, then answers and replies
+	Resolved bool          `json:"resolved,omitempty"`
+}
+
+// CommentPost is one turn of a comment's thread.
+type CommentPost struct {
+	By   string    `json:"by"`             // "you", or the role answering
+	Kind string    `json:"kind,omitempty"` // an answer's: changed or answered
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
+
+// Waiting is whether the comment waits on its document's author: the reader
+// had the last word and hasn't resolved it.
+func (c DocComment) Waiting() bool {
+	return !c.Resolved && len(c.Thread) > 0 && c.Thread[len(c.Thread)-1].By == "you"
+}
+
+// SentThread is a review thread sent to the builder, and how many comments it
+// held then: one the reader adds after is theirs to send again.
+type SentThread struct {
+	ID   string `json:"id"`
+	Sent int    `json:"sent"`
+}
+
+// Nothing is why there's nothing to do, and the role that found it.
+type Nothing struct {
+	By  string    `json:"by"`
+	Why string    `json:"why"`
+	At  time.Time `json:"at"`
+}
+
+// CatchUp is a branch catching up with its trunk before it merges.
+type CatchUp struct {
+	Since     string `json:"since"`               // where the branch had left the trunk
+	Conflicts bool   `json:"conflicts,omitempty"` // the builder resolved them
+	// Approved is the reader's approval it was on its way to merging with,
+	// which stands if catching up changes nothing they haven't seen.
+	Approved bool `json:"approved,omitempty"`
+}
+
+// Suggestion is a follow-up ticket an agent drafted: title, and its request.
+type Suggestion struct {
+	ID      string    `json:"id"`
+	Title   string    `json:"title"`
+	Request string    `json:"request"`
+	By      string    `json:"by"` // the role that offered it
+	At      time.Time `json:"at"`
 }
 
 type Finding struct {
@@ -171,6 +286,14 @@ func (b *Board) sync() error {
 	}
 	if doc.Tickets == nil {
 		doc.Tickets = []*Ticket{}
+	}
+	// Agent review was a stage of its own; it is part of Build now.
+	for _, t := range doc.Tickets {
+		for _, s := range []*string{&t.Stage, &t.Started, &t.Reached} {
+			if *s == "agent-review" {
+				*s = "build"
+			}
+		}
 	}
 	b.doc = doc
 	return nil
@@ -255,6 +378,38 @@ func ImageType(name string) string {
 }
 
 // ImagePath is where a ticket's image is kept; name is one of its Images.
+// MockupPath is where a ticket's mock-up page of that name is kept.
+func (b *Board) MockupPath(id, name string) string {
+	slug := strings.Trim(notLetter.ReplaceAllString(strings.ToLower(strings.TrimSuffix(name, ".html")), "-"), "-")
+	if slug == "" {
+		slug = "mockup"
+	}
+	return filepath.Join(b.Dir(), id, "mockups", slug+".html")
+}
+
+// SaveMockup keeps an HTML page showing how the ticket's UI should look and
+// behave, in place of one of the same name, and returns where.
+func (b *Board) SaveMockup(id, name, page string) (string, error) {
+	if _, err := b.Get(id); err != nil {
+		return "", err
+	}
+	path := b.MockupPath(id, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, []byte(page), 0o644)
+}
+
+// Mockups are the paths of a ticket's mock-up pages, in name order.
+func (b *Board) Mockups(id string) []string {
+	files, _ := filepath.Glob(filepath.Join(b.Dir(), id, "mockups", "*.html"))
+	slices.Sort(files)
+	if files == nil {
+		return []string{}
+	}
+	return files
+}
+
 func (b *Board) ImagePath(id, name string) string {
 	return filepath.Join(b.Dir(), id, "images", filepath.Base(name))
 }
@@ -345,8 +500,10 @@ func (b *Board) Add(t Ticket) (Ticket, error) {
 	if t.Started == "" {
 		t.Started = t.Stage
 	}
-	if t.Parent != "" && b.find(t.Parent) == nil {
-		return Ticket{}, fmt.Errorf("%w: %s", ErrNoTicket, t.Parent)
+	for _, id := range []string{t.Parent, t.From} {
+		if id != "" && b.find(id) == nil {
+			return Ticket{}, fmt.Errorf("%w: %s", ErrNoTicket, id)
+		}
 	}
 	if err := b.check(&t); err != nil {
 		return Ticket{}, err
@@ -357,7 +514,10 @@ func (b *Board) Add(t Ticket) (Ticket, error) {
 	t.ID = fmt.Sprintf("%s-%d", b.doc.Prefix, b.doc.Next)
 	b.doc.Next++
 	now := time.Now().UTC().Truncate(time.Second)
-	t.CreatedAt, t.UpdatedAt = now, now
+	t.CreatedAt, t.UpdatedAt, t.StageAt = now, now, now
+	if t.Stage != "inbox" {
+		t.StartedAt = now
+	}
 	b.doc.Tickets = append(b.doc.Tickets, &t)
 	return t.clone(), b.file.save(b.doc)
 }
@@ -384,6 +544,12 @@ func (b *Board) Update(id string, change func(*Ticket) error) (Ticket, error) {
 		return Ticket{}, err
 	}
 	t.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	if was := b.doc.Tickets[i]; t.Stage != was.Stage {
+		t.StageAt = t.UpdatedAt
+		if was.Stage == "inbox" && t.StartedAt.IsZero() {
+			t.StartedAt = t.UpdatedAt
+		}
+	}
 	b.doc.Tickets[i] = &t
 	return t.clone(), b.file.save(b.doc)
 }
@@ -404,6 +570,9 @@ func (b *Board) Delete(id string) error {
 	for _, t := range b.doc.Tickets {
 		if t.Parent == id {
 			t.Parent = ""
+		}
+		if t.From == id {
+			t.From = ""
 		}
 		t.After = slices.DeleteFunc(t.After, func(a string) bool { return a == id })
 	}
@@ -430,6 +599,8 @@ func (b *Board) check(t *Ticket) error {
 		return TicketError(fmt.Sprintf("stage %q is not one of %s", t.Stage, strings.Join(Stages, ", ")))
 	case !slices.Contains(Stages, t.Started):
 		return TicketError(fmt.Sprintf("stage %q is not one of %s", t.Started, strings.Join(Stages, ", ")))
+	case !slices.Contains(TicketPriorities, t.Priority):
+		return TicketError(fmt.Sprintf("priority %q is not one of urgent, high, low, or none for normal", t.Priority))
 	}
 	for _, a := range t.After {
 		if a == t.ID {
@@ -464,21 +635,22 @@ func (t *Ticket) clone() Ticket {
 	c.After = slices.Clone(t.After)
 	c.Templates = slices.Clone(t.Templates)
 	c.Answered = slices.Clone(t.Answered)
+	c.Suggestions = slices.Clone(t.Suggestions)
 	if t.Sessions != nil {
 		c.Sessions = make(map[string]string, len(t.Sessions))
 		for k, v := range t.Sessions {
 			c.Sessions[k] = v
 		}
 	}
-	if t.Model != nil {
-		c.Model = make(map[string]string, len(t.Model))
-		for k, v := range t.Model {
-			c.Model[k] = v
-		}
-	}
+	c.Model = maps.Clone(t.Model)
+	c.Effort = maps.Clone(t.Effort)
 	if t.Question != nil {
 		q := *t.Question
 		c.Question = &q
+	}
+	if t.ScopeQuestion != nil {
+		q := *t.ScopeQuestion
+		c.ScopeQuestion = &q
 	}
 	if t.PlanReview != nil {
 		r := *t.PlanReview

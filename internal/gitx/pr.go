@@ -30,6 +30,9 @@ type PR struct {
 	BaseSHA string `json:"baseSha,omitempty"`
 	Head    string `json:"head,omitempty"`
 	Author  string `json:"author,omitempty"`
+	// Conflicts is GitHub finding it can't merge it into its base cleanly;
+	// only ViewPR asks, it being worked out apart.
+	Conflicts bool `json:"conflicts,omitempty"`
 	// Where its branch is checked out: this folder, or another worktree.
 	Here      bool   `json:"here,omitempty"`
 	Elsewhere string `json:"elsewhere,omitempty"`
@@ -300,6 +303,7 @@ func parsePR(out []byte) *PR {
 		IsCrossRepository   bool
 		HeadRepositoryOwner struct{ Login string }
 		HeadRepository      struct{ Name string }
+		Mergeable           string
 	}
 	if json.Unmarshal(out, &v) != nil || v.Number == 0 {
 		return nil
@@ -307,7 +311,7 @@ func parsePR(out []byte) *PR {
 	pr := &PR{
 		Number: v.Number, Title: v.Title, URL: v.URL, State: strings.ToLower(v.State),
 		Base: v.BaseRefName, BaseSHA: v.BaseRefOid, Head: v.HeadRefName, Author: v.Author.Login,
-		fork: v.IsCrossRepository,
+		fork: v.IsCrossRepository, Conflicts: v.Mergeable == "CONFLICTING",
 	}
 	if v.IsCrossRepository && v.HeadRepositoryOwner.Login != "" {
 		pr.headRepo = v.HeadRepositoryOwner.Login + "/" + v.HeadRepository.Name

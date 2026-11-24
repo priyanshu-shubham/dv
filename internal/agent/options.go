@@ -63,6 +63,23 @@ type Usage struct {
 	// Models are weekly limits on one model, which run out apart from Week:
 	// Fable's, on a Max plan.
 	Models []*Limit `json:"models,omitempty"`
+	// modelsUnknown is an answer from Claude Code's snapshot of the usage, which
+	// it serves while the endpoint refuses it, and which leaves Models out.
+	modelsUnknown bool
+}
+
+// keepingModels is u with was's model limits when u could not say, so they
+// don't drop from the foot until the endpoint answers again.
+func (u *Usage) keepingModels(was *Usage) *Usage {
+	if u == nil || !u.modelsUnknown || was == nil {
+		return u
+	}
+	for _, l := range was.Models {
+		if at, err := time.Parse(time.RFC3339, l.ResetsAt); err != nil || at.After(time.Now()) {
+			u.Models = append(u.Models, l)
+		}
+	}
+	return u
 }
 
 type Limit struct {
@@ -104,7 +121,7 @@ func (m *Manager) Options() Options {
 			m.mu.Lock()
 			m.probing, m.optsAt = false, time.Now()
 			if err == nil {
-				m.opts, m.usage, m.usageAt = o, u, time.Now()
+				m.opts, m.usage, m.usageAt = o, u.keepingModels(m.usage), time.Now()
 			} else if m.opts.Models == nil {
 				m.opts = Options{Models: fallbackModels}
 			}
@@ -164,7 +181,7 @@ func (m *Manager) Usage() *Usage {
 		defer m.mu.Unlock()
 		m.usageAsked, m.usageAt = false, time.Now()
 		if err == nil {
-			m.usage = usageFrom(raw)
+			m.usage = usageFrom(raw).keepingModels(m.usage)
 		}
 	}()
 	return m.usage
@@ -438,7 +455,8 @@ func usageFrom(raw json.RawMessage) *Usage {
 		Limits    struct {
 			Session *window `json:"five_hour"`
 			Week    *window `json:"seven_day"`
-			Models  []struct {
+			// Absent rather than empty when Claude Code doesn't know them.
+			Models *[]struct {
 				Name string `json:"display_name"`
 				window
 			} `json:"model_scoped"`
@@ -453,8 +471,11 @@ func usageFrom(raw json.RawMessage) *Usage {
 		}
 		return &Limit{Percent: *w.Utilization, ResetsAt: w.ResetsAt}
 	}
-	out := &Usage{Session: limit(u.Limits.Session), Week: limit(u.Limits.Week)}
-	for _, m := range u.Limits.Models {
+	out := &Usage{Session: limit(u.Limits.Session), Week: limit(u.Limits.Week), modelsUnknown: u.Limits.Models == nil}
+	if out.modelsUnknown {
+		return out
+	}
+	for _, m := range *u.Limits.Models {
 		if l := limit(&m.window); l != nil && m.Name != "" {
 			l.Model = m.Name
 			out.Models = append(out.Models, l)
@@ -484,6 +505,9 @@ func settingsAt(root string) time.Time {
 // window every model has, compacted as far short of its end. Until Claude Code
 // has been asked, it is not known at all.
 func windowFor(model string, o Options) Context {
+	if IsAgyModel(model) {
+		return Context{Max: agyWindow(model)}
+	}
 	// Told it by dv (gateway.Env), Claude Code compacts a Codex or Gemini
 	// model 33k short of its window, as it does its own.
 	if gw := gateway.Active(); gw != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,13 +24,38 @@ import (
 // scopeFromRequest reads the scope the client is viewing. Callers get the
 // resolved scope or an HTTP error already written.
 func (s *Server) scopeFromRequest(w http.ResponseWriter, r *http.Request) (*gitx.Scope, bool) {
-	q := r.URL.Query()
-	sc, err := s.repo.ResolveScope(q.Get("scope"), q.Get("rev"))
+	sc, err := resolveQuery(s.repo, r.URL.Query())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return nil, false
 	}
 	return sc, true
+}
+
+// resolveQuery is the scope a request names; with own=1, a stretch of a
+// branch's commits read as its own changes, leaving out what it merged in.
+func resolveQuery(repo *gitx.Repo, q url.Values) (*gitx.Scope, error) {
+	sc, err := repo.ResolveScope(q.Get("scope"), q.Get("rev"))
+	if err == nil && q.Get("own") == "1" {
+		repo.OwnChanges(sc)
+	}
+	return sc, err
+}
+
+// diffIn is scopeFromRequest for the checkout, or with in=<ticket> for that
+// ticket's worktree, whose uncommitted work the checkout can't see.
+func (s *Server) diffIn(w http.ResponseWriter, r *http.Request) (*gitx.Repo, *gitx.Scope, bool) {
+	tree, err := s.treeIn(r)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return nil, nil, false
+	}
+	sc, err := resolveQuery(tree.repo, r.URL.Query())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return nil, nil, false
+	}
+	return tree.repo, sc, true
 }
 
 // handlePing is how another dv, or a hub, tells a live one from a record left
@@ -77,12 +103,12 @@ func HomeRelative(path string) string {
 func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
 	// Taken before listing, so an edit that lands mid-request reads as newer on
 	// the client's next poll rather than being folded into this one unnoticed.
-	version, uncommitted, _ := s.repo.Snapshot()
-	sc, ok := s.scopeFromRequest(w, r)
+	repo, sc, ok := s.diffIn(w, r)
 	if !ok {
 		return
 	}
-	files, err := s.repo.Files(sc)
+	version, uncommitted, _ := repo.Snapshot()
+	files, err := repo.Files(sc)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -93,11 +119,27 @@ func (s *Server) handleDiffList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scope":   sc,
 		"files":   files,
-		"head":    s.repo.Head(),
+		"head":    repo.Head(),
 		"version": version,
 		// Whatever scope is listed, so the page can say there is work to commit.
 		"uncommitted": uncommitted,
 	})
+}
+
+// handleDiffCommits lists the commits a comparison covers, for reading a
+// stretch of them: newest first, from its base, and whether it runs on to the
+// working tree with work there not yet committed.
+func (s *Server) handleDiffCommits(w http.ResponseWriter, r *http.Request) {
+	repo, sc, ok := s.diffIn(w, r)
+	if !ok {
+		return
+	}
+	base, commits, worktree := repo.Commits(sc, 200)
+	_, uncommitted, _ := repo.Snapshot()
+	if commits == nil {
+		commits = []gitx.Commit{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"base": base, "commits": commits, "worktree": worktree, "uncommitted": worktree && uncommitted > 0})
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +161,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
-	sc, ok := s.scopeFromRequest(w, r)
+	repo, sc, ok := s.diffIn(w, r)
 	if !ok {
 		return
 	}
@@ -130,7 +172,7 @@ func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
 	}
 	// Re-listing is what keeps status and rename detection honest; the list is
 	// already in git's cache by the time a file is opened.
-	files, err := s.repo.Files(sc)
+	files, err := repo.Files(sc)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -139,7 +181,7 @@ func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
 		if e.Path != path {
 			continue
 		}
-		fd, err := s.repo.Diff(sc, e)
+		fd, err := repo.Diff(sc, e)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
@@ -154,7 +196,7 @@ func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
 // page, which wants every file at once: the comparison is listed once rather
 // than once a file, and the diffs are worked out a few at a time.
 func (s *Server) handleDiffFiles(w http.ResponseWriter, r *http.Request) {
-	sc, ok := s.scopeFromRequest(w, r)
+	repo, sc, ok := s.diffIn(w, r)
 	if !ok {
 		return
 	}
@@ -165,7 +207,7 @@ func (s *Server) handleDiffFiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	files, err := s.repo.Files(sc)
+	files, err := repo.Files(sc)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -195,7 +237,7 @@ func (s *Server) handleDiffFiles(w http.ResponseWriter, r *http.Request) {
 		slots <- struct{}{}
 		go func() {
 			defer func() { <-slots; wg.Done() }()
-			fd, err := s.repo.Diff(sc, e)
+			fd, err := repo.Diff(sc, e)
 			res := result{FD: fd}
 			if err != nil {
 				res = result{Error: err.Error()}
@@ -371,7 +413,12 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 // handleFiles is quick open: every file in the repository, ranked against q.
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	paths, err := s.repo.TrackedFiles()
+	ix, err := s.lookIn(r)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	paths, err := ix.Files()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -776,25 +823,30 @@ func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSymbols(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	ix, err := s.lookIn(r)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
 	// Built the first time it is asked, which that question waits for.
-	s.index.Ready()
+	ix.Ready()
 
 	// from is the file the reader is in. It does not narrow the search, it
 	// ranks it: the nearest definition is nearly always the intended one.
 	from := q.Get("from")
 	if name := q.Get("name"); name != "" {
-		writeJSON(w, http.StatusOK, s.index.Resolve(name, from, 40, nil))
+		writeJSON(w, http.StatusOK, ix.Resolve(name, from, 40, nil))
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 60
 	}
-	hits := s.index.Query(q.Get("q"), from, limit)
+	hits := ix.Query(q.Get("q"), from, limit)
 	if hits == nil {
 		hits = []symindex.Hit{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "status": s.index.Status()})
+	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "status": ix.Status()})
 }
 
 // handleResolveDraft is a Cmd/Ctrl+click in an edit waiting on the reader,
@@ -825,7 +877,12 @@ func (s *Server) handleSymbolRefresh(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	res, err := s.index.Search(symindex.SearchOpts{
+	ix, err := s.lookIn(r)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	res, err := ix.Search(symindex.SearchOpts{
 		Query:     q.Get("q"),
 		Regex:     q.Get("regex") == "1",
 		CaseSens:  q.Get("case") == "1",

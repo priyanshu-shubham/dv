@@ -156,10 +156,13 @@ func (m *Manager) Sessions() []Session {
 			continue
 		}
 		row.ID, row.Open = id, opened[id] > 0
+		if isAgyTranscript(path) {
+			row.Agent = "agy"
+		}
 		row.Running, row.Busy = where(procs[id], live[id])
 		row.Shared = m.shared(id, live[id])
 		row.Temporary, row.Kept = slices.Contains(temporary, id), slices.Contains(kept, id)
-		if gw := gateway.Active(); gw != nil {
+		if gw := gateway.Active(); gw != nil && row.Agent == "" {
 			row.Unasked = !gw.Asking(id)
 		}
 		if row.Temporary && !row.Open && row.Running == "" {
@@ -189,6 +192,9 @@ func (m *Manager) Sessions() []Session {
 	for id, p := range procs {
 		p.mu.Lock()
 		row := Session{ID: id, Title: p.title, Cwd: p.cwd, Updated: p.lastUsed, Open: opened[id] > 0, Temporary: slices.Contains(temporary, id), Kept: slices.Contains(kept, id)}
+		if p.agyKind {
+			row.Agent = "agy"
+		}
 		p.mu.Unlock()
 		row.Running, row.Busy = where(p, running{})
 		row.Status = statusOf(p)
@@ -650,6 +656,7 @@ func (m *Manager) newProc(id, cwd string, resume bool) *proc {
 	// A resume starts on the user's settings, not what the session last ran with.
 	pick := m.saved.Picked(id)
 	p.model, p.effort = pick.Model, pick.Effort
+	p.agyKind = m.saved.Agent(id) == "agy" || IsAgyModel(p.model)
 	if r, ok := m.saved.Rewound(id); ok && !r.Sent {
 		p.resumeAt = r.At
 	}
@@ -732,6 +739,7 @@ func (m *Manager) procFor(id string) (*proc, error) {
 		// working directory's folder.
 		p = m.newProc(id, row.Cwd, true)
 		p.mode = mode
+		p.agyKind = p.agyKind || isAgyTranscript(path)
 		m.procs[id] = p
 	}
 	return p, nil
@@ -826,6 +834,9 @@ func (m *Manager) Unqueue(id, message string) (bool, error) {
 	if p == nil {
 		return false, nil
 	}
+	if p.agyKind {
+		return false, nil // agy takes a message in as it is sent
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	body, err := p.request(ctx, map[string]any{"subtype": "cancel_async_message", "message_uuid": message})
@@ -853,6 +864,12 @@ func (m *Manager) Interrupt(id string) error {
 	m.mu.Unlock()
 	if p == nil {
 		return nil
+	}
+	p.mu.Lock()
+	a := p.agy
+	p.mu.Unlock()
+	if a != nil {
+		return a.cancel()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -909,8 +926,16 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 			return err
 		}
 	}
+	if model != nil {
+		if err := m.switchAgent(id, p, IsAgyModel(*model)); err != nil {
+			return err
+		}
+	}
 	opts := m.Options()
 	p.mu.Lock()
+	if p.agyKind {
+		opts.Models = AgyModels()
+	}
 	if model != nil {
 		p.model = *model
 		// An effort the new model does not take would fail its next start.
@@ -926,6 +951,7 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 		p.effort = *effort
 	}
 	live := p.cmd != nil
+	a := p.agy
 	pick := store.Pick{Model: p.model, Effort: p.effort}
 	p.mu.Unlock()
 	if err := m.saved.SetPicked(id, pick); err != nil {
@@ -937,7 +963,17 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	if model != nil {
 		m.markModel(id, "", store.ModelSwitch{To: *model})
 	}
-	if live {
+	if a != nil {
+		// Applied once the session is open, if it is still opening.
+		go func() {
+			<-a.ready
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := a.apply(ctx, model, effort, mode); err != nil {
+				a.log.note(err.Error())
+			}
+		}()
+	} else if live {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if model != nil {
@@ -963,6 +999,33 @@ func (m *Manager) Configure(id string, model, mode, effort *string) error {
 	}
 	p.changed()
 	return nil
+}
+
+// switchAgent puts a session on agy or Claude Code, as its model needs. Only
+// one with nothing said yet can move: neither agent can take up the other's
+// conversation.
+func (m *Manager) switchAgent(id string, p *proc, agy bool) error {
+	p.mu.Lock()
+	same := p.agyKind == agy
+	p.mu.Unlock()
+	if same {
+		return nil
+	}
+	if transcriptFiles(m.root)[id] != "" {
+		if agy {
+			return errors.New("a Claude Code session can't go on with Antigravity: start a new session for an Antigravity model")
+		}
+		return errors.New("an Antigravity session can't go on with Claude Code: start a new session for this model")
+	}
+	p.stop()
+	p.mu.Lock()
+	p.agyKind = agy
+	p.mu.Unlock()
+	agent := ""
+	if agy {
+		agent = "agy"
+	}
+	return m.saved.SetAgent(id, agent)
 }
 
 // ownMode is dv's name for a mode Claude Code recorded: its auto, where the
@@ -1113,6 +1176,9 @@ func (m *Manager) Rewind(id, prompt, before string, conversation, code bool) (st
 	p, err := m.procFor(id)
 	if err != nil {
 		return "", err
+	}
+	if p.agyKind {
+		return "", errors.New("Antigravity can't go back in its conversation, and keeps no copies of the files it changes")
 	}
 	if code {
 		name := p.nameToStart()
@@ -1385,6 +1451,7 @@ func (m *Manager) closeIdle(now time.Time) {
 // Live is what a session is doing, beyond what its transcript says.
 type Live struct {
 	Found   bool   `json:"found"`             // the transcript exists yet
+	Agent   string `json:"agent,omitempty"`   // "agy"; "" is Claude Code
 	Running string `json:"running,omitempty"` // dv | terminal
 	Busy    bool   `json:"busy,omitempty"`
 	Shared  bool   `json:"shared,omitempty"` // see Session.Shared
@@ -1754,6 +1821,9 @@ func (m *Manager) update(id string, s *Sub) Update {
 
 	f.mu.Lock()
 	u.Live.Found = f.path != ""
+	if isAgyTranscript(f.path) {
+		u.Live.Agent = "agy"
+	}
 	if s.version != f.version {
 		s.version = f.version
 		items := s.shown(f.t.Items(leaf, switches...), f.t.Start > 0)
@@ -1768,8 +1838,17 @@ func (m *Manager) update(id string, s *Sub) Update {
 		c.Used = used
 		u.Live.Context = &c
 	}
+	if p == nil {
+		// Not started since dv was: what it will start on, which a picker
+		// would otherwise show as the model's own default.
+		pick := m.saved.Picked(id)
+		u.Live.Model, u.Live.Effort = pick.Model, pick.Effort
+	}
 	if p != nil {
 		p.mu.Lock()
+		if p.agyKind {
+			u.Live.Agent = "agy"
+		}
 		u.Live.Model, u.Live.Using, u.Live.Mode, u.Live.Queued = p.model, p.using, p.mode, slices.Clone(p.queued)
 		u.Live.Effort, u.Live.EffortUsing = p.effort, p.effortUsing
 		if p.cmd != nil && p.context != nil {

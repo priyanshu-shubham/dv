@@ -53,9 +53,14 @@ export const IconPlus = svg(<path d="M8 3.5v9M3.5 8h9" />, { stroke: true });
 export const IconMinus = svg(<path d="M3.5 8h9" />, { stroke: true });
 export const IconExpand = svg(<path d="M5 6.5L8 3.5l3 3M5 9.5l3 3 3-3" />, { stroke: true });
 export const IconMaximize = svg(<path d="M9.5 2.5h4v4M13.5 2.5L9.5 6.5M6.5 13.5h-4v-4M2.5 13.5l4-4" />, { stroke: true });
-export const IconOpenOut = svg(<path d="M9.5 2.5h4v4M13.5 2.5L8 8M11.5 9.5v4h-9v-9h4" />, { stroke: true });
+export const IconFullScreen = svg(<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9.5 6.5M2.5 13.5l4-4" />, { stroke: true });
+export const IconShrink =svg(<path d="M13.5 6.5h-4v-4M2.5 9.5h4v4M9.5 6.5l4-4M6.5 9.5l-4 4" />, { stroke: true });
+export const IconOpenOut =svg(<path d="M9.5 2.5h4v4M13.5 2.5L8 8M11.5 9.5v4h-9v-9h4" />, { stroke: true });
 export const IconCollapse = svg(<path d="M5 3.5l3 3 3-3M5 12.5l3-3 3 3" />, { stroke: true });
 export const IconFilter = svg(<path d="M2.5 3h11L9.2 8.3V13l-2.4-1.2V8.3z" />, { stroke: true });
+// A side panel, its arrow folding it to the right edge, or opening it back out.
+export const IconPanelFold = svg(<><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M10 2.5v11M4.5 8h3M6 6.5L7.5 8 6 9.5" /></>, { stroke: true });
+export const IconPanelOpen = svg(<><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M10 2.5v11M7.5 8h-3M6 6.5L4.5 8 6 9.5" /></>, { stroke: true });
 export const IconSplit =svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" /></>, { stroke: true });
 export const IconUnified = svg(<><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M2 8h12" /></>, { stroke: true });
 export const IconPalette = svg(
@@ -96,9 +101,12 @@ export const IconCodex = svg(
   { viewBox: "0 0 24 24" },
 );
 
+// Antigravity's: a plain arch of dv's own, as its mark has no free copy.
+export const IconAntigravity = svg(<path d="M2.5 13.5L8 2.5l5.5 11M5.2 9.5h5.6" />, { stroke: true });
+
 // AgentIcon is the mark of the agent a session, request or activity is with.
 export function AgentIcon({ agent, size, className }) {
-  const codex = agent === "codex";
-  const Icon = codex ? IconCodex : IconClaude;
-  return <Icon size={size} className={`agent-icon ${codex ? "codex" : "claude"}${className ? " " + className : ""}`} />;
+  const kind = agent === "codex" || agent === "agy" ? agent : "claude";
+  const Icon = { codex: IconCodex, agy: IconAntigravity, claude: IconClaude }[kind];
+  return <Icon size={size} className={`agent-icon ${kind}${className ? " " + className : ""}`} />;
 }

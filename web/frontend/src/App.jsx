@@ -1,9 +1,10 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api.js";
 import Header, { AUTO, CommitNote, PRESETS, prBase, usePR } from "./Header.jsx";
 import { CommitLog } from "./Commits.jsx";
 import Sidebar, { CommentsPanel } from "./Sidebar.jsx";
+import { NO_FILTER } from "./PathFilter.jsx";
 import FileDiff, { cssId, unshownBody } from "./FileDiff.jsx";
 import CodeView from "./CodeView.jsx";
 import { FilePalette, FileViewer, FinishWorktree, HelpOverlay, okToRestart, restartDv, SearchPanel, settingsDot, SettingsOverlay, useLogTrouble, useUpdate, WorktreeSession } from "./Overlays.jsx";
@@ -14,7 +15,9 @@ import { PRPalette } from "./PullRequests.jsx";
 import { setPaths } from "./links.js";
 import AgentView, { attachKey, ModelsSettings, RESUME } from "./Agent.jsx";
 import TerminalView, { leavesArrows, useTerminals } from "./Terminal.jsx";
-import BoardView, { useBoard } from "./Board.jsx";
+import BoardView, {
+  CommitRange, commitRev, Guide, GuideStep, pickOf, readRange, stepAim, stepPlaces, stretchOf, UNCOMMITTED, useBoard, useCommitRange, useGuideMarks, useTicketGuide, worktreeAt,
+} from "./Board.jsx";
 import AgentPrompt, { useAgentEvents } from "./AgentPrompt.jsx";
 import { Notices, say, useAppBadge, useHubActivity, useNotices, waitingIn } from "./Notices.jsx";
 import { HeldSecrets, SecretHover } from "./Secrets.jsx";
@@ -30,9 +33,10 @@ import { cellPos, fileMatches, findRegExp, headMatches, MAX_FOUND } from "./find
 import { blockAt } from "./markdown.js";
 import { asMedia } from "./Preview.jsx";
 import {
+  BOARD_KEY,
   byLastSent,
   cx,
-  globMatcher,
+  applyFileFilters,
   heldElsewhere,
   isFindKey,
   isMac,
@@ -49,6 +53,9 @@ import {
   useDebounced,
   useMedia,
   usePersisted,
+  chase,
+  laidOut,
+  yOf,
 } from "./util.js";
 import { followPrefs, readPref, setPref, usePref } from "./prefs.js";
 import { boot, slug } from "./boot.js";
@@ -64,7 +71,11 @@ const NO_ATTACHED = [];
 const NO_ATTACHED_BY = {};
 const MODES = ["diff", "code", "agent", "terminal", "board"];
 const FOLDER_MODES = ["code", "agent", "terminal"];
-const NO_FILTER = { include: "", exclude: "" };
+
+// dialogUp is a dialog over the page, which has the keys; a board ticket's is
+// not one here, being worked in as a view is, and a file or search opens over it.
+const dialogUp = () => document.querySelector(".backdrop:not(:has(> .board-ticket)), .prompt-backdrop:not([hidden])");
+
 
 // The phone app's shell is its own chunk, fetched only by a phone; the parts
 // it shares with the page's views come with them.
@@ -130,6 +141,14 @@ export default function App() {
   const [attachPick, setAttachPick] = usePref("repo", "agentAttachTo", null);
   const [temporaryNew, setTemporaryNew] = useState(false); // the blank session's Temporary toggle
   const agents = useMemo(() => ({ "": { available: agent.available, models: agent.models || [], mode: agent.mode, usage: agent.usage } }), [agent]);
+  const planUsage = useMemo(
+    () => [
+      { agent: "", limits: agent.usage },
+      { agent: "codex", limits: agent.codex?.usage },
+      { agent: "agy", limits: agent.agy?.usage },
+    ],
+    [agent.usage, agent.codex?.usage, agent.agy?.usage],
+  );
   const sideRight = settings.sidebar === "right";
   const [agentReveal, setAgentReveal] = useState(null);
   // Counts what was put in the Agent view's message box from elsewhere, each
@@ -192,6 +211,16 @@ export default function App() {
   const [board, loadBoard, boardError] = useBoard(mode === "board" && !phoneApp);
   const [ticketOpen, setTicketOpen] = useState(null);
   const [ticketSession, setTicketSession] = useState(null); // the session the open ticket shows
+  // A ticket is a dialog over the board alone: going anywhere else, as a
+  // notice or a link to a session takes you, closes it.
+  useEffect(() => {
+    if (mode !== "board") setTicketOpen(null);
+  }, [mode]);
+  // A ticket open has Go to file and Search look in its worktree.
+  const boardLook = useMemo(() => {
+    const t = mode === "board" && ticketOpen && board?.tickets?.find((x) => x.id === ticketOpen);
+    return t?.worktree ? { id: t.id, root: worktreeAt(t) } : null;
+  }, [mode, ticketOpen, board]);
   const [terms, loadTerms, tmuxSessions] = useTerminals(mode === "terminal");
   const [termPicked, setTermId] = usePersisted("terminal", "", { folder: true });
   const termId = terms?.some((t) => t.id === termPicked) ? termPicked : terms?.[0]?.id || "";
@@ -594,23 +623,81 @@ export default function App() {
   const uncommittedElsewhere = showingUncommitted ? 0 : diff?.uncommitted || 0;
 
   const generatedCount = useMemo(() => (diff?.files || []).filter((f) => f.generated).length, [diff]);
-  const { files, filteredOut, hiddenGenerated } = useMemo(() => {
-    const include = globMatcher(pathFilter.include);
-    const exclude = globMatcher(pathFilter.exclude);
-    let filteredOut = 0;
-    let hiddenGenerated = 0;
-    // Paused, the counts are still of what the filters would hide.
-    const files = (diff?.files || []).filter((f) => {
-      if (hideGenerated && f.generated) {
-        hiddenGenerated++;
-        return filtersPaused;
-      }
-      const keep = (!include || include(f.path)) && !exclude?.(f.path);
-      if (!keep) filteredOut++;
-      return keep || filtersPaused;
-    });
-    return { files, filteredOut, hiddenGenerated };
-  }, [diff, hideGenerated, pathFilter, filtersPaused]);
+  // A board ticket's branch, as "Open in Code view" shows it, comes with the
+  // stretch of its commits picked to read, shared with the ticket, and its
+  // reviewer's walkthrough, whose step walked to is scrolled to and marked.
+  const shownTicket = useTicketGuide(scope);
+  const guided = shownTicket?.guide ? shownTicket : null;
+  // So does a ticket's branch in the Diff view: the main checkout may be on
+  // another branch entirely, whose index puts its names on other lines.
+  const shownTicketT = mode === "diff" && scope.ticket && shownTicket?.t?.worktree ? shownTicket.t : null;
+  const lookWithin = useMemo(
+    () => boardLook || (shownTicketT ? { id: shownTicketT.id, root: worktreeAt(shownTicketT) } : null),
+    [boardLook, shownTicketT?.id, shownTicketT?.worktree],
+  );
+  const lookRef = useRef(lookWithin);
+  lookRef.current = lookWithin;
+  const [guideStep, setGuideStep] = useState(null);
+  const guideCarry = useRef(null); // the step the ticket was on, coming from it
+  useEffect(() => {
+    setGuideStep(guided ? guideCarry.current : null);
+    if (guided) guideCarry.current = null;
+  }, [guided?.t.id]);
+  const guideAt = guided && guideStep != null ? guided.guide.steps[guideStep] : null;
+  const [pickedCommits, pickCommits] = useCommitRange(shownTicket?.t.id || "none");
+  const ticketCommits = useMemo(() => [...(shownTicket?.commits || [])].reverse(), [shownTicket]);
+  const readCommits = shownTicket ? readRange(shownTicket.t, ticketCommits, pickedCommits) : null;
+  // The walkthrough reads the whole.
+  const ticketFrom = guideStep != null ? null : readCommits?.from;
+  const ticketTo = guideStep != null ? null : readCommits?.to;
+  const ticketBase = shownTicket?.changes?.slice(0, shownTicket.changes.indexOf("..."));
+  useEffect(() => {
+    if (!shownTicket || !ticketBase || scope.kind !== "custom") return;
+    const rev = commitRev(ticketBase, shownTicket.t.branch, ticketFrom, ticketTo);
+    if (scope.rev !== rev || scope.ticket !== shownTicket.t.id || !!scope.own !== !!ticketFrom) setScope({ kind: "custom", rev, ticket: shownTicket.t.id, own: !!ticketFrom });
+  }, [shownTicket, ticketBase, ticketFrom, ticketTo]);
+
+  // Any other comparison over more than one commit, or commits and work not
+  // yet committed, is read a stretch at a time too: the stretch is a custom
+  // range that keeps, as `within`, the comparison it was taken from.
+  const whole = scope.within || scope;
+  const [span, setSpan] = useState(null); // { base, commits newest first, worktree, uncommitted }
+  const wholeKey = JSON.stringify([whole.kind, whole.rev]);
+  useEffect(() => {
+    setSpan(null);
+    if (mode !== "diff" || shownTicket || scope.ticket) return;
+    let live = true;
+    api.diffCommits(whole).then((s) => live && setSpan(s), () => {});
+    return () => {
+      live = false;
+    };
+  }, [mode, wholeKey, !!shownTicket, diff?.head, !!diff?.uncommitted]);
+  const spanStops = useMemo(
+    () => (span ? [...span.commits].reverse().concat(span.uncommitted ? [UNCOMMITTED] : []) : []),
+    [span],
+  );
+  // The stretch read, of a ticket's commits or this comparison's stops.
+  const stretch = shownTicket ? stretchOf(ticketCommits, ticketFrom, ticketTo) : stretchOf(spanStops, scope.within ? scope.from : null, scope.within ? scope.to : null);
+  const stretchStops = shownTicket ? ticketCommits : spanStops;
+  const pickStretch = (l, h) => {
+    if (shownTicket) return pickCommits(pickOf(ticketCommits, l, h));
+    if (l === 0 && h === spanStops.length - 1) return setScope(whole);
+    const { from, to } = pickOf(spanStops, l, h);
+    const start = (from || span.base).slice(0, 12);
+    // Run on to the working tree, a range with nothing after its two dots.
+    const end = to ? to.slice(0, 12) : span.worktree ? "" : spanStops[spanStops.length - 1].sha.slice(0, 12);
+    setScope({ kind: "custom", rev: `${start}..${end}`, within: whole, withinLabel: scope.within ? scope.withinLabel : diff?.scope?.label, from, to, own: !!from });
+  };
+  // Ending before the last stop, the code is as it was then: read only.
+  const earlierStretch = stretchStops.length > 1 && stretch.hi !== stretchStops.length - 1;
+  const guideFd = guideAt && fileData[guideAt.file]?.fd;
+  const guidePlaces = useMemo(() => stepPlaces(guideAt, guideFd), [guideAt, guideFd]);
+  const guidePin = useMemo(() => guideAt && { start: guideAt.start, end: guideAt.end }, [guideAt]);
+  useGuideMarks("guide-marks-code", mode === "diff" ? guidePlaces : null);
+  const { files, filteredOut, hiddenGenerated } = useMemo(
+    () => applyFileFilters(diff?.files || [], { hideGenerated, pathFilter, paused: filtersPaused }),
+    [diff, hideGenerated, pathFilter, filtersPaused],
+  );
   // A file the filters hide, or none yet, gives way to the first.
   const shownPath = oneFile ? (files.some((f) => f.path === activePath) ? activePath : files[0]?.path) : null;
   const currentPath = oneFile ? shownPath : activePath;
@@ -660,12 +747,41 @@ export default function App() {
       chase(root, () => {
         const el = section();
         if (!el) return null;
-        const anchor = line ? el.querySelector(`[data-line="${line}"]`) : null;
+        const found = line ? el.querySelector(`[data-line="${line}"]`) : null;
+        const anchor = laidOut(found) ? found : null;
         return { y: yOf(root, anchor || el, anchor ? root.clientHeight / 3 : FILE_TOP), final: !line || !!anchor };
       });
     },
     [needFile, oneFile],
   );
+
+  // jumpToStep brings a walkthrough's step into the diff, as stepAim places it.
+  const jumpToStep = useCallback(
+    (st) => {
+      setActivePath(st.file);
+      setReveal({ path: st.file, line: st.start });
+      needFile(st.file);
+      const root = scrollRef.current;
+      const section = () => document.getElementById("file-" + cssId(st.file));
+      if (!root) return;
+      if (oneFile) root.scrollTo({ top: 0, behavior: "instant" });
+      else if (!section()) return;
+      chase(root, () => {
+        const el = section();
+        if (!el) return null;
+        const y = stepAim(root, el, st);
+        return y != null ? { y, final: true } : { y: yOf(root, el, FILE_TOP), final: false };
+      });
+    },
+    [needFile, oneFile],
+  );
+
+  // A walkthrough's step is jumped to as it is walked to, or once its file is
+  // listed, the diff coming in after the walkthrough.
+  const guideFileListed = !!guideAt && files.some((f) => f.path === guideAt.file);
+  useEffect(() => {
+    if (mode === "diff" && guideFileListed) jumpToStep(guideAt);
+  }, [guideAt, guideFileListed]);
 
   // Switching between the two, the file being read stays on screen.
   const wasOneFile = useRef(oneFile);
@@ -1171,11 +1287,13 @@ export default function App() {
 
   const createComment = useCallback(
     async (payload) => {
-      const t = await api.createThread({ scope: diff?.scope?.label || scope.kind, ...payload });
+      // Under the whole comparison, whatever stretch of it is read: a ticket's
+      // branch's range, as the ticket files them, or the one the stretch came from.
+      const t = await api.createThread({ scope: shownTicket?.changes || scope.withinLabel || diff?.scope?.label || scope.kind, ...payload });
       loadThreads();
       return t;
     },
-    [diff, scope, loadThreads],
+    [diff, scope, loadThreads, shownTicket],
   );
 
   const onThreadAction = useCallback(
@@ -1303,7 +1421,8 @@ export default function App() {
   useEffect(() => {
     const onClick = (e) => {
       const a = e.target.closest?.("a.path-link");
-      if (!a) return;
+      // One its own view has opened already - a document's, a ticket's - is not opened again here.
+      if (!a || e.defaultPrevented) return;
       e.preventDefault();
       goTo(a.dataset.path, Number(a.dataset.line) || 0);
     };
@@ -1320,9 +1439,14 @@ export default function App() {
     async (name, from = "", leftAt = 0, draft) => {
       const left = leftAt ? { scroll: leftAt } : null;
       const search = { type: "search", query: name, from, opts: { caseSens: true, wholeWord: true } };
+      // A board ticket's file is looked up in its worktree, and found there;
+      // so is one of the ticket's diff, whose paths are the worktree's own.
+      const wt = /^\.dv\/worktrees\/([^/]+)\//.exec(from);
+      const look = wt ? { id: wt[1], root: wt[0] } : lookRef.current;
+      const root = look?.root || "";
       try {
-        const r = await api.resolveSymbol(name, from, draft && { path: draft.path, text: draft.fd.newLines.join("\n") });
-        const defs = r.defs || [];
+        const r = await api.resolveSymbol(name, wt ? from.slice(root.length) : from, draft && { path: draft.path, text: draft.fd.newLines.join("\n") }, look?.id);
+        const defs = (r.defs || []).map((d) => (root ? { ...d, file: root + d.file } : d));
         if (defs.length === 1) goTo(defs[0].file, defs[0].line, left, defs[0].draft && draft);
         else pushOverlay({ ...search, seed: defs, source: r.source, draft }, left);
       } catch {
@@ -1644,7 +1768,7 @@ export default function App() {
       const alt = e.code === "KeyA" && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey;
       const palette = e.code === "KeyP" && e.shiftKey && !e.altKey && (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
       if (!alt && !palette) return;
-      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      if (dialogUp()) return;
       e.preventDefault();
       openOverlay({ type: "actions" });
     };
@@ -1658,7 +1782,7 @@ export default function App() {
     const onKey = (e) => {
       const t = e.target;
       if (!isTyping(t) || e.altKey || (isMac ? !e.metaKey : !e.ctrlKey || t.closest(".term-view"))) return;
-      if (document.querySelector(".backdrop, .prompt-backdrop:not([hidden])")) return;
+      if (dialogUp()) return;
       if (isSearchKey(e)) {
         if (t.closest(".composer")) return;
         e.preventDefault();
@@ -1720,6 +1844,12 @@ export default function App() {
   // openTerminal shows one, as its notice asks; showTerm tells the phone app
   // to open its screen.
   const [showTerm, setShowTerm] = useState(0);
+  // The board, as a board notice opens it: no ticket in particular.
+  const openBoard = useCallback(() => {
+    setStack([]);
+    setTicketOpen(null);
+    switchMode("board");
+  }, [switchMode]);
   const openTerminal = useCallback(
     (id) => {
       setTermId(id);
@@ -1822,6 +1952,7 @@ export default function App() {
     open: openNoticed,
     output: (id) => openOverlay({ type: "output", id }),
     terminal: openTerminal,
+    board: () => openBoard(),
   });
   // A command's notification that opened the page shows its output; a
   // terminal's, the terminal.
@@ -1832,6 +1963,9 @@ export default function App() {
     const term = sessionStorage.getItem(TERMINAL_KEY);
     sessionStorage.removeItem(TERMINAL_KEY);
     if (term) openTerminal(term);
+    const board = sessionStorage.getItem(BOARD_KEY);
+    sessionStorage.removeItem(BOARD_KEY);
+    if (board) openBoard();
   }, []);
   // Desktop notifications are the browser's to allow, asked when turned on.
   // Hooks are asked after with the sessions, but Settings opens in any mode.
@@ -1868,13 +2002,14 @@ export default function App() {
     if (!sw) return;
     const onMessage = (e) => {
       if (e.data?.type !== "dv:open") return;
-      if (e.data.action) openOverlay({ type: "output", id: e.data.action });
+      if (e.data.board) openBoard();
+      else if (e.data.action) openOverlay({ type: "output", id: e.data.action });
       else if (e.data.terminal) openTerminal(e.data.terminal);
       else if (e.data.session && !phoneApp) openNotified.current(e.data.session);
     };
     sw.addEventListener("message", onMessage);
     return () => sw.removeEventListener("message", onMessage);
-  }, [phoneApp, openOverlay, openTerminal]);
+  }, [phoneApp, openOverlay, openTerminal, openBoard]);
 
   const dot = tabDot(notices);
   // The waiting note trails so a narrow tab still shows which repository it
@@ -2321,6 +2456,33 @@ export default function App() {
       {mode === "diff" && findBar}
       {error && <div className="banner error">{error}</div>}
       {diff?.scope?.commit && !error && <CommitNote key={diff.scope.commit.sha} commit={diff.scope.commit} />}
+      {mode === "diff" && stretchStops.length > 1 && (
+        <div className="guide-in-code">
+          <CommitRange
+            stops={stretchStops}
+            lo={stretch.lo}
+            hi={stretch.hi}
+            onPick={pickStretch}
+            locked={!!shownTicket && guideStep != null}
+            shortcuts={
+              readCommits?.lastReviewed && (ticketFrom !== readCommits.lastReviewed || ticketTo)
+                ? [{ label: "Since your last review", title: "What the builder did after you sent it back", run: () => pickCommits({ from: readCommits.lastReviewed, to: null }) }]
+                : []
+            }
+          />
+        </div>
+      )}
+      {/* On a computer the walkthrough is in the files panel; a phone has none. */}
+      {guided && mode === "diff" && phoneApp && (
+        <div className="guide-in-code">
+          <Guide t={guided.t} guide={guided.guide} step={guideStep} onStep={setGuideStep} />
+        </div>
+      )}
+      {guided && mode === "diff" && guideStep != null && (
+        <div className="guide-in-code guide-step-pin">
+          <GuideStep t={guided.t} guide={guided.guide} step={guideStep} onStep={setGuideStep} onOpenFile={(p, line) => goTo(worktreeAt(guided.t) + p, line)} onReturn={() => jumpToStep(guideAt)} />
+        </div>
+      )}
       {meta && !folder && diff && files.length === 0 && !error && (
         <div className="empty-state">
           <h2>Nothing to review</h2>
@@ -2339,22 +2501,22 @@ export default function App() {
         </div>
       )}
       {(oneFile ? files.filter((f) => f.path === shownPath) : files).map((entry) => (
+        <Fragment key={entry.path}>
         <FileSection
-          key={entry.path}
           entry={entry}
           state={fileData[entry.path]}
           onNeed={needFile}
           view={view}
           contextLines={contextLines}
           wrap={wrap}
-          threads={threadsByFile.get(entry.path) || NO_THREADS}
+          threads={earlierStretch ? NO_THREADS : threadsByFile.get(entry.path) || NO_THREADS}
           collapsed={collapsed.has(entry.path)}
           onToggleCollapse={toggleCollapse}
           viewed={viewed.has(entry.path)}
           onToggleViewed={onToggleViewed}
           composing={mode === "diff" && composing?.path === entry.path ? composing : null}
           setComposing={setComposing}
-          onComment={createComment}
+          onComment={earlierStretch ? undefined : createComment}
           onThreadAction={onThreadAction}
           onSymbol={onSymbol}
           onAttach={attach}
@@ -2363,12 +2525,14 @@ export default function App() {
           onDiscard={uncommitted ? discard : null}
           scope={scope}
           onOpenFile={goTo}
-          reveal={reveal?.path === entry.path ? reveal.line : 0}
+          reveal={reveal?.path === entry.path ? reveal.line : guidePlaces?.get(entry.path)?.[0]?.start || 0}
+          pin={mode === "diff" && guideAt?.file === entry.path ? guidePin : undefined}
           onBody={onBody.diff}
           found={(mode === "diff" && found?.byFile.get(entry.path)) || null}
           foundHead={(mode === "diff" && found?.heads.get(entry.path)) || null}
           foundAt={mode === "diff" && findCur?.path === entry.path ? findCur : null}
         />
+        </Fragment>
       ))}
       {oneFile && files.length > 1 && <FilePager files={files} path={shownPath} onGo={jumpToFile} />}
     </>
@@ -2583,6 +2747,7 @@ export default function App() {
           initialQuery={overlay.query || ""}
           changed={files}
           recent={offerRecent}
+          within={lookWithin}
           onClose={closeOverlay}
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
@@ -2599,6 +2764,7 @@ export default function App() {
           from={overlay.from || activePath}
           opts={overlay.opts}
           place={overlay.place}
+          within={lookWithin}
           onClose={closeOverlay}
           onBack={behind && goBack}
           backTo={trailLabel(behind)}
@@ -2853,10 +3019,7 @@ export default function App() {
           agent={{
             sessions: agent.sessions,
             available: agent.available,
-            usage: [
-              { agent: "", limits: agent.usage },
-              { agent: "codex", limits: agent.codex?.usage },
-            ],
+            usage: planUsage,
             activeId: agentId,
             added: attachedLive,
             board: agent.board,
@@ -2871,7 +3034,8 @@ export default function App() {
             onRemove: removeSession,
             onRename: (id, title) => api.agentRename(id, title).then(loadSessions, (e) => say("Could not rename the session", e.message)),
           }}
-          board={{ board, openId: ticketOpen, onOpen: setTicketOpen }}
+          board={{ board, openId: ticketOpen, onOpen: setTicketOpen, usage: planUsage }}
+          guide={guided && mode === "diff" && !phoneApp && <Guide t={guided.t} guide={guided.guide} step={guideStep} onStep={setGuideStep} />}
           terminal={{
             terms,
             sessions: tmuxSessions,
@@ -2917,9 +3081,17 @@ export default function App() {
             onOpen={setTicketOpen}
             models={agents[""].models}
             session={boardSession}
-            onOpenSession={(sid) => (setTicketOpen(null), openInAgent(sid))}
             onLooking={setTicketSession}
             onOpenFile={goTo}
+            onSymbol={onSymbol}
+            onOpenCode={(range, builder, step, ticket) => {
+              // The ticket's branch in the Code view, its comments going to the builder.
+              guideCarry.current = step ?? null;
+              setGuideStep(step ?? null); // the range already shown finds no ticket again
+              setScope({ kind: "custom", rev: range, ticket });
+              if (builder) setAttachPick(builder);
+              switchMode("diff");
+            }}
           />
         )}
         {showComments && <CommentsPanel {...commentsProps} />}
@@ -3138,13 +3310,6 @@ function stopGlide(settled = false) {
   for (const e of TAKEOVER) window.removeEventListener(e, takeover, true);
 }
 
-// Input that means the reader is steering, which a jump must give way to.
-const INTERRUPTS = ["wheel", "touchstart", "keydown", "mousedown"];
-
-// yOf is the scroll position that puts el `offset` px below the top of root.
-const yOf = (root, el, offset) =>
-  root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - offset;
-
 // The strip of ground kept over the diff and Code, which a file's header pins
 // below (--inset in styles.css).
 const FILE_INSET = 12;
@@ -3165,41 +3330,6 @@ const inView = (root, el) => {
   return r.top >= box.top + 80 && r.bottom <= box.bottom - 8;
 };
 
-// chase scrolls root to aim().y every frame until it has held still on a final
-// target for a moment. One scroll is not enough: a file the reader has not
-// reached is an empty stub until its diff loads, so the page is far shorter
-// than it will be and a jump near the end is clamped part-way, and each
-// correction brings more files into range, which loads them, which moves the
-// target again. It gives up the moment the reader steers - watching input, not
-// the scroll position, which scroll anchoring moves on its own as content loads.
-function chase(root, aim) {
-  const QUIET_MS = 500;
-  const LIMIT_MS = 8000;
-  const started = performance.now();
-  let lastMove = started;
-  let live = true;
-  const stop = () => {
-    live = false;
-    for (const e of INTERRUPTS) window.removeEventListener(e, stop, true);
-  };
-  for (const e of INTERRUPTS) window.addEventListener(e, stop, { capture: true, passive: true });
-  const step = () => {
-    if (!live) return;
-    const a = aim();
-    const now = performance.now();
-    if (a) {
-      const to = Math.round(Math.min(root.scrollHeight - root.clientHeight, Math.max(0, a.y)));
-      if (Math.abs(to - root.scrollTop) >= 1) {
-        root.scrollTo({ top: to, behavior: "instant" });
-        lastMove = now;
-      }
-    }
-    if ((a?.final && now - lastMove > QUIET_MS) || now - started > LIMIT_MS) stop();
-    else requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-  return stop;
-}
 
 const scopeKey = (s, diff) => diff?.scope?.label || (s.kind === "custom" ? "custom:" + s.rev : s.kind);
 

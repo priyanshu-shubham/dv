@@ -118,7 +118,7 @@ export function RequestTitle({ req }) {
     <>
       <AgentIcon size={14} />
       <span className="prompt-title">
-        Claude wants to {req.headline}
+        {req.by || "Claude"} wants to {req.headline}
       </span>
       {req.agent && (
         <span className="tag-generated" title="A subagent is asking">
@@ -156,6 +156,7 @@ export function Request({
   const questionKeys = useRef(null);
 
   const what = describe(req);
+  const who = req.by || "Claude";
   const asking = req.tool === "AskUserQuestion";
   // What looks like a secret, held by dv's gateway: masked under these names,
   // or sent as is.
@@ -219,7 +220,9 @@ export function Request({
   useEffect(() => {
     if (!active) return;
     const onKey = (e) => {
-      if (document.querySelector(".backdrop")) return; // a viewer opened over the request has the keys
+      // A viewer opened over the request has the keys; the dialog it sits in, a board ticket's, doesn't.
+      const over = [...document.querySelectorAll(".backdrop")].pop();
+      if (over && !over.contains(questionsRef.current || listRef.current)) return;
       if (!listRef.current?.closest(".prompt-backdrop") && document.querySelector(".prompt-backdrop:not([hidden])")) return;
       if (asking) {
         if (questionKeys.current?.(e)) {
@@ -284,6 +287,7 @@ export function Request({
         <Questions
           key={req.id}
           id={req.id}
+          who={who}
           questions={req.input?.questions || []}
           busy={busy}
           armed={armed}
@@ -342,7 +346,7 @@ export function Request({
             <div className="prompt-list">
               <div className="prompt-options" role="listbox" tabIndex={-1} ref={listRef} aria-activedescendant={`opt-${req.id}-${sel}`}>
                 {options.map((o, i) => {
-                  const no = req.tool === "ExitPlanMode" ? "keep planning" : "stops Claude";
+                  const no = req.tool === "ExitPlanMode" ? "keep planning" : `stops ${who}`;
                   const hint = secrets ? secretsHint(o) : optionHint(o, said, no);
                   return (
                     <button
@@ -376,7 +380,7 @@ export function Request({
                     rows={1}
                     value={note}
                     placeholder={
-                      options[sel]?.allow === false ? "Tell Claude what to do instead" : "Add a note for Claude - it goes with your answer"
+                      options[sel]?.allow === false ? `Tell ${who} what to do instead` : `Add a note for ${who} - it goes with your answer`
                     }
                     onChange={(e) => onDraft({ note: e.target.value })}
                   />
@@ -445,8 +449,8 @@ const NO_ANSWERS = { picked: {}, other: {}, otherOn: {}, notes: {} };
 // picking it up on another device loses nothing. rootRef is what takes the
 // focus; keysRef is handed the key handler Request calls while it has the
 // keys, which says whether it took the key.
-function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
-  const declined = "decline to answer, which stops Claude";
+function Questions({ id, who, questions, busy, armed, rootRef, keysRef, onAnswer }) {
+  const declined = `decline to answer, which stops ${who}`;
   // The answers so far follow the request to another device; where this one is
   // among the tabs and rows stays with the browser tab.
   const [place, setPlace] = usePersisted("ask:" + id, NO_PLACE, { session: true, folder: true });
@@ -486,8 +490,12 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
   };
   // The last tab comes up on Submit, or on the first question still unanswered.
   const cursor = cursors[tab] ?? (tab === n ? (ready() ? n : Math.max(0, questions.findIndex((x) => !said(x).length))) : 0);
-  // Every move is a write to the stored place, so only one onto another row counts.
-  const hover = (row) => () => row !== cursor && setCursors((c) => ({ ...c, [tab]: row }));
+  // Every move is a write to the stored place, so only one onto another row
+  // counts; while something is being written, the row stays with it.
+  const hover = (row) => () => {
+    const a = document.activeElement;
+    if (row !== cursor && a !== otherRef.current && a !== noteRef.current) setCursors((c) => ({ ...c, [tab]: row }));
+  };
   // A question's rows: its options, then something else, the note, and where
   // several are taken, Submit. The two text rows take the focus.
   const moveTo = (row) => {
@@ -510,6 +518,15 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
     setPicked(p);
     setOther(o);
     if (!q.multiSelect) onward(p, o);
+  };
+  // hold chooses an option without moving on: in place of what was chosen,
+  // or among them where several are taken.
+  const hold = (label) => {
+    const q = questions[tab];
+    const had = picked[q.question] || [];
+    if (q.multiSelect && had.includes(label)) return;
+    setPicked({ ...picked, [q.question]: q.multiSelect ? [...had, label] : [label] });
+    if (!q.multiSelect) setOther({ ...other, [q.question]: "" });
   };
   const write = (text) => {
     const q = questions[tab];
@@ -538,8 +555,12 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
     if (e.key === "Tab") {
       if (tab === n) return true;
       const q = questions[tab];
-      if (!inNote) moveTo(q.options.length + 1);
-      else {
+      if (!inNote) {
+        // The option the cursor is on is the one the note goes with: chosen,
+        // not yet sent, so Enter in the note sends both.
+        if (cursor < q.options.length) hold(q.options[cursor].label);
+        moveTo(q.options.length + 1);
+      } else {
         setCursors((c) => ({ ...c, [tab]: Math.max(0, q.options.findIndex((o) => (picked[q.question] || []).includes(o.label))) }));
         rootRef.current?.focus({ preventScroll: true });
       }
@@ -692,7 +713,7 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
                 );
               })}
             </div>
-            <label className={cx("prompt-note", q.multiSelect && otherOn[q.question] && "picked")}>
+            <label className={cx("prompt-note", written(q) && "picked")}>
               <span
                 className="badge"
                 onClick={(e) => {
@@ -701,7 +722,7 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
                   tickOther();
                 }}
               >
-                {q.multiSelect && otherOn[q.question] ? "✓" : "…"}
+                {written(q) ? "✓" : "…"}
               </span>
               <textarea
                 ref={otherRef}
@@ -720,7 +741,7 @@ function Questions({ id, questions, busy, armed, rootRef, keysRef, onAnswer }) {
                 ref={noteRef}
                 rows={1}
                 value={notes[q.question] || ""}
-                placeholder="Add a note for Claude on this answer"
+                placeholder={`Add a note for ${who} on this answer`}
                 onFocus={() => setCursors((c) => ({ ...c, [tab]: q.options.length + 1 }))}
                 onChange={(e) => setNotes((ns) => ({ ...ns, [q.question]: e.target.value }))}
               />

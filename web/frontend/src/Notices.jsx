@@ -8,7 +8,7 @@ import { Toaster, toast } from "sonner";
 import { api, RESTART_KEY } from "./api.js";
 import { boot, slug } from "./boot.js";
 import { AgentIcon, IconCheck, IconX } from "./icons.jsx";
-import { byLastSent, cx, OUTPUT_KEY, PHONE_APP, TERMINAL_KEY, useMedia } from "./util.js";
+import { BOARD_KEY, byLastSent, cx, OUTPUT_KEY, PHONE_APP, TERMINAL_KEY, useMedia } from "./util.js";
 
 const DONE_MS = 8000;
 // A request is two pulses, a turn's end a tick.
@@ -216,7 +216,8 @@ export const waitingIn = (folders) => (folders || []).reduce((n, f) => n + (f.re
 // what one waits on the reader for: those waiting first, then the last written
 // to first. A request can come before its session is listed. One with no time
 // has neither a word said nor a process, and its own folder's list leaves it
-// out too.
+// out too, as do a folder's board agents, which its Board shows, unless one
+// waits on the reader.
 function openIn(folders) {
   const out = [];
   for (const f of folders || []) {
@@ -224,7 +225,7 @@ function openIn(folders) {
     for (const r of f.requests || []) if (!asks.has(r.session)) asks.set(r.session, r);
     const listed = f.sessions || [];
     for (const [id, req] of asks) out.push({ f, s: listed.find((s) => s.id === id) || { id }, req });
-    for (const s of listed) if (!asks.has(s.id) && Date.parse(s.updated) > 0) out.push({ f, s });
+    for (const s of listed) if (!asks.has(s.id) && Date.parse(s.updated) > 0 && !f.board?.[s.id]) out.push({ f, s });
   }
   return out.sort((a, b) => !!b.req - !!a.req || byLastSent(a.s, b.s));
 }
@@ -326,7 +327,7 @@ function usePresence() {
 // terminals. In the phone app a
 // request is answered in its session, so that is where its notice goes. It
 // returns the notices open.
-export function useNotices({ looking, asking: askOpen, desktop, review, open, go, output, terminal, phone, buzz, sound }) {
+export function useNotices({ looking, asking: askOpen, desktop, review, open, go, output, terminal, board, phone, buzz, sound }) {
   usePresence();
   const [notices, setNotices] = useState([]);
   useEffect(() => api.notices(PAGE, (e) => setNotices(e.notices)), []);
@@ -334,7 +335,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
   const told = useRef(new Map()); // desktop notifications, by notice
   const alerted = useRef(new Set()); // buzzed or chimed for, once each
   const now = useRef();
-  now.current = { desktop, review, open, go, output, terminal };
+  now.current = { desktop, review, open, go, output, terminal, board };
 
   useEffect(() => {
     const ids = new Set(notices.map((n) => n.id));
@@ -358,8 +359,13 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
       const where = own ? session : `${n.place}: ${session}`;
       // A command an action ran has no session, only its output in its folder;
       // nor does one run in a terminal.
+      // The board's opens the board, which says what it needs.
       const goThere = () => {
-        if (n.session) own ? now.current.open(n.session) : now.current.go(n.folder, n.session);
+        if (n.board && own) now.current.board?.();
+        else if (n.board) {
+          sessionStorage.setItem(BOARD_KEY, "1");
+          location.href = `/${n.folder}/`;
+        } else if (n.session) own ? now.current.open(n.session) : now.current.go(n.folder, n.session);
         else if (own) n.action ? now.current.output(n.action) : n.terminal && now.current.terminal(n.terminal);
         else {
           if (n.action) sessionStorage.setItem(OUTPUT_KEY, n.action);
@@ -382,7 +388,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
       }
 
       if (n.loud && !told.current.has(n.id)) {
-        const shown = inFront() ? null : notify(n.id, asking ? n.title : `${n.title}: ${where}`, asking ? `in ${where}` : oneLine(n.body), goThere);
+        const shown = inFront() ? null : notify(n.id, asking || n.board ? n.title : `${n.title}: ${where}`, n.board ? `${where}${n.body && !asking ? ` · ${oneLine(n.body)}` : ""}` : asking ? `in ${where}` : oneLine(n.body), goThere);
         told.current.set(n.id, { kind: n.kind, shown });
       }
       // A request waits on screen until the reader moves off it; a turn's end
@@ -395,7 +401,9 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
       if (toasted.current.has(n.id)) continue;
       toasted.current.set(n.id, n.kind);
       if (onScreen) continue;
-      const actions = !n.session
+      const actions = n.board
+        ? [{ label: "Open board", primary: asking, opens: true, run: goThere }]
+        : !n.session
         ? own
           ? n.action
             ? [{ label: "Output", opens: true, run: goThere }]
@@ -418,7 +426,7 @@ export function useNotices({ looking, asking: askOpen, desktop, review, open, go
             kind={n.kind}
             agent={n.agent}
             title={n.title}
-            detail={asking ? `in ${where}` : where}
+            detail={asking && !n.board ? `in ${where}` : where}
             last={asking ? "" : oneLine(n.body)}
             actions={actions}
           />

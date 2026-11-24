@@ -35,6 +35,7 @@ type Notice struct {
 	Request  string    `json:"request,omitempty"`  // an Ask's, which its folder's page answers in a window of its own
 	Action   string    `json:"action,omitempty"`   // a command action's, whose output its folder's page shows
 	Terminal string    `json:"terminal,omitempty"` // a terminal's, which its folder's page shows
+	Board    bool      `json:"board,omitempty"`    // the board's, which its folder's page shows
 	Title    string    `json:"title"`              // "Claude wants to run a command"
 	Where    string    `json:"where"`              // the session's title
 	Body     string    `json:"body,omitempty"`     // the command or question, or what the agent said last

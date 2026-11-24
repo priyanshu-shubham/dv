@@ -105,6 +105,21 @@ func OpenAIOff(user *store.Prefs) func() bool {
 	}
 }
 
+// AgyOff reads whether Antigravity's models are left out of the picker: the
+// setting agyOff.
+func AgyOff(user *store.Prefs) func() bool {
+	return func() bool {
+		if user == nil {
+			return false
+		}
+		var s struct {
+			Off bool `json:"agyOff"`
+		}
+		json.Unmarshal(user.All()["settings"], &s)
+		return s.Off
+	}
+}
+
 // Providers reads the model endpoints the user added: the setting providers.
 func Providers(user *store.Prefs) func() []gateway.Provider {
 	return func() []gateway.Provider {
@@ -138,9 +153,12 @@ func AskLooseSecrets(user *store.Prefs) func() bool {
 // AgentInstructions reads what dv adds to a session's own instructions as it
 // starts: how to show files in a reply, unless the setting filesInReplies is
 // off, and what a masked secret's placeholder is, while any are.
-func AgentInstructions(user *store.Prefs) func() string {
+func AgentInstructions(user *store.Prefs, board bool) func() string {
 	return func() string {
 		var notes []string
+		if board {
+			notes = append(notes, ticketNote)
+		}
 		if gw := gateway.Active(); gw != nil {
 			if list, _ := gw.Secrets(); len(list) > 0 {
 				notes = append(notes, secretsNote)
@@ -159,6 +177,10 @@ func AgentInstructions(user *store.Prefs) func() string {
 		return strings.Join(notes, "\n\n")
 	}
 }
+
+// The Inbox holds the user's own short request; the board's scoper writes the
+// ticket from it, asking them, so a long one would do that early and unasked.
+const ticketNote = "This repository has a dv board of tickets. `dv ticket file \"title\"` files one into its Inbox, with the request on stdin; it waits there until the user moves it on. File only when the user asks you to, or after offering and they agree. Keep it small: the title and one to three plain sentences in the user's terms saying what they want and why, and a problem's cause if you found it. Don't add a fix or a design of your own, nor headings: the board's scoper and planner work out how, writing the full ticket from it later."
 
 // The model, seeing a placeholder, took it for a secret it must not repeat,
 // and refused what the user asked of it.

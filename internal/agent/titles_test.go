@@ -15,6 +15,7 @@ func TestATitleIsTakenOutOfItsWrapping(t *testing.T) {
 	for in, want := range map[string]string{
 		"Go map iteration order":                            "Go map iteration order",
 		"\"Title: Go map iteration order\"":                 "Go map iteration order",
+		"Session Title: \"Greeting and Task Start\"":        "Greeting and Task Start",
 		"**Sidebar collapse state.**\n\nIt names the work.": "Sidebar collapse state",
 		strings.Repeat("word ", 20):                         "",
 	} {

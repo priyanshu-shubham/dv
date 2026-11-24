@@ -23,7 +23,8 @@ type addedModels map[string][]string
 var modelVersion = regexp.MustCompile(`-\d.*$`)
 
 // withAdded is what a session can be put on: what Claude Code offers, the
-// models the user added, then those dv's gateway serves. An added one takes the
+// models the user added, then those dv's gateway serves, and Antigravity's,
+// which agy runs in a session of its own. An added one takes the
 // effort levels of the offered model of its kind, as the page does for a
 // session moved to it with /model. Until Claude Code has said what it
 // offers, nothing is added either.
@@ -47,7 +48,13 @@ func (s *Server) withAdded(offered []agent.Model) []agent.Model {
 		}
 		out = append(out, m)
 	}
-	return append(out, gatewayModels(out)...)
+	out = append(out, gatewayModels(out)...)
+	for _, m := range agent.AgyModels() {
+		if !slices.ContainsFunc(out, func(l agent.Model) bool { return l.ID == m.ID }) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // gatewayModels are the models the user's Codex sign-in, Gemini route and

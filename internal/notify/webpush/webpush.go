@@ -109,6 +109,7 @@ type message struct {
 	Session  string `json:"session,omitempty"`
 	Action   string `json:"action,omitempty"`
 	Terminal string `json:"terminal,omitempty"`
+	Board    bool   `json:"board,omitempty"`
 }
 
 // A message is held well inside the 4 KB a push service carries, as a
@@ -126,7 +127,10 @@ func messageOf(n notify.Notice) message {
 	if n.Folder != "" {
 		path += n.Folder + "/"
 	}
-	if n.Session != "" {
+	// The board's opens the board, which says what it needs.
+	if n.Board {
+		path += "?board"
+	} else if n.Session != "" {
 		path += "?session=" + url.QueryEscape(n.Session)
 	} else if n.Action != "" {
 		path += "?output=" + url.QueryEscape(n.Action)
@@ -139,7 +143,11 @@ func messageOf(n notify.Notice) message {
 	} else if line != "" {
 		body = line
 	}
-	return message{ID: n.ID, Kind: n.Kind, Title: clip(n.Title, titleChars), Body: body, URL: path, Folder: n.Folder, Session: n.Session, Action: n.Action, Terminal: n.Terminal}
+	m := message{ID: n.ID, Kind: n.Kind, Title: clip(n.Title, titleChars), Body: body, URL: path, Folder: n.Folder, Session: n.Session, Action: n.Action, Terminal: n.Terminal, Board: n.Board}
+	if n.Board {
+		m.Session = ""
+	}
+	return m
 }
 
 // excerpt is the start of a body, on one line; Markdown's marks are dropped,

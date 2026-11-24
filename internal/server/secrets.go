@@ -39,11 +39,20 @@ func HandleProviders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, gw.Providers())
 }
 
-// HandleAccounts says who Claude Code and Codex are signed in as.
+// HandleAgy says how Antigravity stands: installed, signed in, its models.
+// ?recheck asks agy again.
+func HandleAgy(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, agent.AgyStatus(r.URL.Query().Has("recheck")))
+}
+
+// HandleAccounts says who Claude Code, Codex and agy are signed in as.
 func HandleAccounts(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"claude": agent.ClaudeAccount()}
 	if gw := gateway.Active(); gw != nil {
 		out["codex"] = gw.CodexAccount()
+	}
+	if email := agent.AgyAccount(); email != "" {
+		out["agy"] = map[string]string{"email": email}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

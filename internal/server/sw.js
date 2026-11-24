@@ -28,7 +28,7 @@ self.addEventListener("push", (event) => {
           body: n.body || "",
           tag,
           // id is the notice's, which a page closes the notification by.
-          data: { id: n.id, url: n.url || "/", session: n.session, folder: n.folder, action: n.action, terminal: n.terminal },
+          data: { id: n.id, url: n.url || "/", session: n.session, folder: n.folder, action: n.action, terminal: n.terminal, board: n.board },
           // dv puts both before this file as data (HandleWorker).
           icon: ICON,
           badge: BADGE,
@@ -65,7 +65,7 @@ self.addEventListener("pushsubscriptionchange", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const { url = "/", session, folder, action, terminal } = event.notification.data || {};
+  const { url = "/", session, folder, action, terminal, board } = event.notification.data || {};
   // A hub has each folder at /<slug>/; a lone dv has its one at /.
   const base = folder ? `/${folder}/` : "/";
   event.waitUntil(
@@ -75,7 +75,7 @@ self.addEventListener("notificationclick", (event) => {
       const page = pages.find((p) => new URL(p.url).pathname.startsWith(base));
       if (page) {
         await page.focus().catch(() => {});
-        if (session || action || terminal) page.postMessage({ type: "dv:open", session, action, terminal });
+        if (session || action || terminal || board) page.postMessage({ type: "dv:open", session, action, terminal, board });
         return;
       }
       // Open on another of the hub's folders, it goes there, rather than a

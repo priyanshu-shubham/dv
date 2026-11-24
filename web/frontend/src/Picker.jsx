@@ -127,45 +127,65 @@ export function ModelPicker({ label, models, model, efforts, effort, onPick, usu
 // pane, settings or ticket it is in, else the window. The composer is at the foot of a
 // session but halfway down a new one's page, where opening upwards ran past
 // the top; settings scroll, and cut off what runs past them.
-export function useRoom(open, ref) {
+// down opens it downwards where there is the room, as a menu from a header.
+export function useRoom(open, ref, down = false) {
   const [room, setRoom] = useState(null);
   useLayoutEffect(() => {
     if (!open) return;
-    const pane = ref.current.closest(".agent-pane, .settings-body, .board-doc-body, .p-ticket-scroll")?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
+    // A dialog cuts off what reaches past it, as a short one's foot would a menu.
+    const pane = ref.current.closest(".agent-pane, .settings-body, .board-doc-body, .p-ticket-scroll, .modal")?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
     const h = ref.current.querySelector(".model-list").scrollHeight;
-    setRoom(menuRoom(ref.current.getBoundingClientRect(), h, pane.top, pane.bottom, false));
+    setRoom(menuRoom(ref.current.getBoundingClientRect(), h, pane.top, pane.bottom, down));
   }, [open]);
   return open && room;
 }
 
 // Picker is a menu of choices, as the composer has for the permission mode.
 // gear, { id, title, panel }, puts a settings button on that choice, which
-// turns the menu to the panel.
-export function Picker({ label, title, choices, value, onPick, gear }) {
+// turns the menu to the panel. button is its button's class; down opens it
+// downwards, as from a header. search, its placeholder, puts a box over a long
+// list that narrows it by what is typed, Enter taking the first left.
+export function Picker({ label, title, choices, value, onPick, gear, button = "mini", down = false, search }) {
   const [open, setOpen] = useState(false);
   const [setting, setSetting] = useState(false);
+  const [q, setQ] = useState("");
   const ref = useDismiss(open, () => setOpen(false));
-  const room = useRoom(open, ref);
+  const room = useRoom(open, ref, down);
+  const words = q.trim().toLowerCase();
+  const shown = words ? choices.filter((c) => `${typeof c.label === "string" ? c.label : c.id} ${c.tag || ""}`.toLowerCase().includes(words)) : choices;
+  const pick = (id) => {
+    onPick(id);
+    setOpen(false);
+    setQ("");
+  };
   return (
     <div className="model-menu" ref={ref}>
-      <button className="mini" onClick={() => (setOpen((o) => !o), setSetting(false))} title={title}>
+      <button className={button} onClick={() => (setOpen((o) => !o), setSetting(false))} title={title}>
         {label}
         <IconChevronDown size={10} />
       </button>
       {open && (
         <div className={cx("model-list up", room?.below && "below")} style={room ? { maxHeight: room.max } : undefined}>
+          {search && !setting && (
+            <input
+              className="model-search"
+              autoFocus
+              value={q}
+              placeholder={search}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter" && shown[0]) pick(shown[0].id);
+                if (e.key === "Escape") setOpen(false);
+              }}
+            />
+          )}
+          {search && !setting && !shown.length && <div className="model-note model-empty">Nothing matches.</div>}
           {setting
             ? gear.panel
-            : choices.map((c) => {
+            : shown.map((c) => {
                 const row = (
-                  <button
-                    key={c.id}
-                    className={cx(c.id === value && "on")}
-                    onClick={() => {
-                      onPick(c.id);
-                      setOpen(false);
-                    }}
-                  >
+                  <button key={c.id} className={cx(c.id === value && "on")} onClick={() => pick(c.id)}>
                     <span className="model-name">
                       {c.label}
                       {c.tag && <span className="model-tag">{c.tag}</span>}

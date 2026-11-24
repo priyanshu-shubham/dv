@@ -45,17 +45,22 @@ func folderName(dir string) string {
 // root or a folder under it. A folder name is not unique - /a/b-c and /a/b/c
 // share one - so the caller checks each file's cwd.
 func transcriptFiles(root string) map[string]string {
-	cfg, err := permit.ConfigDir()
-	if err != nil {
-		return nil
+	out := map[string]string{}
+	if cfg, err := permit.ConfigDir(); err == nil {
+		transcriptsIn(filepath.Join(cfg, "projects"), root, out)
 	}
-	base := filepath.Join(cfg, "projects")
+	if base, err := agyProjects(); err == nil {
+		transcriptsIn(base, root, out)
+	}
+	return out
+}
+
+func transcriptsIn(base, root string, out map[string]string) {
 	dirs, err := os.ReadDir(base)
 	if err != nil {
-		return nil
+		return
 	}
 	name := folderName(root)
-	out := map[string]string{}
 	for _, d := range dirs {
 		n := d.Name()
 		mine := n == name || strings.HasPrefix(n, name+"-") ||
@@ -70,7 +75,6 @@ func transcriptFiles(root string) map[string]string {
 			}
 		}
 	}
-	return out
 }
 
 // subagentFiles are the transcripts of the agents a session started, by the id

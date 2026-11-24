@@ -6,6 +6,7 @@ import { Notes, openNotes, Pad } from "./Notes.jsx";
 import { SessionList } from "./Agent.jsx";
 import { TerminalList } from "./Terminal.jsx";
 import { BoardSideList } from "./Board.jsx";
+import { PathFilterPanel } from "./PathFilter.jsx";
 import { BranchRow, ModeSwitch } from "./Header.jsx";
 import {
   IconCheck, IconChevron, IconCollapse, IconComment, IconExpand, IconFile, IconFilter, IconX,
@@ -16,6 +17,7 @@ const MIN_WIDTH = 180;
 const ROW_MARGIN = 20;
 const clampWidth = (w) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.innerWidth / 2)));
 
+
 // The left rail: the mode, over what it lists. In the diff that is the changed
 // files; in Code mode it is the whole repository, with changed files marked
 // as they are in the diff. In Agent mode the tree's place is taken by the
@@ -24,6 +26,7 @@ export default function Sidebar({
   meta, pr, right, mode, files, onOpenIgnored, threads, activePath, viewed, onSelect,
   generatedCount, hideGenerated, onHideGenerated, pathFilter, onPathFilter, filteredOut, hiddenGenerated,
   filtersPaused, onPauseFilters, onReset, oneFile, onOneFile, agent, terminal, board, onWidth, modes, onMode, attached, uncommitted, onFinishWorktree, onLog,
+  guide,
 }) {
   const code = mode === "code";
   const [filter, setFilter] = useState("");
@@ -195,6 +198,8 @@ export default function Sidebar({
         <BoardSideList {...board} />
       ) : (
         <>
+          {/* A board ticket's walkthrough, beside the files it goes through. */}
+          {guide && <div className="sidebar-guide">{guide}</div>}
           <div className="sidebar-filter">
             <input
               value={filter}
@@ -241,30 +246,13 @@ export default function Sidebar({
             )}
           </div>
           {!code && pathFilterOpen && (
-            <div className="path-filter">
-              <label className="check">
-                <input type="checkbox" className="tick" checked={hideGenerated} onChange={(e) => onHideGenerated(e.target.checked)} />
-                Hide generated files
-                <span className="count">{generatedCount}</span>
-              </label>
-              {[
-                ["include", "files to include", "src/, *.go"],
-                ["exclude", "files to exclude", "*_test.go, docs/"],
-              ].map(([key, label, hint]) => (
-                <label key={key}>
-                  {label}
-                  <input
-                    value={pathFilter[key]}
-                    placeholder={hint}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      onPathFilter((f) => ({ ...f, [key]: v }));
-                    }}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  />
-                </label>
-              ))}
-            </div>
+            <PathFilterPanel
+              hideGenerated={hideGenerated}
+              onHideGenerated={onHideGenerated}
+              generatedCount={generatedCount}
+              pathFilter={pathFilter}
+              onPathFilter={onPathFilter}
+            />
           )}
           {!code && hidden > 0 && (
             <div className={cx("filter-note", filtersPaused && "paused")}>

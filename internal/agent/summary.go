@@ -17,7 +17,8 @@ import (
 type Session struct {
 	ID      string    `json:"id"`
 	Title   string    `json:"title"`
-	Prompt  string    `json:"prompt"` // the first thing asked, which names a session with no title
+	Agent   string    `json:"agent,omitempty"` // "agy"; "" is Claude Code
+	Prompt  string    `json:"prompt"`          // the first thing asked, which names a session with no title
 	Cwd     string    `json:"cwd"`
 	Branch  string    `json:"branch,omitempty"`
 	Updated time.Time `json:"updated"`

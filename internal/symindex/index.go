@@ -122,6 +122,8 @@ func (ix *Index) Build() {
 	ix.mu.Unlock()
 }
 
+func (ix *Index) Files() ([]string, error) { return ix.lister.TrackedFiles() }
+
 // Use says a page is using the index, which starts building it if it has not
 // been, and keeps it for idleAfter more.
 func (ix *Index) Use() {

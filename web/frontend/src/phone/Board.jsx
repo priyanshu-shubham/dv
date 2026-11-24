@@ -5,7 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { cx } from "../util.js";
 import {
-  allLabels, canView, cardState, createTicket, Doc, firstView, Foot, LABEL, LabelEditor, Labels, needsYou, NewTicket, PRBadge, Related, SendBack, STAGE_VIEW, stageAgent, stageAgents, STAGES, StateGlyph, Steps, useBoard, useTicket,
+  allLabels, byPriority, canView, cardState, createTicket, Doc, firstView, Foot, isQuiet, PriorityMark, LABEL, LabelEditor, Labels, needsYou, NewTicket, NothingNote, PRBadge, StageAge, Related, SendBack, STAGE_VIEW, stageAgent, startEarly, stageAgents, STAGES, StateGlyph, Steps, Suggested, useBoard, useTicket,
 } from "../Board.jsx";
 import { useBack } from "./back.js";
 import { Icon } from "./icons.jsx";
@@ -36,7 +36,9 @@ export default function PhoneBoard({ shown, models, onOpenSession, onOpenFile })
   const move = (id, stage) => {
     const t = byId[id];
     if (ORDER[stage] < ORDER[t.stage] && stage !== "inbox") return setBack({ id, stage });
-    act(api.moveTicket(id, stage));
+    const early = t.stage === "inbox" && stage !== "inbox" && t.blocked?.length > 0;
+    if (early && !confirm(startEarly(t))) return;
+    return act(api.moveTicket(id, stage, "", early));
   };
 
   const q = search.trim().toLowerCase();
@@ -49,7 +51,12 @@ export default function PhoneBoard({ shown, models, onOpenSession, onOpenFile })
     )
     .map((t) => ({ t, s: cardState(t, byId) }));
   const needs = rows.filter(({ s, t }) => needsYou(s) && !t.archived);
-  const groups = STAGES.map(([k, l]) => [l, rows.filter(({ t, s }) => t.stage === k && !(needsYou(s) && !t.archived))]).filter(([, list]) => list.length);
+  // A stage's waiting tickets under the rest, as on a computer.
+  const groups = STAGES.map(([k, l]) => {
+    const list = rows.filter(({ t, s }) => t.stage === k && !(needsYou(s) && !t.archived));
+    const prio = (a, b) => byPriority(a.t, b.t);
+    return [l, [...list.filter(({ s }) => !isQuiet(s)).sort(prio), ...list.filter(({ s }) => isQuiet(s)).sort(prio)]];
+  }).filter(([, list]) => list.length);
 
   const row = ({ t, s }) => (
     <button key={t.id} className={cx("p-row p-ticket", needsYou(s) && !t.archived && "needs")} onClick={() => setOpenId(t.id)}>
@@ -57,7 +64,9 @@ export default function PhoneBoard({ shown, models, onOpenSession, onOpenFile })
         <span className="p-ticket-top">
           <span className="board-id">{t.id}</span>
           <span className="p-ticket-stage">{LABEL[t.stage]}</span>
+          <PriorityMark p={t.priority} />
           <PRBadge t={t} />
+          <StageAge t={t} />
         </span>
         <span className="p-ticket-title">{t.title}</span>
         {s && !t.archived && (
@@ -108,6 +117,8 @@ export default function PhoneBoard({ shown, models, onOpenSession, onOpenFile })
       {adding && (
         <NewTicket
           known={known}
+          models={models}
+          picks={board.picks}
           onClose={() => setAdding(false)}
           onCreate={(t) =>
             createTicket(t).then((made) => {
@@ -183,8 +194,17 @@ function TicketScreen({ id, summary, byId, known, drives, models, onBack, onOpen
       <div className="p-ticket-scroll">
         <div className="p-ticket-labels">
           <LabelEditor labels={t.labels} known={known} onChange={(labels) => act(api.patchTicket(t.id, { labels }))} />
-          <Related t={t} byId={byId} onOpen={onOpenTicket} />
+          <Related t={t} byId={byId} onOpen={onOpenTicket} onWaits={drives && !t.archived ? (after) => act(api.patchTicket(t.id, { after })) : undefined} />
         </div>
+        <NothingNote t={t} />
+        <Suggested t={t} drives={drives} act={act} />
+        {t.askingSession && (
+          <div className="p-ticket-agents">
+            <button className="p-chip on" onClick={() => onOpenSession(t.askingSession)}>
+              An agent is waiting on your answer · Open it
+            </button>
+          </div>
+        )}
         <Steps t={t} shown={shown} onPick={setView} />
         {agents.length > 0 && (
           <div className="p-ticket-agents">
@@ -197,10 +217,10 @@ function TicketScreen({ id, summary, byId, known, drives, models, onBack, onOpen
           </div>
         )}
         <div className="p-ticket-doc">
-          <Doc t={t} docs={data.docs} versions={data.versions} tab={STAGE_VIEW[shown][0]} models={models} drives={drives} act={act} onSession={onOpenSession} onOpenFile={onOpenFile} />
+          <Doc t={t} remote={data.remote} docs={data.docs} versions={data.versions} mockups={data.mockups} parent={data.parent} tab={STAGE_VIEW[shown][0]} models={models} drives={drives} act={act} onSession={onOpenSession} onOpenFile={onOpenFile} changes={data.changes} />
         </div>
       </div>
-      <Foot t={t} drives={drives} onMove={onMove} act={act} />
+      <Foot t={t} remote={data.remote} drives={drives} models={models} onMove={onMove} act={act} />
     </>
   );
 }

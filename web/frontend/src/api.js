@@ -133,9 +133,13 @@ function follow(path, onEvent, onDrop, at = base, reopen = false) {
   return stream(at + path, (e) => onEvent(JSON.parse(e.data)), onDrop, reopen);
 }
 
+// scope.in, a board ticket's ID, compares in its worktree.
 const scopeQuery = (scope) => {
   const p = new URLSearchParams({ scope: scope.kind });
   if (scope.rev) p.set("rev", scope.rev);
+  if (scope.in) p.set("in", scope.in);
+  // A stretch of a branch's commits: its own changes, not what it merged in.
+  if (scope.own) p.set("own", "1");
   return p;
 };
 
@@ -143,6 +147,9 @@ export const api = {
   meta: () => req("/api/meta"),
 
   diffList: (scope) => req(`/api/diff?${scopeQuery(scope)}`),
+  // diffCommits is the commits a comparison covers: { base, commits (newest
+  // first), worktree, uncommitted }.
+  diffCommits: (scope) => req(`/api/diff/commits?${scopeQuery(scope)}`),
 
   // version fingerprints the repository; it moves whenever any diff could have.
   // Polled, so tried once, and given up on in time for the page to say dv is
@@ -214,7 +221,9 @@ export const api = {
     return `${base}/api/media?${p}`;
   },
 
-  files: (q, limit = 60) => req(`/api/files?${new URLSearchParams({ q, limit: String(limit) })}`),
+  // inTicket, here and in symbols and search, looks in that board ticket's
+  // worktree, whose paths come back as its own.
+  files: (q, limit = 60, inTicket = "") => req(`/api/files?${new URLSearchParams({ q, limit: String(limit), in: inTicket })}`),
 
   // tree lists every file on the scope's new side, for Code mode's explorer.
   tree: (scope, open = []) => {
@@ -241,9 +250,24 @@ export const api = {
   // patch: any of { title, request, templates, model }.
   patchTicket: (id, patch) => req(`/api/board/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTicket: (id) => req(`/api/board/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  moveTicket: (id, stage, note = "") => req(`/api/board/${encodeURIComponent(id)}/move`, { method: "POST", body: JSON.stringify({ stage, note }) }),
+  // anyway starts a ticket out of the Inbox though what it waits for isn't merged.
+  moveTicket: (id, stage, note = "", anyway = false) =>
+    req(`/api/board/${encodeURIComponent(id)}/move`, { method: "POST", body: JSON.stringify({ stage, note, anyway }) }),
   // comments: [{ quote, text }] on doc, "ticket" or "plan", for the agent writing it to revise.
   commentTicket: (id, doc, comments) => req(`/api/board/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ doc, comments }) }),
+  // replyComment is the reader's turn on a comment sent: { text } to its author, or { resolved }.
+  replyComment: (id, cid, turn) =>
+    req(`/api/board/${encodeURIComponent(id)}/comments/${encodeURIComponent(cid)}`, { method: "POST", body: JSON.stringify(turn) }),
+  // suggestion files a follow-up an agent suggested, to the Inbox, or dismisses it.
+  suggestion: (id, sid, file) => req(`/api/board/${encodeURIComponent(id)}/suggestions/${encodeURIComponent(sid)}`, { method: "POST", body: JSON.stringify({ file }) }),
+  // nothing closes a ticket an agent found needs no change, or tells it note.
+  nothing: (id, close, note = "") => req(`/api/board/${encodeURIComponent(id)}/nothing`, { method: "POST", body: JSON.stringify({ close, note }) }),
+  editSuggestion:(id, sid, title, request) =>
+    req(`/api/board/${encodeURIComponent(id)}/suggestions/${encodeURIComponent(sid)}`, { method: "PATCH", body: JSON.stringify({ title, request }) }),
+  // publishTicket pushes the ticket's branch and opens its pull request.
+  publishTicket: (id) => req(`/api/board/${encodeURIComponent(id)}/publish`, { method: "POST", body: "{}" }),
+  // codeComments: [{ file, start, end, side, quote, text }], to the builder.
+  codeComments: (id, comments) => req(`/api/board/${encodeURIComponent(id)}/code-comments`, { method: "POST", body: JSON.stringify({ comments }) }),
   reviewPlan: (id) => req(`/api/board/${encodeURIComponent(id)}/plan-review`, { method: "POST", body: "{}" }),
   runRound: (id) => req(`/api/board/${encodeURIComponent(id)}/round`, { method: "POST", body: "{}" }),
   // image: { mediaType, data }, data in base64.
@@ -279,15 +303,15 @@ export const api = {
 
   // from is the file the reader is in. The server does not filter by it, it
   // ranks by it, so the nearest definition comes back first.
-  symbols: (q, from = "", limit = 60) =>
-    req(`/api/symbols?${new URLSearchParams({ q, from, limit: String(limit) })}`),
+  symbols: (q, from = "", limit = 60, inTicket = "") =>
+    req(`/api/symbols?${new URLSearchParams({ q, from, limit: String(limit), in: inTicket })}`),
 
   // draft: { path, text }, a file as an edit not yet made would leave it,
   // read in place of the one on disk.
-  resolveSymbol: (name, from = "", draft) =>
+  resolveSymbol: (name, from = "", draft, inTicket = "") =>
     draft
       ? req("/api/symbols", { method: "POST", body: JSON.stringify({ name, from, draft }) })
-      : req(`/api/symbols?${new URLSearchParams({ name, from })}`),
+      : req(`/api/symbols?${new URLSearchParams({ name, from, in: inTicket })}`),
 
   refreshSymbols: () => req("/api/symbols/refresh", { method: "POST" }),
 
@@ -399,6 +423,7 @@ export const api = {
     if (opts.caseSens) p.set("case", "1");
     if (opts.wholeWord) p.set("word", "1");
     if (opts.glob) p.set("glob", opts.glob);
+    if (opts.inTicket) p.set("in", opts.inTicket);
     return req(`/api/search?${p}`);
   },
 
@@ -450,6 +475,8 @@ export const api = {
   providers: () => req("/api/providers", {}, ""),
   // accounts: { claude: { email, subscriptionType, apiProvider } | null, codex: { email, plan } | { error } }
   accounts: () => req("/api/accounts", {}, ""),
+  // agy: { installed, version, probing, signIn, error, models, checked }, how Antigravity stands; recheck asks agy again
+  agy: (recheck) => req("/api/agy" + (recheck ? "?recheck" : ""), {}, ""),
   secretValue: (name) => req(`/api/secrets/${encodeURIComponent(name)}/value`, {}, ""),
   // secretScan: { found }, what in text looks like a secret and isn't masked
   secretScan: (text) => req("/api/secrets/scan", { method: "POST", body: JSON.stringify({ text }) }, ""),

@@ -20,6 +20,24 @@ type side struct {
 	as       string // what the reader knows rev by, as "#12" for a pull request's head
 }
 
+// Commits lists the commits a comparison covers, newest first, at most n: from
+// its old side to its new, the new being HEAD where it is the working tree.
+// worktree is whether it runs on to the working tree. A side that is the index
+// or the empty tree has none to list.
+func (r *Repo) Commits(s *Scope, n int) (base string, commits []Commit, worktree bool) {
+	if s.old.rev == "" || s.old.empty || s.new.index {
+		return "", nil, false
+	}
+	end := s.new.rev
+	if s.new.worktree {
+		end = "HEAD"
+	}
+	if end == "" {
+		return "", nil, false
+	}
+	return s.old.rev, r.Log(s.old.rev+".."+end, n), s.new.worktree
+}
+
 func (s side) spec(path string) string {
 	switch {
 	case s.index:

@@ -163,7 +163,14 @@ export function markMatches(name, matches) {
 // path. Until something is typed it offers the files read lately, the last 5,
 // then the rest of this diff's; once it is, those read lately that match lead.
 const RECENT_SHOWN = 5;
-export function FilePalette({ initialQuery = "", changed, recent = [], onOpen, onClose, onBack, backTo }) {
+const NO_FILES = [];
+// within, { id, root }, is a board ticket open: its worktree's files are the
+// ones offered, opened by their path under root.
+export function FilePalette({ initialQuery = "", changed: diffChanged, recent: read = [], within, onOpen: open, onClose, onBack, backTo }) {
+  const root = within?.root || "";
+  const changed = within ? NO_FILES : diffChanged;
+  const recent = useMemo(() => (root ? read.filter((p) => p.startsWith(root)).map((p) => p.slice(root.length)) : read), [read, root]);
+  const onOpen = (path, q) => open(root + path, q);
   const [q, setQ] = useState(initialQuery);
   const [res, setRes] = useState(null);
   const debounced = useDebounced(q.trim(), 60);
@@ -181,7 +188,7 @@ export function FilePalette({ initialQuery = "", changed, recent = [], onOpen, o
   useEffect(() => {
     let live = true;
     api
-      .files(debounced)
+      .files(debounced, 60, within?.id)
       .then((r) => {
         if (!live) return;
         setRes(r);
@@ -191,7 +198,7 @@ export function FilePalette({ initialQuery = "", changed, recent = [], onOpen, o
     return () => {
       live = false;
     };
-  }, [debounced]);
+  }, [debounced, within?.id]);
 
   return (
     <Modal onClose={onClose} onBack={onBack} className="palette">
@@ -201,7 +208,7 @@ export function FilePalette({ initialQuery = "", changed, recent = [], onOpen, o
         <input
           autoFocus
           value={q}
-          placeholder="Go to file..."
+          placeholder={within ? `Go to file in ${within.id}'s worktree...` : "Go to file..."}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKey}
         />
@@ -238,13 +245,15 @@ export function FilePalette({ initialQuery = "", changed, recent = [], onOpen, o
           );
         })}
         {hits.length === 0 && (
-          <div className="empty">{debounced ? "No files match." : "Type to search the repository's files."}</div>
+          <div className="empty">{debounced ? "No files match." : within ? `Type to search ${within.id}'s files.` : "Type to search the repository's files."}</div>
         )}
       </div>
       {res && (
         <div className="palette-foot dim">
           {debounced
             ? `${res.matched.toLocaleString()} of ${res.total.toLocaleString()} files match`
+            : within
+            ? `${res.total.toLocaleString()} files in ${within.id}'s worktree`
             : `${changed.length} changed file${changed.length === 1 ? "" : "s"} - type to search all ${res.total.toLocaleString()}`}
         </div>
       )}
@@ -260,7 +269,11 @@ const DEFS_SHOWN = 5;
 // the symbol index first, then the lines that contain it, grouped by file. A
 // Cmd/Ctrl+clicked identifier that did not resolve to exactly one definition
 // opens it seeded with its candidates, the text narrowed to the whole word.
-export function SearchPanel({ initialQuery = "", seed, source, draft, from = "", opts = {}, place, onOpen, onLeave, onClose, onBack, backTo }) {
+// within, { id, root }, is a board ticket open: its worktree is searched, and
+// what is found goes by its path under root, shown without it.
+export function SearchPanel({ initialQuery = "", seed, source, draft, from = "", opts = {}, place, within, onOpen, onLeave, onClose, onBack, backTo }) {
+  const root = within?.root || "";
+  const shortPath = (f) => (root && f.startsWith(root) ? f.slice(root.length) : f);
   const [query, setQuery] = useState(initialQuery);
   const inputRef = useRef(null);
   // A query it opens with was picked up elsewhere, so typing replaces it.
@@ -287,17 +300,17 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
     }
     let live = true;
     api
-      .symbols(debouncedName, from)
+      .symbols(debouncedName, root ? "" : from, 60, within?.id)
       .then((r) => {
         if (!live) return;
-        setDefs(r.hits || []);
+        setDefs((r.hits || []).map((h) => (root ? { ...h, file: root + h.file } : h)));
         setStatus(r.status);
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [debouncedName, seeded, seed, regex, from]);
+  }, [debouncedName, seeded, seed, regex, from, root, within?.id]);
 
   useEffect(() => {
     if (!debounced.trim()) {
@@ -308,14 +321,14 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
     let live = true;
     setBusy(true);
     api
-      .search({ query: debounced, regex, caseSens, wholeWord, glob: debouncedGlob })
-      .then((r) => live && (setRes(r), setError("")))
+      .search({ query: debounced, regex, caseSens, wholeWord, glob: debouncedGlob, inTicket: within?.id })
+      .then((r) => live && (setRes(root ? { ...r, matches: r.matches.map((m) => ({ ...m, file: root + m.file })) } : r), setError("")))
       .catch((e) => live && (setError(e.message), setRes(null)))
       .finally(() => live && setBusy(false));
     return () => {
       live = false;
     };
-  }, [debounced, regex, caseSens, wholeWord, debouncedGlob]);
+  }, [debounced, regex, caseSens, wholeWord, debouncedGlob, root, within?.id]);
 
   const groups = useMemo(() => {
     const m = new Map();
@@ -387,7 +400,7 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
           ref={inputRef}
           autoFocus
           value={query}
-          placeholder="Search definitions and text..."
+          placeholder={within ? `Search ${within.id}'s worktree...` : "Search definitions and text..."}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
         />
@@ -409,8 +422,8 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
         <input
           className="glob"
           value={glob}
-          placeholder="*.go"
-          title="Only text in files matching this"
+          placeholder="*.go !*_test.go"
+          title="Only text in files matching these patterns, apart by spaces or commas; one starting with ! leaves its files out"
           onChange={(e) => setGlob(e.target.value)}
           onKeyDown={(e) => e.stopPropagation()}
         />
@@ -444,7 +457,7 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
                 <span className="spacer" />
                 <span className="dim loc">
                   {LRM}
-                  {h.file}:{h.line}
+                  {shortPath(h.file)}:{h.line}
                 </span>
               </button>
             ))}
@@ -472,7 +485,7 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
         {groups.map(([file, hits]) => (
           <div className="search-group" key={file}>
             <div className="search-file">
-              {file} <span className="dim">{hits.length}</span>
+              {shortPath(file)} <span className="dim">{hits.length}</span>
             </div>
             {hits.map((h, i) => {
               const at = n++;
@@ -498,7 +511,7 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
         )}
       </div>
       {wide && shown && (
-        <SearchPreview file={shown.file} line={shown.line} draft={shown.draft && draft} re={re} cache={cache} onOpen={(line) => open(sel, line)} />
+        <SearchPreview file={shown.file} name={shortPath(shown.file)} line={shown.line} draft={shown.draft && draft} re={re} cache={cache} onOpen={(line) => open(sel, line)} />
       )}
       </div>
       {(res || status) && (
@@ -507,9 +520,9 @@ export function SearchPanel({ initialQuery = "", seed, source, draft, from = "",
             .filter(Boolean)
             .join(" · ")}
           <span className="spacer" />
-          <button className="ghost" onClick={() => api.refreshSymbols().then(setStatus)} title="Rebuild the symbol index">
+          {!within && <button className="ghost" onClick={() => api.refreshSymbols().then(setStatus)} title="Rebuild the symbol index">
             <IconRefresh size={12} />
-          </button>
+          </button>}
         </div>
       )}
     </Modal>
@@ -524,7 +537,7 @@ const PREVIEW_AROUND = 150;
 // SearchPreview is the file around the selected result as it is on disk,
 // or for a definition in a draft as the edit would leave it, its line marked;
 // each file is fetched once, into cache. A click on a line opens the file there.
-function SearchPreview({ file, line, draft, re, cache, onOpen }) {
+function SearchPreview({ file, name = file, line, draft, re, cache, onOpen }) {
   const key = (draft ? "draft:" : "") + file;
   const [data, setData] = useState(() => cache.get(key) || null);
   const [, force] = useState(0);
@@ -559,7 +572,7 @@ function SearchPreview({ file, line, draft, re, cache, onOpen }) {
     <div className="search-preview">
       <div className="search-file">
         {LRM}
-        {file}
+        {name}
         <span className="dim">:{line}</span>
       </div>
       <div className="search-preview-body" ref={bodyRef}>
@@ -1788,6 +1801,8 @@ function Models({ settings, onChange, list }) {
       <SignIns />
       <div className="settings-heading">Gemini</div>
       <Gemini settings={settings} onChange={onChange} />
+      <div className="settings-heading">Antigravity</div>
+      <Antigravity settings={settings} onChange={onChange} />
       <Providers settings={settings} onChange={onChange} />
       {list && (
         <>
@@ -1824,7 +1839,7 @@ function SignIns() {
     return () => clearTimeout(timer);
   }, []);
   if (!acc) return null;
-  const { claude, codex } = acc;
+  const { claude, codex, agy } = acc;
   const row = (name, note, bad) => (
     <div className="settings-row">
       <div className="settings-text">
@@ -1845,6 +1860,7 @@ function SignIns() {
         !claude && gaveUp,
       )}
       {codex && row("Codex", codex.error || [codex.email, codex.plan && `ChatGPT ${capital(codex.plan)}`].filter(Boolean).join(" · "), !!codex.error)}
+      {agy && row("Antigravity", agy.email)}
     </>
   );
 }
@@ -1965,6 +1981,64 @@ function Gemini({ settings, onChange }) {
         onPick={(v) => onChange({ vertexLocation: v === "global" ? undefined : v })}
         choices={VERTEX_REGIONS}
       />
+    </>
+  );
+}
+
+// Antigravity is agy, Google's own CLI, run by dv as a session of its own
+// with the user's Google sign-in - within Google's terms, as editors run it
+// over ACP. Its models are heard from agy, which takes a while to start.
+function Antigravity({ settings, onChange }) {
+  const off = !!settings.agyOff;
+  const [st, setSt] = useState(null);
+  const [rechecks, setRechecks] = useState(0);
+  useEffect(() => {
+    if (off) return;
+    let timer;
+    const ask = (recheck) =>
+      api.agy(recheck).then(
+        (s) => {
+          setSt(s);
+          if (s.probing) timer = setTimeout(() => ask(false), 2000);
+        },
+        () => {},
+      );
+    ask(rechecks > 0);
+    return () => clearTimeout(timer);
+  }, [off, rechecks]);
+  const power = (
+    <Setting
+      label="In the model picker"
+      note="Antigravity's models run in agy, Google's own CLI, with your Google sign-in. A session started on one stays with agy."
+      value={!off}
+      onPick={(on) => onChange({ agyOff: on ? undefined : true })}
+      choices={OFF_ON}
+    />
+  );
+  if (off || !st) return power;
+  let note, bad;
+  if (!st.installed) [note, bad] = ["agy isn't installed: curl -fsSL https://antigravity.google/cli/install.sh | bash", true];
+  else if (st.probing) note = "Asking agy for its models…";
+  else if (st.signIn) [note, bad] = ["Not signed in: run agy in a terminal once and sign in with your Google account.", true];
+  else if (st.error) [note, bad] = [st.error, true];
+  else if (st.models) note = `${st.models} models in the model picker${st.version ? `, from agy ${st.version}` : ""}.`;
+  else note = "No models heard from agy yet.";
+  return (
+    <>
+      {power}
+      <div className="settings-row">
+        <div className="settings-text">
+          <div>agy</div>
+          <div className={cx("settings-note", bad && "prompt-error")}>{note}</div>
+        </div>
+        {st.installed && !st.probing && (
+          <span className="settings-actions">
+            <button className="btn" onClick={() => setRechecks((n) => n + 1)}>
+              Check again
+            </button>
+          </span>
+        )}
+      </div>
     </>
   );
 }
@@ -2859,6 +2933,7 @@ export function HelpOverlay({ onClose }) {
         ["/", "Filter the file list"],
         ["[ / ]", "Previous / next file (also Shift+P / Shift+N)"],
         ["n / p", "Next / previous change (one file at a time, on into the next file)"],
+        [isMac ? "⌥← / ⌥→" : "Alt+← / Alt+→", "Previous / next step of a ticket's walkthrough, while walking it, here or in the ticket"],
         ["f", "View the whole file at the focused line"],
         ["c", "Comment on the focused line"],
         ["a", "Ask about the focused line, or the file, in the Ask panel"],

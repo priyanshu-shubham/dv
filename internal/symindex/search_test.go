@@ -85,3 +85,49 @@ v := r.XGetRootInfo(ctx)
 		}
 	}
 }
+
+// TestSearchFileFilter: the filter takes several patterns, by spaces or
+// commas, and one starting with ! leaves its files out, in either engine.
+func TestSearchFileFilter(t *testing.T) {
+	files := map[string]string{
+		"cmd/run.go":      "Workers\n",
+		"cmd/run_test.go": "Workers\n",
+		"lib/pool.go":     "Workers\n",
+		"lib/pool.ts":     "Workers\n",
+		"docs/notes.md":   "Workers\n",
+	}
+	ix := build(t, files)
+	var listed []string
+	for p := range files {
+		listed = append(listed, p)
+	}
+	ix.lister = fakeLister{listed}
+	cases := []struct {
+		glob string
+		want []string
+	}{
+		{"!*_test.go", []string{"cmd/run.go", "docs/notes.md", "lib/pool.go", "lib/pool.ts"}},
+		{"*.go !*_test.go", []string{"cmd/run.go", "lib/pool.go"}},
+		{"*.go, *.md", []string{"cmd/run.go", "cmd/run_test.go", "docs/notes.md", "lib/pool.go"}},
+		{"lib/** !*.ts", []string{"lib/pool.go"}},
+	}
+	engines := map[string]func(SearchOpts) (*SearchResult, error){"builtin": ix.searchBuiltin}
+	if rgPath != "" {
+		engines["rg"] = ix.searchRG
+	}
+	for engine, search := range engines {
+		for _, c := range cases {
+			res, err := search(SearchOpts{Query: "Workers", Glob: c.glob, MaxMatches: 100})
+			var got []string
+			if err == nil {
+				for _, m := range res.Matches {
+					got = append(got, m.File)
+				}
+				slices.Sort(got)
+			}
+			if !slices.Equal(got, c.want) {
+				t.Errorf("%s, %q: %q, %v; want %q", engine, c.glob, got, err, c.want)
+			}
+		}
+	}
+}

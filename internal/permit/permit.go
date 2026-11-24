@@ -24,6 +24,7 @@ type Request struct {
 	ID      string          `json:"id"`
 	Session string          `json:"session"`
 	Agent   string          `json:"agent,omitempty"` // set when a subagent is asking
+	By      string          `json:"by,omitempty"`    // the agent asking where it is not Claude: "Antigravity"
 	Tool    string          `json:"tool"`
 	Input   json.RawMessage `json:"input"`
 	// DV marks a session dv runs, where no terminal is asking alongside.
@@ -32,7 +33,7 @@ type Request struct {
 	// form a hook hands back to apply one.
 	Suggestions []json.RawMessage `json:"suggestions,omitempty"`
 	At          time.Time         `json:"at"`
-	Previews []*Preview `json:"previews,omitempty"`
+	Previews    []*Preview        `json:"previews,omitempty"`
 	// Headline finishes "Claude wants to": what, and to what.
 	Headline string   `json:"headline"`
 	Options  []Option `json:"options"`

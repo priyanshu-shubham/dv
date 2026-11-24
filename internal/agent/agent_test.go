@@ -1066,6 +1066,14 @@ func TestUsageIsThePlansWindows(t *testing.T) {
 	if u == nil || u.Session != nil || len(u.Models) != 1 || *u.Models[0] != (Limit{Model: "Fable", Percent: 16, ResetsAt: "2026-11-18T11:00:00Z"}) {
 		t.Fatalf("a model's own limit: %+v", u)
 	}
+	fable := &Usage{Models: []*Limit{{Model: "Fable", Percent: 16, ResetsAt: time.Now().Add(time.Hour).Format(time.RFC3339)}, {Model: "Old", ResetsAt: "2026-01-01T00:00:00Z"}}}
+	snap := usageFrom(json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"seven_day":{"utilization":15}}}`)).keepingModels(fable)
+	if snap.Week.Percent != 15 || len(snap.Models) != 1 || snap.Models[0].Model != "Fable" {
+		t.Fatalf("an answer from the snapshot drops the model limits: %+v", snap)
+	}
+	if none := usageFrom(json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"seven_day":{"utilization":15},"model_scoped":[]}}`)).keepingModels(fable); len(none.Models) != 0 {
+		t.Fatalf("an answer listing none keeps the old: %+v", none.Models)
+	}
 	if usageFrom(json.RawMessage(`{"rate_limits_available":false,"rate_limits":null}`)) != nil {
 		t.Fatal("an account without plan limits has usage")
 	}
@@ -1852,5 +1860,26 @@ func TestAReusedPidIsNotTheSessionsProcess(t *testing.T) {
 	}
 	if startedAt(os.Getpid(), start+"0") {
 		t.Fatal("another start time passed")
+	}
+}
+
+// A session not started since dv was shows the model and effort it will
+// start on, not the model's default effort.
+func TestAnUnstartedSessionShowsItsPick(t *testing.T) {
+	root, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	dir := filepath.Join(cfg, "projects", folderName(root))
+	os.MkdirAll(dir, 0o755)
+	first := user("u1", "", "plan it")
+	first["cwd"] = root
+	os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(line(t, first)), 0o644)
+	saved, _ := store.OpenSessions(root)
+	saved.SetPicked("s1", store.Pick{Model: "opus", Effort: "high"})
+	m := New(root, permit.New(root), saved)
+	sub, stop := m.Follow("s1", "")
+	defer stop()
+	<-sub.Changed
+	if u := m.Update("s1", sub); u.Live.Model != "opus" || u.Live.Effort != "high" {
+		t.Fatalf("shown on %q at %q effort", u.Live.Model, u.Live.Effort)
 	}
 }

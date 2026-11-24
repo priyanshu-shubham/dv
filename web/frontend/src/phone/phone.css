@@ -3098,7 +3098,8 @@ html.phone .notice .notice-actions button {
   padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
 
-.p-ticket-screen .board-foot > button {
+.p-ticket-screen .board-foot > button,
+.p-ticket-screen .board-next > button {
   height: 40px;
 }
 

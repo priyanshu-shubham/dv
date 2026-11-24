@@ -45,6 +45,7 @@ import {
   useLasting,
   useMedia,
   selectedAttr,
+  usePersisted,
 } from "./util.js";
 import { readPref, setPref, usePref } from "./prefs.js";
 import { slug } from "./boot.js";
@@ -628,7 +629,7 @@ export default function AgentView({
   const from = fromBy[id] || "";
   const { items: read, live, earlier, lost: dropped, more } = useSession(id, "", from);
   const items = useMemo(() => withWorked(read, !!live?.busy), [read, live?.busy]);
-  const name = "Claude";
+  const name = live?.agent === "agy" ? "Antigravity" : "Claude";
   const { available, models = NO_MODELS, mode: defaultMode } = agents[""];
   const [unaskedText] = usePref("user", "unaskedEdits", "");
   const modes = useMemo(() => {
@@ -1641,11 +1642,17 @@ export default function AgentView({
     chosen;
   const modelLabel = nameOf(live?.using) || (!live?.model && live?.lastModel && (onModel?.label || nameOf(live.lastModel))) || chosen?.label || asked?.model;
   const effort = live?.effortUsing || asked?.effort || onModel?.effort || "";
-  // Taken off the menu in Settings, but for the one the session is on.
+  // Taken off the menu in Settings, but for the one the session is on. Once
+  // something is said, a session stays with its agent: agy's models or Claude
+  // Code's, as neither takes up the other's conversation.
   const [hiddenModels] = usePref("user", "hiddenModels", NO_HIDDEN);
+  const agyOnly = live?.found ? live.agent === "agy" : null;
   const shownChoices = useMemo(
-    () => choices.filter((c) => !hiddenModels.includes(c.id) || c.id === onModel?.id),
-    [choices, hiddenModels, onModel?.id],
+    () =>
+      choices.filter(
+        (c) => (!hiddenModels.includes(c.id) || c.id === onModel?.id) && (agyOnly === null || c.id.startsWith("agy/") === agyOnly),
+      ),
+    [choices, hiddenModels, onModel?.id, agyOnly],
   );
 
   // Asked here, where the terminal would ask it, one at a time.
@@ -1654,9 +1661,10 @@ export default function AgentView({
   const [drafts, setDrafts] = useState({}); // request id -> { note, comments }
   // The message box gives way to a request as the terminal's does, but not
   // with a message half written, where a digit typed next would answer it.
+  // A board ticket's agent is the one being talked to there, so it does too.
   const grabFocus = () => {
     const a = document.activeElement;
-    return activeRef.current && (!a || a === document.body || (a === inputRef.current && !a.value));
+    return (activeRef.current || (active && replies)) && (!a || a === document.body || (a === inputRef.current && !a.value));
   };
   // Nor while the reader is pressing keys: an empty box is also where Shift+Tab
   // steps the mode, and the next one would answer the request instead. It shows
@@ -2183,11 +2191,24 @@ export default function AgentView({
     );
   }
 
+  // A board ticket's agent works in the ticket's worktree, inside the
+  // repository: a file it names is that worktree's copy, not this checkout's.
+  const worktree = session?.cwd?.startsWith(root + "/.dv/worktrees/") ? session.cwd.slice(root.length + 1) + "/" : "";
+  const inWorktree = (e) => {
+    const a = worktree && e.target.closest?.("a.path-link");
+    if (!a?.dataset.path || !onOpenFile) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p = a.dataset.path;
+    onOpenFile(p.startsWith(".dv/") ? p : worktree + p, Number(a.dataset.line) || 0);
+  };
+
   return (
     <AttachTarget.Provider value={attachTarget}>
     <OpenCall.Provider value={setPeek}>
     <Pictures.Provider value={pictures}>
-    <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef}>
+    <SessionDir.Provider value={session?.cwd || ""}>
+    <div className={cx("agent-pane", docked && "docked")} hidden={!active} ref={paneRef} onClickCapture={inWorktree}>
       {/* Docked, the selection is the surrounding view's, unless replies says
           the session is the one to quote it to, as a ticket's agent is. */}
       {(!docked || replies) && (
@@ -2263,7 +2284,7 @@ export default function AgentView({
                 </button>
               )}
               <button className="ghost" onClick={onAskToAgent} title="Open in the Agent view, as a session in the list">
-                <IconForward size={13} />
+                <IconOpenOut size={13} />
               </button>
             </>
           )}
@@ -2510,6 +2531,7 @@ export default function AgentView({
         />
       )}
     </div>
+    </SessionDir.Provider>
     </Pictures.Provider>
     </OpenCall.Provider>
     </AttachTarget.Provider>
@@ -2525,6 +2547,10 @@ const OpenCall = createContext(null);
 // Pictures is every picture in the conversation, in order, which a full-size
 // one steps through with the arrow keys.
 const Pictures = createContext(NO_IMAGES);
+
+// SessionDir is the folder the session works in, which a path its replies
+// write relatively is from: a board ticket's worktree, say, not the repository's root.
+const SessionDir = createContext("");
 
 function usePictures(session, items, root) {
   return useMemo(() => {
@@ -3429,6 +3455,7 @@ const TOOL_ORBS = {
 function activityOf(live, items, root) {
   if (live?.shell && !live.shell.error && !live.shell.stopped) return ["working", "Running your command"];
   if (live?.status === "compacting") return ["weaving", "Compacting the conversation"];
+  if (live?.status === "starting") return ["breathing", "Starting Antigravity"];
   const block = live?.blocks?.at(-1);
   if (block?.kind === "thinking") return ["solving", "Thinking"];
   if (block?.kind === "text") return ["composing", "Writing"];
@@ -3846,8 +3873,9 @@ function AgentText({ text, root, streaming, onAttach }) {
 // or PDF to use in place or full size. Anything else is a link to it. A page or
 // PDF still being written of has only its head, so it loads once, when the
 // reply is done.
-function Shown({ file, root, streaming, onAttach }) {
-  const path = absolute(file.path, root);
+export function Shown({ file, root, streaming, onAttach }) {
+  const dir = useContext(SessionDir);
+  const path = absolute(file.path, dir || root);
   const kind = kindOf(file.path);
   const src = api.viewURL(path) + file.rest;
   const name = file.title || file.path.slice(file.path.search(/[^\\/]*$/));
@@ -4721,7 +4749,9 @@ export function SessionList({
   onRename,
 }) {
   const [filter, setFilter] = useState("");
-  const [boardOpen, setBoardOpen] = useState(false);
+  const [folded, setFolded] = usePersisted("sessionGroupsFolded", {});
+  const isFolded = (name) => !q && (folded[name] ?? name === "board");
+  const fold = (name) => setFolded((f) => ({ ...f, [name]: !(f[name] ?? name === "board") }));
   // The card is where the session on screen is named, so it is kept in sight.
   const listRef = useRef(null);
   useEffect(() => {
@@ -4741,7 +4771,6 @@ export function SessionList({
     byTicket.get(t.ticket).rows.push(s);
   }
   const tuckedCount = [...byTicket.values()].reduce((n, g) => n + g.rows.length, 0);
-  const showBoard = boardOpen || !!q;
   // As Shift+↑/↓ steps through them.
   const open = listed.filter(isOpen).sort(byLastSent);
   const recent = listed.filter((s) => !isOpen(s));
@@ -4751,7 +4780,6 @@ export function SessionList({
   const sibling = ({ f }) => !!repoRoot && f.repoRoot === repoRoot;
   const siblings = awayShown.filter(sibling);
   const others = awayShown.filter((a) => !sibling(a));
-  const plans = (usage || []).filter((u) => u.limits);
 
   // Another folder's: opened, it takes the page to that folder. A worktree of
   // this repository is named by its branch, which is what tells them apart.
@@ -4878,6 +4906,24 @@ export function SessionList({
     );
   };
 
+  const groupHead = (name, label, count) => (
+    <button className="session-group session-group-toggle" aria-expanded={!isFolded(name)} onClick={() => fold(name)}>
+      {isFolded(name) ? <IconChevron size={10} /> : <IconChevronDown size={10} />}
+      {label}
+      <span className="session-group-count">{count}</span>
+    </button>
+  );
+  // A folded group still shows the session on screen and any waiting on you.
+  const kept = (s) => s.id === activeId || asking?.has(s.id);
+  const keptAway = (a) => !!a.req;
+  const group = (name, label, rows, render, keep) =>
+    rows.length > 0 && (
+      <>
+        {groupHead(name, label, rows.length)}
+        {(isFolded(name) ? rows.filter(keep) : rows).map(render)}
+      </>
+    );
+
   return (
     <>
       <div className="sidebar-filter">
@@ -4897,22 +4943,12 @@ export function SessionList({
         )}
       </div>
       <div className="file-list session-list" ref={listRef}>
-        {open.length > 0 && <div className="session-group">Open</div>}
-        {open.map(row)}
-        {siblings.length > 0 && <div className="session-group">Worktrees</div>}
-        {siblings.map(awayRow)}
-        {others.length > 0 && <div className="session-group">Other folders</div>}
-        {others.map(awayRow)}
-        {recent.length > 0 && <div className="session-group">Recent</div>}
-        {recent.map(row)}
-        {tuckedCount > 0 && (
-          <button className="session-group session-group-toggle" aria-expanded={showBoard} onClick={() => setBoardOpen((o) => !o)}>
-            {showBoard ? <IconChevronDown size={10} /> : <IconChevron size={10} />}
-            Board
-            <span className="session-group-count">{tuckedCount}</span>
-          </button>
-        )}
-        {showBoard &&
+        {group("open", "Open", open, row, kept)}
+        {group("worktrees", "Worktrees", siblings, awayRow, keptAway)}
+        {group("others", "Other folders", others, awayRow, keptAway)}
+        {group("recent", "Recent", recent, row, kept)}
+        {tuckedCount > 0 && groupHead("board", "Board", tuckedCount)}
+        {!isFolded("board") &&
           [...byTicket].map(([id, g]) => (
             <div key={id} className="session-ticket">
               <div className="session-ticket-head">
@@ -4932,28 +4968,48 @@ export function SessionList({
           {sessions.length} session{sessions.length === 1 ? "" : "s"}
         </span>
         <span className="spacer" />
-        {plans.length > 0 && (
-          <span className="plan-usage">
-            {plans.map((u) => (
-              <span key={u.agent} className="plan-usage-row">
-                {(plans.length > 1 || u.agent) && <AgentIcon agent={u.agent} size={12} />}
-                <PlanLimit agent={u.agent} limit={u.limits.session} minutes={5 * 60} />
-                <PlanLimit agent={u.agent} limit={u.limits.week} minutes={7 * 24 * 60} />
-                {u.limits.models?.map((l) => (
-                  <PlanLimit key={l.model} agent={u.agent} limit={l} minutes={7 * 24 * 60} />
-                ))}
-              </span>
-            ))}
-          </span>
-        )}
+        <PlanUsage usage={usage} />
       </div>
     </>
   );
 }
 
-// PlanLimit is how much of one of a plan's usage limits is spent.
-function PlanLimit({ agent, limit, minutes }) {
-  if (!limit) return null;
+// PlanUsage is how much of each signed-in plan's limits is spent, one row a
+// plan; nothing while no plan reports its limits.
+export function PlanUsage({ usage }) {
+  const plans = (usage || []).filter((u) => u.limits);
+  if (!plans.length) return null;
+  return (
+    <span className="plan-usage" style={{ "--slots": 2 + Math.max(0, ...plans.map((u) => slotsOf(u.limits).extra.length)) }}>
+      {plans.map((u) => {
+        const { first, extra } = slotsOf(u.limits);
+        return (
+          <span key={u.agent} className="plan-usage-row">
+            {plans.length > 1 || u.agent ? <AgentIcon agent={u.agent} size={12} /> : <span />}
+            <PlanLimit agent={u.agent} limit={first} minutes={first?.model ? 7 * 24 * 60 : 5 * 60} keep />
+            <PlanLimit agent={u.agent} limit={u.limits.week} minutes={7 * 24 * 60} keep />
+            {extra.map((l) => (
+              <PlanLimit key={l.model} agent={u.agent} limit={l} minutes={7 * 24 * 60} />
+            ))}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// slotsOf lays a plan's limits in the foot's columns: the five-hour one, else
+// a model's own limit in its place, then the week, then any other model's.
+function slotsOf(limits) {
+  const extra = [...(limits.models || [])];
+  const first = limits.session || extra.shift();
+  return { first, extra };
+}
+
+// PlanLimit is how much of one of a plan's usage limits is spent. keep holds
+// its place, so a plan without it lines up with those that have it.
+function PlanLimit({ agent, limit, minutes, keep }) {
+  if (!limit) return keep ? <span className="plan-limit-gap" /> : null;
   let [label, of] = limitWindow(limit, minutes);
   if (limit.model) [label, of] = [limit.model, `${limit.model}, ${of.toLowerCase()}`];
   const pct = Math.min(100, limit.percent);

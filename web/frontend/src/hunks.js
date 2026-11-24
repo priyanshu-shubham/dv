@@ -7,7 +7,7 @@
 const EQUAL = 0, DELETE = 1, INSERT = 2;
 
 // flatten expands the run-length ops into one entry per displayed line.
-function flatten(ops) {
+export function flatten(ops) {
   const lines = [];
   for (const op of ops) {
     if (op.k === EQUAL) {

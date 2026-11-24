@@ -2014,8 +2014,34 @@ button.headref:hover {
   background: var(--bg);
 }
 
+/* --pin is a walkthrough's step bar pinned over the files, which their heads pin below. */
 .content .file-head {
-  top: var(--inset);
+  top: calc(var(--inset) + var(--pin, 0px));
+}
+
+/* Its shade laid on the page's ground made solid, as the Code view's backing
+   is: alone it is see-through under glass, and the rows passing under a
+   pinned head showed. */
+/* A file the builder hasn't committed yet: still being worked on. */
+.file-section.uncommitted .file-head .file-path::after {
+  content: "not committed";
+  flex: none;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  color: var(--fg-2);
+  font: 500 var(--fs-xs) / 18px var(--font-ui);
+}
+
+/* Pinned up over the pane's top padding, or the rows would show above them. */
+.board-doc-body .guide-step {
+  top: -12px;
+}
+
+.board-doc-body .file-head {
+  top: calc(var(--pin, 0px) - 12px);
+  background: linear-gradient(var(--bg-panel), var(--bg-panel)) rgb(from var(--bg) r g b / 1);
 }
 
 /* A card's edge is drawn on its parts rather than round it, so a head pinned
@@ -2187,6 +2213,32 @@ button.headref:hover {
   display: flex;
   gap: 2px;
   padding: 6px 8px;
+}
+
+/* A ticket's walkthrough over the files: its steps scroll within it, so the
+   tree stays in reach. */
+.sidebar-guide {
+  flex: none;
+  padding: 6px 8px 0;
+}
+
+.sidebar-guide .guide {
+  margin: 0;
+}
+
+.sidebar-guide .guide-head {
+  gap: 8px;
+}
+
+.sidebar-guide .guide-progress {
+  flex: 1;
+  width: auto;
+  min-width: 24px;
+}
+
+.sidebar-guide .guide-steps {
+  max-height: 45vh;
+  overflow: auto;
 }
 
 .sidebar-filter input {
@@ -4732,7 +4784,7 @@ a.path-link:hover {
 
 .palette-input .glob {
   flex: none;
-  width: 110px;
+  width: 150px;
   height: calc(var(--ctl-h-sm) + 4px);
   padding: 0 8px;
   border-radius: var(--r-lg);
@@ -4762,7 +4814,7 @@ a.path-link:hover {
 
 .find-bar {
   position: absolute;
-  top: calc(var(--inset, 0px) + var(--file-head-h) + 6px);
+  top: calc(var(--inset, 0px) + var(--pin, 0px) + var(--file-head-h) + 6px);
   right: 12px;
   display: flex;
   align-items: center;
@@ -6247,9 +6299,33 @@ body.resizing * {
   bottom: auto;
 }
 
+/* A long list's box, held at its top while the list scrolls under it. */
+.model-search {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  width: 100%;
+  margin: -4px 0 4px;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--bg-raised);
+  font-size: var(--fs-sm);
+}
+
+.model-search:focus {
+  outline: none;
+}
+
+.model-empty {
+  padding: 6px 8px;
+}
+
 /* At the right of a ticket's review line, it opens leftwards, inside the
    ticket's document. */
-.board-review-head .model-list.up {
+.board-review-head .model-list.up,
+.board-foot .model-list.up {
   right: 0;
   left: auto;
 }
@@ -7307,20 +7383,45 @@ button.ghost.agent-context {
   margin-left: 4px;
 }
 
+/* One grid for every plan's row, so the same limit sits in the same column
+   whatever the plan: the agent's mark, then each limit's label, bar and
+   percent, in slots a plan without that limit leaves empty. */
 .plan-usage {
-  display: flex;
-  flex: 0 1 auto;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: auto repeat(var(--slots, 2), auto var(--bar, 36px) auto);
+  justify-content: end;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 3px;
   min-width: 0;
+  font: var(--fs-xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-3);
 }
 
-.plan-usage-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
+.plan-usage-row,
+.plan-usage .plan-limit {
+  display: contents;
+}
+
+.plan-usage-row > :first-child {
+  grid-column: 1;
+}
+
+.plan-limit-gap {
+  grid-column: span 3;
+}
+
+.plan-usage .plan-limit > :first-child {
+  margin-left: 4px;
+}
+
+.plan-usage .plan-limit > :last-child {
+  justify-self: end;
+}
+
+.plan-usage .plan-limit > .meter {
+  width: 100%;
 }
 
 .plan-usage-row > .agent-icon {
@@ -7345,6 +7446,10 @@ button.ghost.agent-context {
 @container foot (max-width: 228px) {
   .session-count {
     display: none;
+  }
+
+  .plan-usage {
+    --bar: 14px;
   }
 }
 
@@ -9174,7 +9279,6 @@ button.ghost.composer-add {
   text-transform: uppercase;
 }
 
-/* The board's agents, folded away until asked for. */
 .session-group-toggle {
   display: flex;
   align-items: center;
@@ -9296,6 +9400,10 @@ button.ghost.composer-add {
 
 .agent-icon.claude {
   color: #d97757;
+}
+
+.agent-icon.agy {
+  color: #4f8ef7;
 }
 
 .session-agent {
@@ -9934,6 +10042,11 @@ button.ghost.composer-add {
 .prompt-option.on {
   color: var(--fg);
   box-shadow: none;
+}
+
+/* While an answer is written in, the mouse doesn't light an option too. */
+.prompt-questions:has(.prompt-note:focus-within) .prompt-option:not(.on):hover {
+  background: none;
 }
 
 .prompt-option.on .badge {
@@ -10997,6 +11110,29 @@ html.phone .hub-start-tip {
   color: var(--fg);
 }
 
+.board-col-add {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--fg-3);
+}
+
+.board-col-add:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* Past the Inbox, shown on the column's hover, or reached by the keyboard. */
+.board-col:not(:hover) .board-col-add.on-hover:not(:focus-visible) {
+  opacity: 0;
+}
+
 .board-labels {
   display: flex;
   flex-wrap: wrap;
@@ -11050,8 +11186,17 @@ html.phone .hub-start-tip {
 }
 
 .board-ticket-labels {
+  display: flex;
   flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   padding: 0 16px 10px;
+}
+
+/* Its priority and labels share a line; what it relates to takes the next. */
+.board-ticket-labels > .board-related {
+  flex-basis: 100%;
 }
 
 .board-doc:focus {
@@ -11246,6 +11391,18 @@ html.phone .hub-start-tip {
   line-height: 1;
 }
 
+.board-age {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-4);
+  font: var(--fs-xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-pr ~ .board-age {
+  margin-left: 0;
+}
+
 .board-imgs {
   display: inline-flex;
   align-items: center;
@@ -11374,6 +11531,44 @@ html.phone .hub-start-tip {
   font-weight: 400;
 }
 
+/* A ticket's priority: urgent red, high amber, low quiet; normal unmarked. On
+   a card the icon alone, its word in the tooltip. */
+.board-prio {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.board-prio.urgent,
+.board-prio-label.urgent svg,
+.board-prio-chip.urgent svg,
+.board-prio-pick.urgent {
+  color: var(--del);
+}
+
+.board-prio.high,
+.board-prio-label.high svg,
+.board-prio-chip.high svg,
+.board-prio-pick.high {
+  color: var(--mod);
+}
+
+.board-prio.low,
+.board-prio-chip.low svg {
+  color: var(--fg-3);
+}
+
+.board-prio-label,
+.board-prio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.board-card.low .board-card-title {
+  color: var(--fg-2);
+}
+
 .board-state {
   display: flex;
   align-items: center;
@@ -11425,6 +11620,12 @@ html.phone .hub-start-tip {
   margin-left: auto;
   color: var(--fg-3);
   font: 500 var(--fs-xs) / 1 var(--font-mono);
+  text-decoration: none;
+}
+
+a.board-pr:hover {
+  color: var(--fg);
+  text-decoration: underline;
 }
 
 .board-pr.passing svg {
@@ -11439,11 +11640,28 @@ html.phone .hub-start-tip {
   color: var(--merged);
 }
 
-.board-move {
+.board-move-row {
   position: absolute;
+  z-index: 3;
   top: 5px;
   right: 5px;
   display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+}
+
+/* Kept up while its model menu is open. */
+.board-card:hover .board-move-row,
+.board-move-row:focus-within {
+  display: inline-flex;
+}
+
+.board-move {
+  display: inline-flex;
+  align-items: center;
   height: 22px;
   padding: 0 7px;
   border: 0;
@@ -11453,9 +11671,9 @@ html.phone .hub-start-tip {
   font-size: var(--fs-xs);
 }
 
-.board-card:hover .board-move {
-  display: inline-flex;
-  align-items: center;
+.board-move-row .model-list {
+  right: 0;
+  left: auto;
 }
 
 .board-dot {
@@ -11539,6 +11757,7 @@ html.phone .hub-start-tip {
 
 /* The sidebar in Board mode. */
 .board-side {
+  flex: 1;
   min-height: 0;
   padding: 4px 6px;
   overflow: auto;
@@ -11587,6 +11806,16 @@ html.phone .hub-start-tip {
   width: min(1180px, 100%);
   height: 90vh;
   max-height: 90vh;
+}
+
+.backdrop:has(> .modal.board-ticket.full) {
+  padding: 12px;
+}
+
+.modal.board-ticket.full {
+  width: 100%;
+  height: 100%;
+  max-height: none;
 }
 
 .modal.board-ticket.narrow {
@@ -11681,6 +11910,23 @@ html.phone .hub-start-tip {
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+.board-related-item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.board-related-x {
+  padding: 2px 4px;
+  color: var(--fg-3);
+}
+
+.board-waits-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .board-related-link {
@@ -11785,6 +12031,45 @@ html.phone .hub-start-tip {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.board-split.folded {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+/* The agents folded away: their names, read up the side, each opening its session. */
+.board-agent-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+}
+
+.board-rail-agent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  writing-mode: vertical-rl;
+  cursor: pointer;
+}
+
+.board-rail-agent:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.board-rail-agent:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .board-doc-pane,
 .board-session-pane {
   display: flex;
@@ -11836,11 +12121,25 @@ html.phone .hub-start-tip {
   line-height: 1.6;
 }
 
-.board-doc > h4 {
+/* With the agents folded the changes take the width, and text widens to what still reads. */
+.board-split.folded .board-doc {
+  max-width: none;
+}
+
+.board-split.folded .board-doc :is(.md-preview, .guide-say, .guide-facts) {
+  max-width: 1000px;
+}
+
+.board-doc > h4,
+.board-mockups > h4 {
   margin: 18px 0 6px;
   color: var(--fg-3);
   font-size: var(--fs-sm);
   font-weight: 600;
+}
+
+.board-mockups > .file + .file {
+  margin-top: 10px;
 }
 
 .board-doc > h4:first-child {
@@ -11853,7 +12152,33 @@ html.phone .hub-start-tip {
   border-radius: var(--r-lg);
   background: var(--bg-panel);
   color: var(--fg-2);
-  white-space: pre-wrap;
+}
+
+/* Markdown, but typed as a note is: each line where it was broken. */
+.board-orig :is(p, li) {
+  white-space: pre-line;
+}
+
+.board-orig .md-preview > :first-child {
+  margin-top: 0;
+}
+
+.board-orig .md-preview > :last-child {
+  margin-bottom: 0;
+}
+
+/* Folded to its first lines, fading out where it is cut. */
+.board-orig.folded {
+  max-height: 7.5em;
+  margin-bottom: 4px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+}
+
+.board-orig-more {
+  display: block;
+  margin-bottom: 14px;
+  font-size: var(--fs-sm);
 }
 
 .board-box {
@@ -11863,6 +12188,15 @@ html.phone .hub-start-tip {
   background: var(--bg-panel);
   box-shadow: 0 0 0 1px var(--border);
   font-size: var(--fs-sm);
+}
+
+.board-nothing-head {
+  color: var(--fg-2);
+}
+
+.board-nothing-why {
+  color: var(--fg);
+  white-space: pre-line;
 }
 
 .board-box.open {
@@ -12007,21 +12341,602 @@ html.phone .hub-start-tip {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-.board-round {
-  margin-top: 18px;
+.board-changes {
+  margin-top: 14px;
 }
 
-.board-round-head {
+.board-changes-head {
   display: flex;
-  align-items: baseline;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  padding: 6px 0 10px;
+}
+
+/* Which of the branch's commits the changes are read from. */
+.board-commits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  font-size: var(--fs-sm);
+}
+
+.board-commits-what {
+  flex: none;
+  font-weight: 600;
+}
+
+/* Two handles on one track: two range inputs laid over each other for the
+   keyboard, the pointer dragged by the slider itself. First in its row and
+   not growing, so the label beside it, rewritten while a thumb is dragged,
+   can't move it. */
+.board-commits-slider {
+  position: relative;
+  flex: 0 1 240px;
+  height: 22px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.board-commits.locked .board-commits-slider {
+  cursor: default;
+}
+
+.board-commits-track,
+.board-commits-fill {
+  position: absolute;
+  top: 9px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.board-commits-track {
+  right: 0;
+  left: 0;
+  background: var(--bg-active);
+}
+
+.board-commits-fill {
+  background: var(--accent);
+}
+
+.board-commits-slider input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  pointer-events: none;
+  appearance: none;
+}
+
+.board-commits-slider input[type="range"]::-webkit-slider-runnable-track {
+  background: none;
+}
+
+.board-commits-slider input[type="range"]::-webkit-slider-thumb {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bg-panel);
+  border-radius: 50%;
+  background: var(--accent);
+  appearance: none;
+}
+
+.board-commits-slider input[type="range"]::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bg-panel);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.board-commits.locked .board-commits-fill,
+.board-commits.locked input[type="range"]::-webkit-slider-thumb {
+  background: var(--fg-3);
+}
+
+.board-commits-note {
+  flex-basis: 100%;
+  color: var(--mod);
+  font-size: var(--fs-xs);
+}
+
+.board-commits-from {
+  min-width: 0;
+  color: var(--fg-2);
+  flex: 1 1 200px;
+}
+
+/* An end of the stretch as a menu of the commits, its label cut to the room. */
+.board-commits-pick {
+  max-width: 100%;
+}
+
+.board-commits-pick-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-commits .model-menu {
+  max-width: 100%;
+}
+
+.board-commits .model-list {
+  width: 360px;
+}
+
+.board-changes-filter {
+  width: 160px;
+  height: var(--ctl-h-sm);
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+}
+
+/* The Code view's filters, in a ticket's changes: the panel and its note as the sidebar has them, set in the column. */
+.board-changes > .path-filter {
+  max-width: 420px;
+  padding: 0 0 10px;
+}
+
+.board-changes > .filter-note {
+  margin: 0 0 10px;
+}
+
+.board-changes-head h4 {
+  margin: 0;
+  color: var(--fg-3);
   font-size: var(--fs-sm);
   font-weight: 600;
 }
 
-.board-round-head .board-muted {
-  font-weight: 400;
+.board-changes .file-section + .file-section {
+  margin-top: 10px;
+}
+
+/* The reviewer's guide: a card of stories, read in order, each a numbered row
+   that opens on its places; read ones keep a tick and step back. */
+.guide {
+  margin: 10px 0 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.guide-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-bar);
+}
+
+/* Folded, the card is its head alone. */
+.guide.folded .guide-head {
+  border-bottom: 0;
+}
+
+.guide-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.guide-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.guide-progress {
+  position: relative;
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+
+.guide-progress > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.guide-count {
+  color: var(--fg-3);
+  font: var(--fs-xs) var(--font-mono);
+}
+
+.guide-steps {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 4px 6px 8px;
+  list-style: none;
+}
+
+/* A part's name over its steps. */
+.guide-part {
+  padding: 10px 10px 4px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.guide-row > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.guide-row > button:hover {
+  background: var(--bg-hover);
+}
+
+.guide-row.on > button {
+  background: var(--bg-active);
+}
+
+.guide-row.done:not(.on) .guide-row-title {
+  color: var(--fg-3);
+}
+
+.guide-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guide-row-file {
+  flex: none;
+  color: var(--fg-3);
+  font: var(--fs-xs) var(--font-mono);
+}
+
+/* The number is the step's place in the walk; been to, it is ticked. */
+.guide-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  color: var(--fg-2);
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+}
+
+.guide-row.on .guide-badge,
+.guide-row.done .guide-badge {
+  background: var(--accent-fill);
+  color: var(--accent-fg);
+}
+
+.guide-places {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-places > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: var(--fs-sm);
+}
+
+/* A place's file and lines, as a chip to jump to it. */
+.guide-place {
+  flex: none;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font: var(--fs-xs) / 1.6 var(--font-mono);
+  cursor: pointer;
+}
+
+.guide-place > span {
+  color: var(--accent);
+}
+
+.guide-place:hover {
+  background: var(--bg-active);
+}
+
+.guide-place.quiet {
+  background: var(--bg-active);
+  color: var(--fg-2);
+  cursor: default;
+}
+
+.guide-context {
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.guide-check {
+  color: var(--fg-2);
+}
+
+.guide-skim {
+  padding: 2px 6px 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.guide-skim-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  border: 0;
+  background: none;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.guide-skim .guide-places {
+  margin: 4px 0 0;
+  padding: 0 10px;
+}
+
+/* The step walked to, pinned over the changes while they are read. */
+.guide-step {
+  position: sticky;
+  z-index: 6;
+  top: 0;
+  margin: 0 0 10px;
+  padding: 6px 10px 8px;
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--r-lg);
+  /* Over the code it pins above: the raised ground, near solid even under glass. */
+  background: rgb(from var(--bg-raised) r g b / 0.97);
+  backdrop-filter: blur(var(--blur, 14px)) saturate(1.4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* One row: where in the walk, the step, its place, and the way on. */
+.guide-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: -4px;
+}
+
+.guide-step-part {
+  flex: none;
+  color: var(--accent);
+  font: 600 var(--fs-xs) var(--font-mono);
+}
+
+.guide-step-title {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.guide-step-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.guide-step-head .guide-place {
+  flex: none;
+}
+
+.guide-step-head > button.ghost,
+.guide-step-head > button.btn {
+  flex: none;
+  padding-block: 2px;
+}
+
+.guide-step-x {
+  padding: 3px;
+}
+
+.guide-say {
+  margin: 4px 0 0;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+/* What to check, or what a test guarantees and leaves out, each after its name. */
+.guide-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 1px 10px;
+  margin: 3px 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.guide-facts dt {
+  color: var(--fg-3);
+}
+
+.guide-facts dd {
+  margin: 0;
+  color: var(--fg-2);
+}
+
+
+/* The walkthrough over the Code view's diff of a ticket's branch, inset as
+   its file cards are; the step pinned at the top as the diff scrolls. */
+.guide-in-code {
+  margin: 0 12px;
+}
+
+.guide-in-code .guide {
+  margin: 0 0 12px;
+}
+
+/* Under the ground strip kept over the diff, which would cut its top, and over the files' heads. */
+.guide-step-pin {
+  position: sticky;
+  z-index: 6;
+  top: var(--inset, 0px);
+}
+
+.guide-step-pin .guide-step {
+  position: static;
+}
+
+/* The reader's comments on a document, each with its author's answers. */
+.board-comment-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.board-comment-list.resolved {
+  opacity: 0.7;
+}
+
+.board-comment {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  font-size: var(--fs-sm);
+}
+
+.board-comment-quote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-3);
+  white-space: pre-line;
+}
+
+/* Code keeps its indentation, and a long line scrolls rather than wraps. */
+.board-comment-quote.board-comment-code {
+  font: var(--fs-xs) var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 8lh;
+}
+
+.board-comment-loc {
+  align-self: flex-start;
+  justify-self: start;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: var(--fs-xs) var(--font-mono);
+  cursor: pointer;
+}
+
+.board-comment-loc:hover {
+  text-decoration: underline;
+}
+
+.board-comment-post {
+  display: grid;
+  gap: 2px;
+}
+
+.board-comment-by {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.board-comment-kind {
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  color: var(--fg-2);
+  font-weight: 500;
+}
+
+.board-comment-kind.changed {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.board-comment-text {
+  white-space: pre-line;
+}
+
+.board-comment-acts {
+  display: flex;
+  gap: 4px;
+}
+
+.board-comment-reply {
+  display: grid;
+  gap: 6px;
+}
+
+.board-comment-reply textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.board-comment-done {
+  margin-top: 4px;
 }
 
 .board-finding {
@@ -12077,16 +12992,42 @@ html.phone .hub-start-tip {
 .board-foot {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-height: 48px;
   padding: 8px 12px 8px 16px;
 }
 
+.board-next {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.board-foot > button,
+.board-next > button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.board-next + .board-next,
+.board-next + button {
+  margin-left: 10px;
+}
+
 .board-foot .board-error {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The hint gives way first, over two lines, before the buttons wrap. */
+.board-foot > .board-muted {
+  flex: 1 1 0;
+  min-width: 110px;
+  text-align: right;
 }
 
 /* New ticket, and sending one back. */
@@ -12099,6 +13040,56 @@ html.phone .hub-start-tip {
   padding: 14px 0 6px;
   font-size: var(--fs-lg);
   font-weight: 600;
+}
+
+/* A ticket's suggested follow-ups, decided as it is approved. */
+.board-followup-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.board-followup-list .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.board-followup-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.board-followup-row .check {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-followup-title {
+  font-weight: 600;
+}
+
+.board-followup-request {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  white-space: pre-line;
+}
+
+/* An Inbox ticket being changed in place: the New ticket form's fields. */
+.board-edit {
+  display: grid;
+  gap: 12px;
+}
+
+.board-edit-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .board-field {

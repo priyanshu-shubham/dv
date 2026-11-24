@@ -13,6 +13,9 @@ import (
 
 func TestAddedModels(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// Antigravity's models come from agy on this machine, if it has it.
+	agent.AgyOff = func() bool { return true }
+	t.Cleanup(func() { agent.AgyOff = nil })
 	user, err := store.OpenUserPrefs()
 	if err != nil {
 		t.Fatal(err)

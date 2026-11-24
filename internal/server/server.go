@@ -87,12 +87,14 @@ type Server struct {
 	sent    sent    // messages taken, so one sent again goes once
 	resumes resumes // what dropped streams had sent
 
-	notices    *notify.Folder
+	notices     *notify.Folder
 	stopNotices context.CancelFunc
 
 	board     *store.Board
 	boardMu   sync.Mutex // one change of a ticket's stage at a time
 	stopBoard func()
+	wtMu      sync.Mutex
+	wtTrees   map[string]ticketTree // by worktree, for looking in a ticket's
 
 	actionsMu sync.Mutex
 	actions   map[string]ranAction   // by session, until its turn is done
@@ -163,7 +165,7 @@ func Open(dir string, user *store.Prefs, notices *notify.Folder) (*Server, error
 		}
 	}
 	s.agent.Suggests = PromptSuggestions(user)
-	s.agent.Instructions = AgentInstructions(user)
+	s.agent.Instructions = AgentInstructions(user, repo.IsGit())
 	s.agent.CloseIdle = CloseIdleAfter(user)
 	s.agent.Unasked = UnaskedEdits(user)
 	s.agent.AutoTitles = AutoTitles(user)
@@ -215,7 +217,7 @@ func (s *Server) Close() {
 
 // Status is what a hub shows of a review it serves.
 type Status struct {
-	Sessions int `json:"sessions"` // run by dv
+	Sessions int  `json:"sessions"` // run by dv
 	Working  int  `json:"working"`
 	Claude   bool `json:"claude,omitempty"`
 	Waiting  int  `json:"waiting"` // prompts on the reader
@@ -244,9 +246,13 @@ func (s *Server) Waiting() []Asked {
 type Live struct {
 	Sessions []agent.Activity `json:"sessions"`
 	Requests []Asked          `json:"requests"`
+	// Board is its board's agents, which other folders' lists leave out.
+	Board map[string]boardSession `json:"board,omitempty"`
 }
 
-func (s *Server) Live() Live { return Live{Sessions: s.agent.Activity(), Requests: s.Waiting()} }
+func (s *Server) Live() Live {
+	return Live{Sessions: s.agent.Activity(), Requests: s.Waiting(), Board: s.boardSessions()}
+}
 
 // FirstTitle is what the folder's first session is called, which names a task.
 func (s *Server) FirstTitle() string { return s.agent.FirstTitle() }
@@ -293,6 +299,7 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("GET /api/ping", s.handlePing)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/diff", s.handleDiffList)
+	mux.HandleFunc("GET /api/diff/commits", s.handleDiffCommits)
 	mux.HandleFunc("GET /api/diff/file", s.handleDiffFile)
 	mux.HandleFunc("POST /api/diff/files", s.handleDiffFiles)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
@@ -323,6 +330,12 @@ func (s *Server) Handler(base string) http.Handler {
 	mux.HandleFunc("POST /api/board/{id}/move", Guarded(s.handleMoveTicket))
 	mux.HandleFunc("POST /api/board/{id}/round", Guarded(s.handleRunRound))
 	mux.HandleFunc("POST /api/board/{id}/comments", Guarded(s.handleCommentTicket))
+	mux.HandleFunc("POST /api/board/{id}/comments/{cid}", Guarded(s.handleCommentReply))
+	mux.HandleFunc("POST /api/board/{id}/code-comments", Guarded(s.handleCodeComments))
+	mux.HandleFunc("POST /api/board/{id}/publish", Guarded(s.handlePublish))
+	mux.HandleFunc("POST /api/board/{id}/suggestions/{sid}", Guarded(s.handleSuggestion))
+	mux.HandleFunc("PATCH /api/board/{id}/suggestions/{sid}", Guarded(s.handleEditSuggestion))
+	mux.HandleFunc("POST /api/board/{id}/nothing", Guarded(s.handleNothing))
 	mux.HandleFunc("POST /api/board/{id}/plan-review", Guarded(s.handleReviewPlan))
 	mux.HandleFunc("POST /api/board/{id}/agent", Guarded(s.handleTicketAgent))
 	mux.HandleFunc("POST /api/board/{id}/images", Guarded(s.handleAddTicketImage))

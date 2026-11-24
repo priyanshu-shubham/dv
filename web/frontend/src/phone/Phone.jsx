@@ -252,6 +252,7 @@ export default function Phone({ app }) {
             usage={[
               { agent: "", limits: app.agent.usage },
               { agent: "codex", limits: app.agent.codex?.usage },
+              { agent: "agy", limits: app.agent.agy?.usage },
             ]}
             onOpen={openSession}
             onClose={app.closeSession}

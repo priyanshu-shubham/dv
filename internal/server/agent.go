@@ -62,6 +62,9 @@ func (s *Server) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
 	if codexInstalled() {
 		out["codex"] = map[string]any{"available": true, "models": codexActionModels(), "usage": agent.CodexUsage()}
 	}
+	if agent.AgyAvailable() {
+		out["agy"] = map[string]any{"usage": agent.AgyUsage()}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -558,6 +561,9 @@ func (s *Server) handleAgentSettings(w http.ResponseWriter, r *http.Request) {
 	if err := s.agent.Configure(id, req.Model, req.Mode, req.Effort); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
+	}
+	if req.Model != nil || req.Effort != nil {
+		s.boardSessionPicked(id, req.Model, req.Effort)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
