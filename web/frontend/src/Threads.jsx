@@ -2,13 +2,14 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, Markdown } from "./links.js";
+import { mathSyntax } from "./math.js";
 import { cx, isSearchKey, LRM, modKey, relTime, searchSeed, useDismiss, useFixedMenu } from "./util.js";
 import { AgentIcon, IconAsk, IconCheck, IconChevronDown, IconNewSession, IconReply, IconSpark, IconUndo } from "./icons.jsx";
 import { useBack } from "./phone/back.js";
 
 // Comment bodies are markdown. Links are rendered but HTML is not, since the
 // text is written locally and there is no reason to let it inject markup.
-const md = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
+const md = mathSyntax(linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true })));
 
 // onAttach(thread, to), where given, sends a thread to a session's message
 // box; it is offered in the panel alone, where comments are handed over.

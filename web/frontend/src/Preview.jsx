@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { api } from "./api.js";
 import { drawDiagrams } from "./diagrams.js";
+import { drawMath } from "./math.js";
 import { ensureLanguage } from "./highlight.js";
 import { blockAt, isMarkdown, renderMarkdown } from "./markdown.js";
 import { usePathsVersion } from "./links.js";
@@ -44,7 +45,10 @@ export function MarkdownPreview({ lines, path, side = "new", scope, onOpenFile }
   };
 
   const ref = useRef(null);
-  useLayoutEffect(() => drawDiagrams(ref.current));
+  useLayoutEffect(() => {
+    drawDiagrams(ref.current);
+    drawMath(ref.current);
+  });
 
   return <div className="md-preview" ref={ref} data-side={side} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }

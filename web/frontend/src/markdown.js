@@ -5,6 +5,7 @@
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js/lib/common";
 import { linkPaths } from "./links.js";
+import { mathSyntax } from "./math.js";
 
 export const isMarkdown = (path) => /\.(md|markdown|mdown|mkd)$/i.test(path);
 
@@ -21,7 +22,7 @@ const DROP = new Set(
 const ATTRS = new Set("href src alt title width height align colspan rowspan open start reversed class data-src".split(" "));
 
 let waiting = null;
-const md = linkPaths(new MarkdownIt({
+const md = mathSyntax(linkPaths(new MarkdownIt({
   html: true,
   linkify: true,
   highlight: (code, lang) => {
@@ -36,7 +37,7 @@ const md = linkPaths(new MarkdownIt({
       return "";
     }
   },
-}));
+})));
 // Each block names the line it starts on, so a jump to a line, or a switch
 // from the source, lands on the block that holds it.
 md.core.ruler.push("source_lines", (state) => {
@@ -68,8 +69,8 @@ export function renderMarkdown(text, path, image) {
     for (const { name, value } of [...el.attributes]) {
       if (!ATTRS.has(name)) el.removeAttribute(name);
       else if (name === "class") {
-        // Only highlighting's: the page's own classes carry behaviour.
-        const kept = value.split(/\s+/).filter((c) => /^(hljs|language-)/.test(c));
+        // Only highlighting's and math's: the page's own classes carry behaviour.
+        const kept = value.split(/\s+/).filter((c) => /^(hljs|language-|math-)/.test(c));
         if (kept.length) el.setAttribute("class", kept.join(" "));
         else el.removeAttribute("class");
       } else if ((name === "href" || name === "src") && !safeURL(value)) el.removeAttribute(name);

@@ -2,6 +2,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffec
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, linkText, Markdown, usePathsVersion } from "./links.js";
+import { mathSyntax } from "./math.js";
 import { api } from "./api.js";
 import { hashesAsSecrets, maskable, reloadSecrets, secretsInText, useSecrets, useSecretsVersion } from "./secrets.js";
 import { LooseSecrets, looseItems, MaskSecret, reviewHeld, useHeldFor } from "./Secrets.jsx";
@@ -61,7 +62,7 @@ import { useBack } from "./phone/back.js";
 import { Icon as PhoneIcon } from "./phone/icons.jsx";
 import { Photo } from "./phone/Photo.jsx";
 
-const md = inlineFiles(codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true }))));
+const md = mathSyntax(inlineFiles(codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true })))));
 // A command's output is Markdown, or lines of plain text that must stay lines.
 const mdOutput = codeBlocks(linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true })));
 const NO_THREADS = [];

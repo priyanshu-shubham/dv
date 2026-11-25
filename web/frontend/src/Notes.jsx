@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { linkPaths, Markdown } from "./links.js";
+import { mathSyntax } from "./math.js";
 import { AttachButton } from "./Threads.jsx";
 import { say } from "./Notices.jsx";
 import { Modal } from "./Overlays.jsx";
@@ -9,7 +10,7 @@ import { usePref } from "./prefs.js";
 import { AgentIcon, IconCheck, IconChevron, IconChevronDown, IconDots, IconEdit, IconPlus, IconX } from "./icons.jsx";
 import { cx, modKey, relTime, useDismiss, usePersisted } from "./util.js";
 
-const md = linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true }));
+const md = mathSyntax(linkPaths(new MarkdownIt({ html: false, linkify: true, breaks: true })));
 
 const STATUSES = [
   { id: "doing", label: "Doing" },

@@ -4,6 +4,7 @@
 // linked, so a word that merely looks like one stays a word.
 import { createElement, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { drawDiagrams } from "./diagrams.js";
+import { drawMath } from "./math.js";
 import { useGrammarsVersion } from "./highlight.js";
 import { secretsInHTML, secretsInText, useSecrets } from "./secrets.js";
 import { copyText } from "./util.js";
@@ -160,7 +161,10 @@ export function Markdown({ md, text, className, env }) {
   useGrammarsVersion();
   useSecrets();
   const ref = useRef(null);
-  useLayoutEffect(() => drawDiagrams(ref.current));
+  useLayoutEffect(() => {
+    drawDiagrams(ref.current);
+    drawMath(ref.current);
+  });
   return createElement("div", { ref, className, onClick: copyCode, dangerouslySetInnerHTML: { __html: secretsInHTML(md.render(text || "", { ...env })) } });
 }
 

@@ -16,6 +16,8 @@
 /* The phone app's look, all of it under html.phone. */
 @import "./phone/phone.css";
 @import "@xterm/xterm/css/xterm.css";
+/* Only its woff2 fonts ship; build.mjs leaves the older formats out. */
+@import "katex/dist/katex.min.css";
 
 /* Regions are told apart by shade, and lines are kept for the few edges a
    shade cannot draw. Four grounds: --bg is the editor and every list or well
@@ -2155,7 +2157,6 @@ button.headref:hover {
 
 .content {
   overflow-y: auto;
-  overscroll-behavior-x: contain;
   scroll-behavior: smooth;
   background: var(--bg);
 }
@@ -7968,6 +7969,22 @@ button.ghost.agent-context {
   .code-copy {
     visibility: visible;
   }
+}
+
+/* Display math scrolls on its own rather than widening the message. */
+div.math-tex {
+  margin: 0 0 1em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+div.math-tex .katex-display {
+  margin: 0.25em 0;
+}
+
+.math-tex:not(.math-drawn) {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
 }
 
 /* A Mermaid diagram stands in for its code, which its button brings back. */

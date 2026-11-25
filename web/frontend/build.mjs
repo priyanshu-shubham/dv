@@ -45,6 +45,8 @@ const css = {
   bundle: true,
   // Unhashed, so index.html can preload the one every page needs.
   loader: { ".woff2": "file" },
+  // KaTeX lists these after woff2, which every browser dv runs in takes.
+  external: ["*.woff", "*.ttf"],
   assetNames: "[name]",
   minify: !watch,
   logLevel: "info",
