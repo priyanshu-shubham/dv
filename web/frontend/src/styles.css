@@ -11222,6 +11222,60 @@ html.phone .hub-start-tip {
   position: relative;
 }
 
+/* A plan: each slice's heading leads, its folded layers sit as cards, and its
+   flags - the calls to judge - stand apart from the prose. */
+.plan-doc .md-preview h3 {
+  margin-top: 26px;
+  color: var(--fg);
+  font-size: var(--fs-md);
+}
+
+.board-doc .md-preview details {
+  margin: 6px 0 10px;
+  padding: 6px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border-soft);
+}
+
+.board-doc .md-preview summary {
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+}
+
+.board-doc .md-preview details[open] > summary {
+  margin-bottom: 6px;
+}
+
+.plan-doc .md-preview p[data-works],
+.plan-doc .md-preview .plan-works {
+  color: var(--accent);
+}
+
+.plan-doc .md-preview .plan-works {
+  display: block;
+  margin-top: 6px;
+}
+
+.plan-doc .md-preview li[data-flag] {
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--fg-4);
+  list-style: none;
+}
+
+.plan-doc .md-preview :is(ul, ol):has(> li[data-flag]) {
+  padding-left: 0;
+}
+
+.plan-doc .md-preview li:is([data-flag="ask"], [data-flag="new"], [data-flag="assume"], [data-flag="untested"]) {
+  border-left-color: var(--mod);
+}
+
+.plan-doc .md-preview li[data-flag="you"] {
+  border-left-color: var(--accent);
+}
+
 .board-versions {
   display: flex;
   align-items: center;

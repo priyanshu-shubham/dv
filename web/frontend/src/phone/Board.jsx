@@ -55,6 +55,9 @@ export default function PhoneBoard({ shown, models, onOpenSession, onOpenFile })
   const groups = STAGES.map(([k, l]) => {
     const list = rows.filter(({ t, s }) => t.stage === k && !(needsYou(s) && !t.archived));
     const prio = (a, b) => byPriority(a.t, b.t);
+    // Merged, the latest first: priority is spent by then.
+    const at = ({ t }) => t.stageAt || t.updatedAt || "";
+    if (k === "merged") return [l, list.sort((a, b) => at(b).localeCompare(at(a)))];
     return [l, [...list.filter(({ s }) => !isQuiet(s)).sort(prio), ...list.filter(({ s }) => isQuiet(s)).sort(prio)]];
   }).filter(([, list]) => list.length);
 

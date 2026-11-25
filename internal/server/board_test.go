@@ -796,6 +796,18 @@ type trunkRepo struct {
 	cloned bool
 }
 
+// fakeGH puts a gh first on the PATH that opens pull request 7 and refuses
+// anything else. Shell builtins only: onlyGit's PATH has git alone.
+func fakeGH(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1 $2\" in\n\"pr create\") while read -r _; do :; done; echo https://github.com/o/r/pull/7 ;;\n*) echo \"unexpected gh $*\" >&2; exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func newTrunkRepo(t *testing.T) *trunkRepo {
 	onlyGit(t)
 	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"} {
@@ -864,6 +876,7 @@ func (r *trunkRepo) ticketOn(name, stage, file, text string) store.Ticket {
 
 func TestApprovingCatchesUpWithAMovedTrunk(t *testing.T) {
 	r := newTrunkRepo(t)
+	fakeGH(t)
 	s := r.s
 	clean := r.ticketOn("feature", "review", "feature.txt", "new\n")
 	clashing := r.ticketOn("clash", "review", "shared.txt", "one\nTWO here\nthree\n")
@@ -892,6 +905,10 @@ func TestApprovingCatchesUpWithAMovedTrunk(t *testing.T) {
 	if got, _ = s.board.Get(clean.ID); got.Stage != "review" || !got.Merging || got.CatchUp != nil {
 		t.Fatalf("caught up cleanly, the approval didn't stand: %+v", got)
 	}
+	// Approved before it had a pull request, standing opens it.
+	if got.PR != 7 {
+		t.Fatalf("the approval stood with no pull request opened: %+v", got)
+	}
 
 	// The error is only the absent builder not being told.
 	s.moveTicket(clashing.ID, "merged", "")
@@ -901,6 +918,26 @@ func TestApprovingCatchesUpWithAMovedTrunk(t *testing.T) {
 	}
 	if out, _ := exec.Command("git", "-C", clashing.Worktree, "status", "--porcelain").CombinedOutput(); len(strings.TrimSpace(string(out))) != 0 {
 		t.Fatalf("the worktree was left mid-merge: %s", out)
+	}
+}
+
+// TestAnApprovedTicketLeftWithoutAPullRequestGetsOne: one already stuck
+// approved with no pull request - a catch-up stood in for opening it - has it
+// opened by the board's watch, as approving asked.
+func TestAnApprovedTicketLeftWithoutAPullRequestGetsOne(t *testing.T) {
+	r := newTrunkRepo(t)
+	fakeGH(t)
+	s := r.s
+	tk := r.ticketOn("stuck", "review", "fix.txt", "fixed\n")
+	s.board.Update(tk.ID, func(x *store.Ticket) error { x.Merging = true; return nil })
+
+	s.followPRs()
+	got, _ := s.board.Get(tk.ID)
+	if got.PR != 7 || !got.Merging || got.Problem != "" {
+		t.Fatalf("an approved ticket with no pull request: %+v", got)
+	}
+	if out := r.git(r.other, "ls-remote", "origin", "stuck"); out == "" {
+		t.Fatal("its branch wasn't pushed")
 	}
 }
 
@@ -1036,6 +1073,33 @@ func TestAnsweringTheReaderWithoutNewCodeNeedsNoReviewer(t *testing.T) {
 	s.ready(got, roleBuilder, "changed as discussed")
 	if got, _ = s.board.Get(tk.ID); got.Stage != "build" || got.Merging || len(got.Rounds) != 2 || got.ReviewedAt != got.HandedAt {
 		t.Fatalf("changed in their review: %+v", got)
+	}
+}
+
+// TestAPlanIsWrittenInSlicesTheBuilderCommitsOneByOne: the planner writes
+// the build order as slices with folded layers, its reviewer checks the order
+// and the writing, and the builder commits each slice on its own.
+func TestAPlanIsWrittenInSlicesTheBuilderCommitsOneByOne(t *testing.T) {
+	tk := store.Ticket{ID: "CAS-1", Title: "Services", Branch: "cas-1"}
+	for _, scoped := range []bool{false, true} {
+		p := planPrompt(tk, "origin/main", "", "the ticket", "", scoped)
+		for _, want := range []string{"## Decided once", "## Slices", "Works after this", "<details><summary>More detail</summary>", "<details><summary>For the builder</summary>", "Finish a thread before starting the next", "read on its own"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("the plan prompt (scoped %v) lacks %q", scoped, want)
+			}
+		}
+		if strings.Contains(p, "## Shapes") {
+			t.Error("the plan prompt still asks for the old sections")
+		}
+	}
+	if p := planPrompt(tk, "origin/main", "", "t", "", true); !strings.Contains(p, "dv ticket ask") || strings.Contains(p, "Ask the reader about them with AskUserQuestion") {
+		t.Error("a scoped ticket's undecided product choices should go to its scoper")
+	}
+	if p := planReviewPrompt(tk, "origin/main", "", "t", "the plan"); !strings.Contains(p, "The slices can be built in their order") || !strings.Contains(p, "written as the reader needs it") {
+		t.Error("the plan reviewer doesn't check the slices' order and writing")
+	}
+	if p := buildPrompt(tk, "origin/main"); !strings.Contains(p, "one commit per slice") {
+		t.Error("the builder isn't told to commit slice by slice")
 	}
 }
 

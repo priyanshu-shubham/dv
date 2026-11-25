@@ -32,7 +32,7 @@ const briefFinding = "Write each finding for a person to take in at a glance as 
 
 // What the reader reads at length - ticket, plan, pull request - came out
 // dense: packed sentences, fragments, names never introduced.
-const readable = "Write the prose for a person reading it once, top to bottom: plain words, the point of each paragraph first, and sentences short enough to follow without rereading - break one up when its dashes, semicolons and parentheses pile up. Keep the small words that make a sentence read, and skip preamble and a closing recap. Introduce a name the reader may not know. Lists, headings and sections meant to be compact, such as Interface and Decisions, keep their form.\n"
+const readable = "Write the prose for a person reading it once, top to bottom: plain words, the point of each paragraph first, and sentences short enough to follow without rereading - break one up when its dashes, semicolons and parentheses pile up. Keep the small words that make a sentence read, and skip preamble and a closing recap. Introduce a name the reader may not know. Lists, headings and sections meant to be compact, such as an Interface section, a list of decisions or a slice's flags, keep their form.\n"
 
 const briefAnswer = "Keep each answer to a sentence or two a person takes in at a glance.\n"
 
@@ -91,23 +91,66 @@ func planPrompt(t store.Ticket, base, parent, ticket, plan string, scoped bool) 
 		quoted("The parent ticket, which this one is part of", parent) +
 		quoted("The approved ticket", cmpOrStr(ticket, t.Request)) +
 		quoted("The plan so far", plan) +
-		`Plan how to build this ticket. A capable builder implements it in this worktree from a fresh context, so settle the decisions it could get wrong and the ones the reader would want to review - not everything. Leave to the builder what follows from the ticket, the code's conventions and the repository's instructions (CLAUDE.md, AGENTS.md), which you read first.
+		`Plan how to build this ticket. A capable builder implements it in this worktree from a fresh context, one slice at a time. The reader approves the plan before any code is written, then reviews the code slice by slice. Write for both, in layers: what the reader must read to judge the plan, more detail they can open when they want it, and what only the builder needs. Settle the decisions the builder could get wrong and the ones the reader would want to review - not everything. Leave to the builder what follows from the ticket, the code's conventions and the repository's instructions (CLAUDE.md, AGENTS.md), which you read first.
 
-Investigate before you decide. Where the right plan depends on a fact you can check, check it rather than reasoning from the code alone: reproduce a bug and find its cause, profile or measure a performance problem before recommending any fix for it, look at the real data or output. Work in a scratch copy or a temporary folder, never this worktree. If the investigation needs something that doesn't exist yet - a benchmark, a reproduction harness - say so and propose it as its own first step rather than planning on a guess. Many tickets need no investigation; don't invent one.
+Investigate before you decide. Where the right plan depends on a fact you can check, check it rather than reasoning from the code alone: reproduce a bug and find its cause, profile or measure a performance problem before recommending any fix for it, look at the real data or output. Work in a scratch copy or a temporary folder, never this worktree. If the investigation needs something that doesn't exist yet - a benchmark, a reproduction harness - say so and make it its own first slice rather than planning on a guess. Many tickets need no investigation; don't invent one.
 
-The ticket's Interface section - what users and callers see - is settled with the reader: plan to it exactly, names, defaults, output and errors included. If the code makes it impossible or costly, ask the reader rather than change it. If the ticket has none but the change adds or alters something users or callers see, design it under ## Interface in the plan as a ticket would: check it against the existing surface for naming, conventions and clashes, ask the reader about each choice that isn't obvious, and for a UI of any size make a mock-up, one self-contained HTML page saved with ` + "`dv ticket mockup`" + `.
+The ticket's Interface section - what users and callers see - is settled with the reader: plan to it exactly, names, defaults, output and errors included. If the code makes it impossible or costly, ask the reader rather than change it. If the ticket has none but the change adds or alters something users or callers see, design it under ## Interface in the plan, before the slices, as a ticket would: check it against the existing surface for naming, conventions and clashes, ask the reader about each choice that isn't obvious, and for a UI of any size make a mock-up, one self-contained HTML page saved with ` + "`dv ticket mockup`" + `.
 
-Keep it short: most plans are 200-600 words, an Interface section aside. No file layouts, private helpers, step-by-step procedures, output formatting, or choices any engineer would make the same way. It is not the code written out in prose.
+The plan must read on its own. The reader approved the ticket earlier and remembers its goal, not its details. Don't copy the ticket's sections into the plan, but wherever a line depends on one of its details, say that detail in a few words right there. Never refer to a detail by a label, such as "the ticket's rule" or "the message above". Where a slice carries out the ticket's interface exactly as written, say so in a few words rather than listing it again.
 
-` + readable + `
-## Background - a few short sentences, so the plan reads on its own: what the change is for, and how the code works today where the decisions touch it. Not the ticket again.
-## Findings - only if you investigated: what you checked and what it showed, with the numbers. The decisions cite them.
-## Decisions - numbered, each a line or two with its reason; name a rejected option only where it was a real contender.
-## Shapes - only new or changed types and signatures other code calls, with one call site each and no bodies.
-## Tests - which tests prove which acceptance criterion, a line each.
-## Risks - only real ones, if any.
+` + askingRule(scoped) + `Plan the work in the order you would build it: as slices. A slice is a coherent part of the change that builds on the slices before it. Each ends compiling, with its tests passing, and becomes one commit. It isn't released on its own: the whole ticket is one pull request.
+- The first slice is the main path end to end, as thin as it can be.
+- Then the behaviours the ticket promises, in threads: each thread is one capability, built over a slice or a few, with its edge cases and tests. Finish a thread before starting the next, unless it depends on something from another, and put the riskiest thread first. A slice that opens a new direction - another kind of source, another command - waits until the thread under way is finished.
+- Then the small commands and views around them.
+- Tables, fields, endpoints, messages and states are added in the slice that first needs them, not all up front. Logic that acts on events or states grows a case at a time, in the slices that need each case.
+- About 10 slices at most. If the ticket needs more, ask the reader whether it should be split, and how, before planning it whole.
 
-` + askingRule(scoped) + ticketCLI +
+Write the plan in Markdown, in this shape:
+
+## What you get
+One or two sentences, in the user's terms.
+
+## Decided once
+Only what the reader needs in order to read the slices: the few concepts and the architecture the slices keep referring to. Each item says the decision, what it buys, and what it leaves to build or what it costs - in a line or two, in the reader's terms. The numbers or measurements behind a decision, and the alternatives weighed, go in a "More detail" block under it; the item keeps only the conclusion. Package names, lock orders, how something is tested and other rules only the builder needs don't go here: put them in the builder notes of the first slice that needs them.
+
+## Slices
+### 1. <what this slice makes work, concretely>
+Two or three lines on what is built, in the reader's terms - "a call that deploys", not an RPC's identifier.
+
+Anything outside the code that the slice adds or changes, shown as it will be: new or changed tables with their columns, migrations (and whether one is edited in place), RPCs with their request and response fields, messages between components, config keys, file formats - compactly, in a code block. The full definitions go to the builder notes.
+
+Works after this: one line - what someone could now do or observe.
+
+Then only the flags that apply, one line each:
+- You chose: a decision the reader made when you asked them.
+- Asks you: one of the reader's decisions too small to stop for - what you decided, the alternative, and what each costs.
+- Choice: a call inside this slice a capable engineer could make differently - chose X over Y, accepting Z.
+- Not in the ticket: behaviour, or stored data, that differs from or goes beyond what the ticket says. The exact wording of new messages belongs in "More detail", not here.
+- Assumes: something you rely on and didn't check.
+- Untested: a promise of this slice that no test covers.
+
+<details><summary>More detail</summary>
+
+For the reader who wants it: how this slice works and why, how its edge cases behave, the exact wording of any new messages, and the numbers behind its decisions - in the reader's terms, with no file or function names. If a line can only be followed with the code open, it belongs in the builder notes instead.
+
+</details>
+
+<details><summary>For the builder</summary>
+
+Files, signatures, full definitions, rules like lock order, and the slice's tests.
+
+</details>
+
+Keep the blank lines around each block's content, so it renders. A slice takes as many lines as it needs, but its visible part carries nothing that belongs in the two folded blocks. Say each thing once: a point made under "Decided once" isn't repeated as a flag in a slice.
+
+## Proven
+A few bullets: how the ticket's acceptance criteria are tested, and any gaps.
+
+## Risks
+Only real ones, if any.
+
+` + readable + "\n" + ticketCLI +
 		"- `dv ticket write plan` reads the whole plan from stdin and saves it; write it again after each change.\n" +
 		"- `dv ticket ready \"one line\"` hands the plan on: the first time to another model to review, whose findings come back to you, then to the reader to approve. Run it again after any change the reader asks for.\n" +
 		"- `dv ticket verdict <ID> taken|rejected \"...\"` answers a finding of the plan's review.\n" +
@@ -119,12 +162,11 @@ Keep it short: most plans are 200-600 words, an Interface section aside. No file
 // askingRule is whom the planner asks what. A scoped ticket's product
 // decisions belong in the ticket, so they go back to its scoper.
 func askingRule(scoped bool) string {
-	const reader = "Ask the reader with AskUserQuestion about real choices, your recommended option first with a reason for every option.\n\n"
+	const yours = "Architecture you choose is yours: explain it with its reasons, and the reader will ask during review if they disagree.\n\n"
 	if !scoped {
-		return reader
+		return "Some decisions are the reader's: any the ticket doesn't settle that changes what users see or can do. Ask the reader about them with AskUserQuestion before writing the plan, a few at a time, your recommended option first with a reason for every option. " + yours
 	}
-	return "Technical choices are yours to settle with the reader: " + reader +
-		"A product decision the ticket doesn't settle - what the change does, its interface, its scope, how an edge case behaves - is the scoper's, so the ticket keeps every one: run `dv ticket ask \"<what is unsettled, and why it matters to the plan>\"` and stop until its answer comes as your next message. The ticket goes back to Scope meanwhile; the scoper asks the reader where it must and updates the ticket.\n\n"
+	return "A decision the ticket doesn't settle that changes what users see or can do - what the change does, its interface, its scope, how an edge case behaves - is the scoper's, so the ticket keeps every one: run `dv ticket ask \"<what is unsettled, and why it matters to the plan>\"` and stop until its answer comes as your next message. The ticket goes back to Scope meanwhile; the scoper asks the reader where it must and updates the ticket. " + yours
 }
 
 func planReviewPrompt(t store.Ticket, base, parent, ticket, plan string) string {
@@ -134,13 +176,14 @@ func planReviewPrompt(t store.Ticket, base, parent, ticket, plan string) string 
 		quoted("The plan to review", plan) +
 		`Read the plan cold, against the code and the repository's instructions, before the reader sees it. A wrong plan is the most expensive mistake on the board: it gets built, reviewed and merged before anyone notices. Check:
 
-1. Every acceptance criterion in the ticket is met by some decision or test, and the plan builds the ticket's Interface section exactly. Where the plan designs the interface itself, it fits the surface that exists - naming, conventions, no clash with a command, flag or field already there.
-2. Every claim about the code, about behaviour or about performance rests on the plan's Findings or on a check you can repeat - repeat the cheap ones.
+1. Every acceptance criterion in the ticket is met by some slice and its tests, and the plan builds the ticket's Interface section exactly. Where the plan designs the interface itself, it fits the surface that exists - naming, conventions, no clash with a command, flag or field already there.
+2. Every claim about the code, about behaviour or about performance rests on what the plan shows it checked or on a check you can repeat - repeat the cheap ones.
 3. No decision is contradicted by the code.
-4. It is the best approach, not just a workable one. Weigh at least one real alternative of your own. For performance work: read the profile in Findings (or take one, in a scratch copy or temporary folder, never this worktree) and check that every significant cost is either addressed or left out for a stated reason; that the expected gains add up to the ticket's goal; that the biggest wins come first; and that rejected options were rejected on evidence. For a bug: the plan fixes the cause the Findings show, not a symptom. For a feature: no simpler design meets every criterion.
-5. It is no longer than it needs to be: decisions, not the code in prose.
+4. It is the best approach, not just a workable one. Weigh at least one real alternative of your own. For performance work: read the plan's measurements (or take your own, in a scratch copy or temporary folder, never this worktree) and check that every significant cost is either addressed or left out for a stated reason; that the expected gains add up to the ticket's goal; that the biggest wins come first; and that rejected options were rejected on evidence. For a bug: the plan fixes the cause it shows, not a symptom. For a feature: no simpler design meets every criterion.
+5. The slices can be built in their order: each builds on the ones before and ends compiling and tested; the main path comes first; a capability's thread is finished before the next starts, the riskiest first; tables, calls and states arrive in the slice that first needs them.
+6. It is written as the reader needs it. It reads on its own, without the ticket at hand, and never points at a ticket detail by a label. A slice's visible part doesn't list the ticket's specifications again, or carry code identifiers or detail only the builder needs. "Decided once" holds only what is needed to read the slices. Anything outside the code a slice adds - tables, migrations, calls, messages, config, formats - is shown in that slice. Report the slips you find as one finding.
 
-Report only what you can back with code, numbers or the ticket: what is missed or weaker, the evidence, and what changing course would cost. A different taste is not a finding. Don't change the plan or any code.
+Report only what you can back with code, numbers, the ticket or the points above: what is missed or weaker, the evidence, and what changing course would cost. A different taste is not a finding. Don't change the plan or any code.
 
 ` + briefFinding + "\n" + ticketCLI +
 		"- `dv ticket finding \"...\"` records one finding.\n" +
@@ -165,7 +208,7 @@ func questionPrompt(t store.Ticket, q string) string {
 
 If the answer follows from something the reader already approved - the ticket, a decision in the plan, the repository's instructions, or an established convention in the code - answer it yourself and name that source. If it is a product decision the ticket doesn't settle and the ticket has a scoper, ask the scoper first, as your instructions say. Otherwise it is the reader's choice: ask them with AskUserQuestion, your recommended option first with the reason for every option, and give "you" as the source.
 
-Then add the answer to the plan, marked as added during build, save it with `+"`dv ticket write plan`"+`, and run `+"`dv ticket answer --source \"<source>\" \"<the answer>\"`"+`. That hands the ticket back to the builder.
+Then add the answer to the plan, in the slice it concerns and marked as added during build, save it with `+"`dv ticket write plan`"+`, and run `+"`dv ticket answer --source \"<source>\" \"<the answer>\"`"+`. That hands the ticket back to the builder.
 `, t.ID, strings.TrimSpace(q))
 }
 
@@ -191,7 +234,7 @@ Then put the answer in %s ticket where it belongs - Interface, Edge cases or Dec
 func buildPrompt(t store.Ticket, base string) string {
 	return ticketHead(t, "builder") +
 		fmt.Sprintf("You work in this worktree, on branch %s, made from %s. Run `dv ticket show` first: it prints the approved ticket and plan.\n\n", t.Branch, base) +
-		`Implement the plan. Follow the repository's instructions (CLAUDE.md, AGENTS.md). Commit as you go in small, well-described commits. Run the tests that matter and make them pass. Don't push or open a pull request; that is the reader's, through dv.
+		`Implement the plan, one slice at a time, in its order. Follow the repository's instructions (CLAUDE.md, AGENTS.md). When a slice builds and its tests pass, commit it before starting the next: one commit per slice, its subject the slice's heading, so the reader can review the change slice by slice. Set your status to the slice you are on, e.g. ` + "`dv ticket status \"Slice 3 of 7: restarts\"`" + `. A plan written before slices had none: then commit as you go in small, well-described commits. Run the tests that matter and make them pass. Don't push or open a pull request; that is the reader's, through dv.
 
 Build the interface - what users and callers see - exactly as the ticket or plan gives it: names, defaults, output and errors. A difference you need is a question, not a choice.
 
@@ -212,7 +255,7 @@ const prRule = "Before handing the work over, write the pull request's title and
 
 var reviewTemplates = map[string]string{
 	"correctness": "Correctness: check the code this branch adds for bugs and behavioural problems - wrong results, missed edge cases, races, error handling, failure and cancellation paths, and anything the ticket's acceptance criteria or the plan's decisions say that the code doesn't do, or that differs from the interface the ticket or plan gives - names, flags, defaults, output, errors.",
-	"quality":     "Code quality: check that the code follows the repository's instructions (CLAUDE.md, AGENTS.md) and the plan's shapes - naming, layering, simplicity, duplication, needless abstraction, comments that restate the code.",
+	"quality":     "Code quality: check that the code follows the repository's instructions (CLAUDE.md, AGENTS.md) and the tables, calls and types the plan's slices show - naming, layering, simplicity, duplication, needless abstraction, comments that restate the code.",
 	"tests":       "Test value: critique whether each test adds value - that it would fail if the behaviour broke, tests behaviour rather than wording or internals, and that the acceptance criteria are covered.",
 }
 

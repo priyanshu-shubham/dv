@@ -274,6 +274,16 @@ const quietLast = (list, byId) => {
   return [...list.filter((t) => !quiet(t)).sort(byPriority), ...list.filter(quiet).sort(byPriority)];
 };
 
+// mergedOrder is the Merged column's: what still needs the reader (follow-ups
+// to decide) first, then the latest merged. Priority is spent by then. A
+// ticket merged before stage times were kept goes by its last update.
+const mergedOrder = (list, byId) => {
+  const at = (t) => t.stageAt || t.updatedAt || "";
+  const latest = (a, b) => at(b).localeCompare(at(a));
+  const waits = (t) => needsYou(cardState(t, byId));
+  return [...list.filter(waits).sort(latest), ...list.filter((t) => !waits(t)).sort(latest)];
+};
+
 // PriorityIcon draws a priority as a scale of chevrons: three up for
 // urgent, two for high, one down for low; normal has none.
 // Normal draws an empty square, so a list of them lines up.
@@ -569,7 +579,7 @@ export default function BoardView({ active, board, load, loadError, openId, onOp
       </div>
       <div className="board-cols">
         {STAGES.map(([key, label]) => {
-          const list = quietLast(shown.filter((t) => t.stage === key), byId);
+          const list = (key === "merged" ? mergedOrder : quietLast)(shown.filter((t) => t.stage === key), byId);
           return (
             <section
               key={key}
@@ -1293,6 +1303,50 @@ function Versioned({ doc, text, versions: given, onOpenFile, children }) {
 }
 
 const AUTHOR = { ticket: ["scope", "scope", "scoper"], plan: ["planner", "plan", "planner"], pr: ["builder", "review", "builder"] };
+
+// A plan's slices carry flags - its judgement calls, each a list item led by
+// its kind - and what works after each; marked so they stand out from the
+// prose. Again whenever the rendered document is redrawn.
+const PLAN_FLAGS = { "You chose": "you", "Asks you": "ask", Choice: "choice", "Not in the ticket": "new", Assumes: "assume", Untested: "untested" };
+const FLAG_LEAD = new RegExp(`^(${Object.keys(PLAN_FLAGS).join("|")}):`);
+
+// markWorksLine marks "Works after this" written on the line after a slice's
+// text, which Markdown runs into the same paragraph: from there to the end.
+function markWorksLine(p) {
+  const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const i = n.data.search(/\nWorks after( this)?:/);
+    if (i < 0 || n.parentNode !== p) continue;
+    const rest = n.splitText(i + 1);
+    const span = document.createElement("span");
+    span.className = "plan-works";
+    p.insertBefore(span, rest);
+    while (span.nextSibling) span.append(span.nextSibling);
+    return;
+  }
+}
+
+function usePlanMarks(ref, on) {
+  useEffect(() => {
+    const root = ref.current;
+    if (!on || !root) return;
+    const mark = () => {
+      for (const li of root.querySelectorAll(".md-preview li")) {
+        const m = FLAG_LEAD.exec(li.textContent.trim());
+        if (m && li.dataset.flag !== PLAN_FLAGS[m[1]]) li.dataset.flag = PLAN_FLAGS[m[1]];
+      }
+      for (const p of root.querySelectorAll(".md-preview p")) {
+        if ("works" in p.dataset || p.querySelector(".plan-works")) continue;
+        if (/^Works after( this)?:/.test(p.textContent)) p.dataset.works = "";
+        else markWorksLine(p);
+      }
+    };
+    mark();
+    const mo = new MutationObserver(mark);
+    mo.observe(root, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [ref, on]);
+}
 const DOC_NAME = { pr: "description" };
 
 // Commentable is a ticket's document the reader can point at, as a file in
@@ -1331,8 +1385,10 @@ function Commentable({ t, doc, text, drives, act, onOpenFile }) {
     setDraft(null);
   };
   const send = () => act(api.commentTicket(t.id, doc, pending.map(({ quote, text }) => ({ quote, text }))).then(() => setSaved(null)));
+  const rootRef = useRef(null);
+  usePlanMarks(rootRef, doc === "plan");
   return (
-    <div className="board-commentable">
+    <div className={cx("board-commentable", doc === "plan" && "plan-doc")} ref={rootRef}>
       <MarkdownDocument
         lines={lines}
         path={`${doc}.md`}

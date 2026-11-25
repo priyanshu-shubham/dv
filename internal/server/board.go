@@ -1923,10 +1923,12 @@ func (s *Server) saveGuide(t store.Ticket, body string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// An open pull request gets the reviewed fixes; publishing one is the reader's.
-	if t.PR != 0 {
+	// An open pull request gets the reviewed fixes; publishing one is the
+	// reader's, which an approval that stands has given: approving opens it,
+	// and catching up came before it could.
+	if t.PR != 0 || resumed {
 		if _, err := s.publish(t); err != nil {
-			s.board.Update(t.ID, func(x *store.Ticket) error { x.Problem = err.Error(); return nil })
+			s.board.Update(t.ID, func(x *store.Ticket) error { x.Problem, x.Merging = err.Error(), false; return nil })
 		}
 	}
 	if resumed {
@@ -2672,6 +2674,17 @@ func checksDue(t store.Ticket) bool {
 
 func (s *Server) followPRs() {
 	for _, t := range s.board.List() {
+		// Approved with no pull request: one a catch-up left unopened, before
+		// dv opened it on the approval standing. Opening it is what approving
+		// asked for.
+		if t.Merging && t.PR == 0 && t.Stage == "review" && !t.Archived && s.repo.Origin() != nil {
+			s.boardMu.Lock()
+			if _, err := s.publish(t); err != nil {
+				s.board.Update(t.ID, func(x *store.Ticket) error { x.Problem, x.Merging = err.Error(), false; return nil })
+			}
+			s.boardMu.Unlock()
+			continue
+		}
 		if t.PR == 0 || t.Stage == "merged" || t.Archived {
 			continue
 		}
