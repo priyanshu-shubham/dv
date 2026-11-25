@@ -7495,7 +7495,6 @@ button.ghost.agent-context {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
   /* The view holds its own place (Agent.jsx); the browser's would add to it. */
   overflow-anchor: none;
   background: var(--bg);
@@ -9926,7 +9925,6 @@ button.ghost.composer-add {
   flex: 0 1 auto;
   min-height: 0;
   overflow: auto;
-  overscroll-behavior: contain;
   background: var(--bg);
 }
 
